@@ -1,3 +1,4 @@
+const path = require('path');
 const { BaseExecutor } = require('./base');
 const { taintPayloadFields } = require('../utils/untrusted-content');
 
@@ -29,109 +30,59 @@ function originFor(context, scheduler, keep = null) {
 // form is the owner's own and has no such floor.
 const MIN_JOB_MINUTES = 15;
 
-// The aliases node-schedule reads (cron-parser's predefined set, exact case).
-const CRON_ALIASES = new Set(['@yearly', '@monthly', '@weekly', '@daily', '@hourly']);
+// The cron parser node-schedule itself runs, found from node-schedule, so a
+// schedule is judged the way it will run. A second reading of cron differed
+// from it: "0*" means "00-59", and a weekday step adds Sunday.
+const cronParser = require(require.resolve('cron-parser', { paths: [path.dirname(require.resolve('node-schedule'))] }));
 
-/** How many minutes of each hour a cron minute field fires on (1 to 60). */
-function minutesPerHour(field) {
-    let count = 0;
-    for (const part of String(field).split(',')) {
-        const [range, stepText] = part.split('/');
-        const step = stepText ? Math.max(1, parseInt(stepText, 10) || 1) : 1;
-        let span = 60;
-        if (range.includes('-')) {
-            const [from, to] = range.split('-').map(Number);
-            if (Number.isFinite(from) && Number.isFinite(to) && to >= from) span = to - from + 1;
-        } else if (range !== '*') {
-            // "5" is one minute; "5/20" starts at 5 and repeats.
-            span = stepText ? 60 - (Number(range) || 0) : 1;
-        }
-        count += Math.ceil(span / step);
+/** A schedule's fields as node-schedule reads them, or null when it is no cron. */
+function cronFields(cron) {
+    if (typeof cron !== 'string') return null;
+    try {
+        return cronParser.parseExpression(cron.trim()).fields;
+    } catch {
+        return null;
     }
-    return Math.min(Math.max(count, 1), 60);
 }
 
 /**
- * What is wrong with a schedule the model gave, or null. It must be one of
- * node-schedule's aliases, or five cron fields (six when the seconds field
- * is one number) whose minutes, hours and days are numbers, running at most
- * every 15 minutes. node-schedule fills fields left out ("* * * *" runs
- * every minute) and reads anything it cannot parse as a date.
+ * What is wrong with a schedule the model gave, or null. It must parse as a
+ * cron (node-schedule reads anything else as a date, and runs it once), run
+ * at most once a minute, and on at most four minutes of an hour.
  */
 function tooOften(cron) {
     if (typeof cron !== 'string') return 'is not text';
-    const spec = cron.trim();
-    if (CRON_ALIASES.has(spec)) return null;
-    let fields = spec.split(/\s+/);
-    if (fields.length === 6) {
-        if (!/^\d{1,2}$/.test(fields[0])) return 'repeats within a minute';
-        fields = fields.slice(1);
-    }
-    if (fields.length !== 5) return 'does not have five fields';
-    if (!/^[\d*,/-]+$/.test(fields[0]) || !/^[\d*,/-]+$/.test(fields[1]) || !/^[\d*,/?LW-]+$/.test(fields[2])) {
-        return 'is not a cron schedule';
-    }
-    const perHour = minutesPerHour(fields[0]);
-    return perHour > 60 / MIN_JOB_MINUTES ? `runs ${perHour} times an hour` : null;
-}
-
-/** How many values a cron field takes in [lo, hi]; a name (MON, JAN) counts once. */
-function fieldCount(field, lo, hi) {
-    const text = String(field);
-    if (text === '*' || text === '?') return hi - lo + 1;
-    let count = 0;
-    for (const part of text.split(',')) {
-        const [range, stepText] = part.split('/');
-        const step = stepText ? Math.max(1, parseInt(stepText, 10) || 1) : 1;
-        let from = lo;
-        let to = hi;
-        if (range.includes('-')) {
-            const [a, b] = range.split('-').map(Number);
-            if (!(Number.isFinite(a) && Number.isFinite(b) && b >= a)) { count += 1; continue; }
-            from = a;
-            to = b;
-        } else if (range !== '*') {
-            const n = Number(range);
-            if (!Number.isFinite(n) || !stepText) { count += 1; continue; }
-            from = n;
-        }
-        count += Math.floor((to - from) / step) + 1;
-    }
-    return Math.min(Math.max(count, 1), hi - lo + 1);
-}
-
-// node-schedule's aliases, as cron-parser reads them.
-const ALIAS_FIELDS = { '@yearly': '0 0 1 1 *', '@monthly': '0 0 1 * *', '@weekly': '0 0 * * 0', '@daily': '0 0 * * *', '@hourly': '0 * * * *' };
-const CRON_NAMES = { sun: '0', mon: '1', tue: '2', wed: '3', thu: '4', fri: '5', sat: '6', jan: '1', feb: '2', mar: '3', apr: '4', may: '5', jun: '6', jul: '7', aug: '8', sep: '9', oct: '10', nov: '11', dec: '12' };
-
-/** The five fields of a schedule, day and month names as numbers, or null. */
-function cronFields(cron) {
-    const spec = String(cron || '').trim();
-    let fields = (ALIAS_FIELDS[spec] || spec).split(/\s+/);
-    if (fields.length === 6) fields = fields.slice(1);
-    if (fields.length !== 5) return null;
-    return fields.map(f => f.toLowerCase().replace(/[a-z]{3}/g, name => CRON_NAMES[name] ?? name));
+    const f = cronFields(cron);
+    if (!f) return 'is not a cron schedule';
+    if (f.second.length > 1) return 'repeats within a minute';
+    if (f.minute.length > 60 / MIN_JOB_MINUTES) return `runs ${f.minute.length} times an hour`;
+    return null;
 }
 
 /**
- * New times that run no more often than the old ones: the same days of the
- * month and months, weekdays no more of them (a field with anything but
- * digits, "*", ",", "-" and "/" stays as it was), and no more minutes times
- * hours a day. Averages over a week or a year would let a schedule held to
- * a few days look rare.
+ * New times that run no more often than the old ones, as node-schedule
+ * reads both: the same months and days of the month; weekdays no more of
+ * them when every day of the month is in, else the same (cron runs on the
+ * day of the month OR the weekday); no more seconds, and no more minutes
+ * times hours a day. "#" (the nth weekday of a month) is not in the fields,
+ * so a schedule that holds one must stay as it was.
  */
 function noMoreOften(oldCron, newCron) {
-    const a = cronFields(oldCron);
-    const b = cronFields(newCron);
+    const a = cronFields(String(oldCron ?? ''));
+    const b = cronFields(String(newCron ?? ''));
     if (!a || !b) return false;
-    if (a[2] !== b[2] || a[3] !== b[3]) return false;
-    const plain = (f) => /^[\d*,/-]+$/.test(f);
-    if (a[4] !== b[4]) {
-        if (!plain(a[4]) || !plain(b[4])) return false;
-        if (fieldCount(b[4], 0, 6) > fieldCount(a[4], 0, 6)) return false;
+    if (/#/.test(String(oldCron)) || /#/.test(String(newCron))) return String(oldCron).trim() === String(newCron).trim();
+    const same = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);
+    if (!same(a.month, b.month) || !same(a.dayOfMonth, b.dayOfMonth)) return false;
+    const days = (list) => new Set(list.map(v => v % 7)).size;
+    const numeric = (list) => list.every(v => typeof v === 'number');
+    if (a.dayOfMonth.length === 31 && numeric(a.dayOfWeek) && numeric(b.dayOfWeek)) {
+        if (days(b.dayOfWeek) > days(a.dayOfWeek)) return false;
+    } else if (!same(a.dayOfWeek, b.dayOfWeek)) {
+        return false;
     }
-    if (!plain(a[0]) || !plain(a[1]) || !plain(b[0]) || !plain(b[1])) return a[0] === b[0] && a[1] === b[1];
-    return fieldCount(b[0], 0, 59) * fieldCount(b[1], 0, 23) <= fieldCount(a[0], 0, 59) * fieldCount(a[1], 0, 23);
+    if (b.second.length > a.second.length) return false;
+    return b.minute.length * b.hour.length <= a.minute.length * a.hour.length;
 }
 
 /**
@@ -148,8 +99,13 @@ async function ownChatRun(context, scheduler) {
     if (Array.isArray(meta.untrustedTaint) && meta.untrustedTaint.length > 0) return false;
     const channel = String(message.source || '').split(':')[0];
     if (!['web', 'whatsapp', 'telegram'].includes(channel) || !meta.chatId) return false;
-    // A WhatsApp or Slack chat opened on the web holds a contact's words.
-    if (channel === 'web' && /@|%40/.test(String(meta.chatId))) return false;
+    // A WhatsApp, Slack or Telegram chat opened on the web holds other
+    // people's words: his own web chats are session ids with a dash, with no
+    // "@" and not a bare number (a Telegram group is a negative one).
+    if (channel === 'web') {
+        const id = String(meta.chatId);
+        if (/@|%40/.test(id) || /^-?\d+$/.test(id) || !id.includes('-')) return false;
+    }
     if (typeof scheduler?.agent?._getOwnerWaIds === 'function') {
         try { await scheduler.agent._getOwnerWaIds(); } catch { /* the phone JID still counts */ }
     }

@@ -586,9 +586,16 @@ describe('a job made in a chat', () => {
         test('an edit with a schedule the scheduler refuses keeps the old job running', async () => {
             await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
 
+            // The tool checks the schedule with node-schedule's own parser first.
             const res = await executor.execute('scheduleJob', { name: 'check_slots', cron: '0 25 * * *', task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
+            expect(res.error).toMatch(/not a cron schedule/);
+            // The Tasks form has no such check: the scheduler keeps the old job when node-schedule refuses the rule.
+            const app = express();
+            app.use(express.json());
+            app.use('/internal', createInternalRouter(agent));
+            const form = await request(app).post('/internal/scheduler').send({ name: 'check_slots', cron: '0 25 * * *', task: TASK });
+            expect(form.status).toBe(400);
 
-            expect(res.error).toMatch(/not a schedule/);
             expect(scheduler.jobs.check_slots.nextInvocation()).not.toBeNull();
             expect(savedRow(db, 'check_slots').cronExpression).toBe(CRON);
         });
@@ -1042,6 +1049,42 @@ describe('a job made in a chat', () => {
             const run = { message: { source: 'scheduler', metadata: { chatId: 'scheduled_x_1', jobName: 'x' } }, untrustedTaint: [] };
 
             expect(await comms.execute('sendMessage', { to: 'me', content: 'On time.' }, run)).toMatchObject({ success: true, queued: true, toOwner: true });
+        });
+    });
+
+    describe('review round nine', () => {
+        test('schedules are judged the way node-schedule reads them: "0*" is every minute, weekday steps add Sunday', async () => {
+            const { tooOften } = require('../src/executors/scheduler');
+            expect(tooOften('0* * * * *')).toMatch(/60 times an hour/);
+            await executor.execute('scheduleJob', { name: 'daily_note', cron: '0 9 * * *', task: 'A note' }, inChat('whatsapp:assistant', OWNER_LID));
+            await executor.execute('scheduleJob', { name: 'wed_note', cron: '0 9 * * 3', task: 'A note' }, inChat('whatsapp:assistant', OWNER_LID));
+            const mine = inChat('whatsapp:assistant', OWNER_LID, MAIL);
+
+            await executor.execute('scheduleJob', { name: 'daily_note', cron: '0 9,17 1* * * *' }, mine);
+            await executor.execute('scheduleJob', { name: 'wed_note', cron: '0 9 * * 3/7' }, mine);
+
+            // "1*" is hours 10 to 23: 28 runs a day where there was one.
+            expect(savedRow(db, 'daily_note').payload.tainted).toBe(true);
+            expect(savedRow(db, 'wed_note').payload.tainted).toBe(true);
+        });
+
+        test("cron's day-of-month OR weekday rule cannot turn a monthly job daily and stay clean", async () => {
+            await executor.execute('scheduleJob', { name: 'monthly_note', cron: '0 9 1 * *', task: 'A note' }, inChat('whatsapp:assistant', OWNER_LID));
+
+            await executor.execute('scheduleJob', { name: 'monthly_note', cron: '0 9 1 * 0-6' }, inChat('whatsapp:assistant', OWNER_LID, MAIL));
+
+            expect(savedRow(db, 'monthly_note').payload.tainted).toBe(true);
+        });
+
+        test('a Slack channel or a Telegram group opened on the web is not his own chat', async () => {
+            await executor.execute('scheduleJob', { name: 'text_alice', cron: '0 8 * * *', task: 'Text Alice good morning' }, inChat('web', 'web-chat-1'));
+            await executor.execute('scheduleJob', { name: 'text_bob', cron: '0 8 * * *', task: 'Text Bob good morning' }, inChat('web', 'web-chat-1'));
+
+            await executor.execute('scheduleJob', { name: 'text_alice', cron: '0 3 * * *' }, inChat('web', 'C01EXAMPLE1', MAIL));
+            await executor.execute('scheduleJob', { name: 'text_bob', cron: '0 3 * * *' }, inChat('web', '-1001000000001', MAIL));
+
+            expect(savedRow(db, 'text_alice').payload.tainted).toBe(true);
+            expect(savedRow(db, 'text_bob').payload.tainted).toBe(true);
         });
     });
 

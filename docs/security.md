@@ -702,20 +702,21 @@ task is the owner's own instruction and clears it. A change through
 the model writes that task and may copy what was planted. A tainted run's
 change stores its taint too, as a new job does: that is why scheduleJob runs
 unasked there. One change is spared: new times or a new end date typed in one
-of his own chats (not a forwarded message, not a contact's chat opened on the
-web), with the same days of the month and months, no more weekdays, no more
-minutes times hours a day, and no later end ("move my briefing before my
-first meeting" reads his calendar). A contact's message, a
+of his own chats (not a forwarded message, not a contact's, group's or
+channel's chat opened on the web) that run no more often, as node-schedule's
+own cron parser reads both schedules, and end no later ("move my briefing
+before my first meeting" reads his calendar). A contact's message, a
 sub-agent or a job run that moves a job taints it. A job or reminder
 that a tainted run creates from a contact's chat reports to the owner
 channel, never to that chat. A job's result only ever goes to the owner:
 his own WhatsApp or Telegram chat where he made it, or else the owner
 channel. A job saved long ago with a contact's chat of his own account or a
 Slack channel still does nothing, as those chats are passive. A job run
-skips the chat rate limit, so what the model makes is held. A schedule is
-five cron fields (six with a fixed seconds value, or an alias such as
-`@daily`) whose minutes, hours and days are numbers, running at most every
-15 minutes unless the job keeps its times and its task. A job's run and its
+skips the chat rate limit, so what the model makes is held. A schedule must
+parse with node-schedule's own cron parser and fire at most once a minute
+and on at most four minutes of an hour, unless the job keeps its times and
+its task: a second reading of cron differed from the real one ("0*" is every
+minute). A job's run and its
 sub-agents (they carry its record, `metadata.jobRun`) make and change no
 repeating jobs, make at most two one-time tasks (the count is checked and
 taken with no await in between, so calls side by side count), and cancel
