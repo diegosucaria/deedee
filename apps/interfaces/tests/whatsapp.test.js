@@ -3,8 +3,9 @@ const request = require('supertest');
 const child_process = require('child_process');
 const EventEmitter = require('events');
 const { Readable, Writable } = require('stream');
-const { WhatsAppService } = require('../src/whatsapp');
+const { WhatsAppService, SQLiteStore } = require('../src/whatsapp');
 const fs = require('fs');
+const path = require('path');
 
 // Mock external dependencies
 jest.mock('qrcode', () => ({
@@ -652,6 +653,94 @@ describe('fromMe feedback loop prevention', () => {
         });
 
         expect(spyAxios).not.toHaveBeenCalled();
+    });
+});
+
+describe('a chat shown by WhatsApp ID (LID)', () => {
+    const LID = '100000000000002@lid';
+    const PHONE = '5490000000001';
+    let store;
+    let spyAxios;
+
+    const service = (session) => {
+        const s = new WhatsAppService('http://mock-agent', session);
+        s.store = store;
+        return s;
+    };
+    const reminder = (key) => ({
+        key: { id: 'm1', fromMe: false, ...key },
+        message: { conversation: 'Reminder: your visit is on Tuesday at 17:00' }
+    });
+    const sent = () => spyAxios.mock.calls.at(-1)[1];
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        jest.spyOn(console, 'log').mockImplementation(() => {});
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        process.env.ALLOWED_WHATSAPP_NUMBERS = PHONE;
+        store = new SQLiteStore(path.join(process.env.DATA_DIR, `lid-${Date.now()}-${Math.random()}.db`));
+        spyAxios = require('axios').post;
+        spyAxios.mockResolvedValue({});
+    });
+
+    afterEach(() => {
+        clearInterval(store.queueFlushInterval);
+        store.close();
+        delete process.env.WHATSAPP_LID_ALT;
+    });
+
+    test('the personal session files a chat the store cannot place under the number in its key, and saves the link', async () => {
+        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(sent().metadata.phoneNumber).toBe(PHONE);
+        expect(sent().metadata.lid).toBe(LID);
+        expect(store.resolveIdentity(LID).phoneJid).toBe(`${PHONE}@s.whatsapp.net`);
+    });
+
+    test('the assistant session does not trust the number in the key: an unknown WhatsApp ID stays blocked', async () => {
+        await service('assistant').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(spyAxios).not.toHaveBeenCalled();
+        expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+    });
+
+    test('WHATSAPP_LID_ALT=0 keeps the WhatsApp ID digits and saves no link', async () => {
+        process.env.WHATSAPP_LID_ALT = '0';
+
+        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
+        expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+    });
+
+    test("the owner's own message never saves a link: its key can describe him instead", async () => {
+        await service('user').handleMessage({
+            key: { id: 'm2', fromMe: true, remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' },
+            message: { imageMessage: { mimetype: 'image/jpeg' } }
+        });
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
+        expect(sent().metadata.lid).toBeUndefined();
+        expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+    });
+
+    test('a chat shown by phone number keeps it and carries its WhatsApp ID', async () => {
+        await service('user').handleMessage(reminder({ remoteJid: `${PHONE}@s.whatsapp.net`, remoteJidAlt: LID, addressingMode: 'pn' }));
+
+        expect(sent().metadata.phoneNumber).toBe(PHONE);
+        expect(sent().metadata.lid).toBe(LID);
+    });
+
+    test('a group message never takes the number of a contact whose digits end like the group id', async () => {
+        await store.upsertContacts([{ id: '5490000000002@s.whatsapp.net', name: 'Stranger' }]);
+
+        await service('user').handleMessage(reminder({
+            remoteJid: '120000000000000002@g.us', participant: LID, participantAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid'
+        }));
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
+        expect(sent().metadata.lid).toBe(LID);
     });
 });
 

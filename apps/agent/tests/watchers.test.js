@@ -285,6 +285,38 @@ describe('Message Watchers & Passive Mode', () => {
         expect(errorReplies).toEqual([]);
     });
 
+    // WhatsApp shows some chats by a WhatsApp ID (LID). The interfaces send
+    // the phone number when they know it, and the WhatsApp ID in metadata.lid.
+    it('a watcher saved with a WhatsApp ID still fires once the message arrives under the phone number', async () => {
+        agent.client = {};
+        db.createWatcher({ name: 'WhatsApp ID Watcher', contactString: '100000000000002', condition: '*', instruction: 'Say done', status: 'active' });
+
+        await agent.processMessage({
+            id: 'msg_lid_1',
+            role: 'user',
+            content: 'Reminder: Tuesday at 17:00',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: '5490000000001', lid: '100000000000002@lid', chatId: '100000000000002@lid' }
+        }, jest.fn());
+
+        expect(db.getAllWatchers()[0].last_triggered_at).not.toBeNull();
+    });
+
+    it('a watcher on a phone number stays quiet for another sender\'s WhatsApp ID', async () => {
+        agent.client = {};
+        db.createWatcher({ name: 'Phone Watcher', contactString: '5490000000001', condition: '*', instruction: 'Say done', status: 'active' });
+
+        await agent.processMessage({
+            id: 'msg_lid_2',
+            role: 'user',
+            content: 'Hello',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: '100000000000002', lid: '100000000000002@lid', chatId: '100000000000002@lid' }
+        }, jest.fn());
+
+        expect(db.getAllWatchers()[0].last_triggered_at).toBeNull();
+    });
+
     // Validating specific regex logic from agent.js
     it('should match conditions correctly', () => {
         const check = (condition, content) => {

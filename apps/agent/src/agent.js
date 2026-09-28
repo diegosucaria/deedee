@@ -1517,6 +1517,9 @@ class Agent {
         const isUserSession = message.source === 'whatsapp:user' || message.source === 'slack';
         const isFromMe = !!message.metadata?.fromMe;
         const contactString = message.metadata?.phoneNumber || message.metadata?.slackUserName || message.metadata?.chatId;
+        // A WhatsApp sender can also show a WhatsApp ID (LID) next to the phone
+        // number: a watcher saved with either one matches.
+        const senderIds = [contactString, message.metadata?.lid].filter(Boolean);
         const groupName = message.metadata?.groupName;
         const msgContent = message.content?.toLowerCase() || '';
 
@@ -1529,10 +1532,10 @@ class Agent {
           // Improved Logic: Handle fuzzy number matching (e.g. 549 vs 54) and cleanup
           let isContactMatch = false;
 
-          if (contactString) { // Message has a phone/sender ID
+          for (const senderId of senderIds) { // Message has a phone/sender ID
             // 1. Try Numeric Suffix Match
             const wClean = w.contact_string.replace(/[^0-9]/g, '');
-            const msgClean = contactString.replace(/[^0-9]/g, '');
+            const msgClean = senderId.replace(/[^0-9]/g, '');
 
             if (wClean.length >= 8 && msgClean.length >= 8) {
               // Match last 8 digits (reduced from 9 to be safer for varying area codes)
@@ -1551,8 +1554,9 @@ class Agent {
 
             // 2. Fallback to direct string inclusion (handles names or shorter numbers)
             if (!isContactMatch) {
-              isContactMatch = w.contact_string.includes(contactString);
+              isContactMatch = w.contact_string.includes(senderId);
             }
+            if (isContactMatch) break;
           }
 
           if (!isContactMatch && groupName) {

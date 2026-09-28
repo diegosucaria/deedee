@@ -65,6 +65,18 @@ function convertToOpus(wavBuffer) {
     });
 }
 
+/**
+ * The sender's WhatsApp ID (LID) when a message key shows one, as
+ * "<digits>@lid", or null. The sender is the chat, or in a group the member
+ * who wrote; the key may show them by WhatsApp ID or phone number, and give
+ * the other address in remoteJidAlt (chat) or participantAlt (group).
+ */
+function senderLid(key, isGroup) {
+    const ids = isGroup ? [key.participant, key.participantAlt] : [key.remoteJid, key.remoteJidAlt];
+    const lid = ids.find(j => typeof j === 'string' && j.endsWith('@lid'));
+    return lid ? `${lid.split('@')[0].split(':')[0]}@lid` : null;
+}
+
 class SQLiteStore {
     constructor(filePath) {
         this.path = filePath;
@@ -385,8 +397,10 @@ class SQLiteStore {
                 contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?').get(phoneJid);
             }
 
-            // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54)
-            if (!contact && digits.length >= 7) {
+            // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54).
+            // Phone numbers only: the digits of a WhatsApp ID (LID) or a group id have
+            // nothing to do with a phone number, so a suffix match there finds a stranger.
+            if (!contact && !isLid && digits.length >= 7 && digits.length <= 14) {
                 const suffix = digits.slice(-7);
                 contact = this.db.prepare("SELECT id, name, notify, lid FROM contacts WHERE id LIKE ?").get(`%${suffix}@s.whatsapp.net`);
             }
@@ -411,6 +425,28 @@ class SQLiteStore {
             const lid = isLid ? identifier : (digits.length > 14 ? `${digits}@lid` : null);
             return { phoneJid, lid, name: null, allJids: [phoneJid, lid].filter(Boolean) };
         }
+    }
+
+    /**
+     * Records that a WhatsApp ID (LID) belongs to a phone number, so the
+     * resolver finds the contact by either one. A new phone row takes the
+     * names the WhatsApp ID row already has. A phone row that holds another
+     * WhatsApp ID keeps it.
+     * @returns {boolean} true when it saved a link
+     */
+    linkLid(phoneJid, lid) {
+        const row = this.db.prepare('SELECT lid FROM contacts WHERE id = ?').get(phoneJid);
+        if (row && row.lid) return false;
+        if (row) {
+            this.db.prepare('UPDATE contacts SET lid = ? WHERE id = ?').run(lid, phoneJid);
+            return true;
+        }
+        const lidRow = this.db.prepare('SELECT name, notify FROM contacts WHERE id = ?').get(lid);
+        const name = lidRow?.name || null;
+        const notify = lidRow?.notify || null;
+        this.db.prepare('INSERT INTO contacts (id, name, notify, lid, data) VALUES (?, ?, ?, ?, ?)')
+            .run(phoneJid, name, notify, lid, JSON.stringify({ id: phoneJid, name, notify, lid }));
+        return true;
     }
 
     getAllContactsRaw() {
@@ -990,16 +1026,21 @@ class WhatsAppService {
             if (msg.key.fromMe && !isFromMeMedia) return;
 
             let phoneNumber = remoteJid.split('@')[0];
+            const isGroup = remoteJid.endsWith('@g.us');
 
             // Handle LID: Use centralized resolver for consistent identity resolution
             if (this.store && (remoteJid.includes('@lid') || phoneNumber.length > 14)) {
                 const identity = this.store.resolveIdentity(remoteJid);
+                const keyPhone = (identity.phoneJid || isGroup) ? null : this._phoneFromKey(msg.key);
                 if (identity.phoneJid) {
                     const resolvedPhone = identity.phoneJid.split('@')[0];
                     if (resolvedPhone !== phoneNumber) {
                         console.log(`${this.logPrefix} Resolved ${phoneNumber} to ${resolvedPhone} (via centralized resolver)`);
                         phoneNumber = resolvedPhone;
                     }
+                } else if (keyPhone) {
+                    console.log(`${this.logPrefix} Resolved ${phoneNumber} to ${keyPhone} (number in the message key)`);
+                    phoneNumber = keyPhone;
                 } else if (msg.key.participant) {
                     // Fallback: use participant field (group messages)
                     const participantNumber = msg.key.participant.split('@')[0];
@@ -1105,7 +1146,6 @@ class WhatsAppService {
             const userMessage = createUserMessage(text, source, phoneNumber);
 
             // Append session ID to metadata
-            const isGroup = remoteJid.endsWith('@g.us');
             userMessage.metadata = {
                 chatId: remoteJid,
                 phoneNumber,
@@ -1114,6 +1154,9 @@ class WhatsAppService {
                 fromMe: !!msg.key.fromMe,
                 groupName: isGroup ? 'Unknown Group' : undefined // We could fetch subject if needed
             };
+            // The sender's WhatsApp ID too, so a watcher saved with it still fires.
+            const lid = msg.key.fromMe ? null : senderLid(msg.key, isGroup);
+            if (lid) userMessage.metadata.lid = lid;
             if (forwarded) userMessage.metadata.untrustedTaint = ['a forwarded message (whatsapp)'];
 
             // Inline Data for Agent
@@ -1367,6 +1410,34 @@ class WhatsAppService {
     resolveIdentity(identifier) {
         if (!this.store) return { phoneJid: null, lid: null, name: null, allJids: [] };
         return this.store.resolveIdentity(identifier);
+    }
+
+    /**
+     * The phone number in a message key for a chat the store cannot place,
+     * or null. WhatsApp may show a chat by a WhatsApp ID (LID); the key then
+     * carries the number too, in remoteJidAlt. The personal session uses it
+     * and saves the link, so a watcher on the number fires and a history
+     * lookup by number finds the chat. The assistant session never does:
+     * its allowlist decides who may command the agent, and it trusts only
+     * links the store already holds. Only a message the contact sent counts:
+     * on the owner's own message the key can describe him instead.
+     * WHATSAPP_LID_ALT=0 turns this off.
+     */
+    _phoneFromKey(key) {
+        if (this.sessionId !== 'user' || process.env.WHATSAPP_LID_ALT === '0' || key.fromMe) return null;
+        const lid = key.remoteJid;
+        const altJid = key.remoteJidAlt;
+        if (!lid.endsWith('@lid') || typeof altJid !== 'string' || !altJid.endsWith('@s.whatsapp.net')) return null;
+        const phone = altJid.split('@')[0].split(':')[0];
+        if (!/^\d{6,15}$/.test(phone)) return null;
+        try {
+            if (this.store.linkLid(`${phone}@s.whatsapp.net`, lid)) {
+                console.log(`${this.logPrefix} Linked ${lid} to ${phone} (number in the message key).`);
+            }
+        } catch (e) {
+            console.warn(`${this.logPrefix} Could not save the link for ${lid}:`, e.message);
+        }
+        return phone;
     }
 
     // Helper for safe timestamp conversion (handles Number vs Long)
