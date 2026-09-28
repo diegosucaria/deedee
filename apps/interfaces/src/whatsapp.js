@@ -376,7 +376,8 @@ class SQLiteStore {
      *
      * @param {string} identifier - Phone JID, LID, or raw digits
      * @param {{ guess?: boolean }} [opts] - guess: false skips the suffix match.
-     *   Pass it for an address WhatsApp gave: that address is exact.
+     *   handleMessage passes it: the sender's address is exact, and a guess
+     *   there could pass a stranger through the assistant allowlist.
      * @returns {{ phoneJid: string|null, lid: string|null, name: string|null, allJids: string[] }}
      */
     resolveIdentity(identifier, { guess = true } = {}) {
@@ -387,10 +388,10 @@ class SQLiteStore {
         const isPhoneJid = identifier.includes('@s.whatsapp.net');
         // Typed digits and phone JIDs may be a phone number; group ids and the like never are.
         const maybePhone = isPhoneJid || !identifier.includes('@');
-        const byId = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?');
-        const byLid = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE lid = ?');
 
         try {
+            const byId = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?');
+            const byLid = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE lid = ?');
             let contact = null;
             let knownLid = null;
 
@@ -444,7 +445,6 @@ class SQLiteStore {
                     contact = { ...(byId.get(link.phone_jid) || { id: link.phone_jid, name: null, notify: null }), lid: link.lid };
                 }
             }
-
 
             // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54).
             // Typed numbers and phone JIDs only: the digits of a WhatsApp ID (LID) or a

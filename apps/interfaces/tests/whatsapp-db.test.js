@@ -278,6 +278,21 @@ describe('WhatsApp SQLiteStore', () => {
             const history = store.getChatHistory('100000000000002@s.whatsapp.net');
             expect(history.map(m => m.message.conversation)).toEqual(['From the ID chat']);
         });
+
+        // Known by a contact row keyed by the ID, a phone row that holds it, or a saved link.
+        test('the digits of a WhatsApp ID known from contacts or a link are that ID too', () => {
+            ev.emit('contacts.upsert', [
+                { id: '5490000000002@s.whatsapp.net', name: 'Stranger' },
+                { id: '1000000000001@lid', notify: 'Shop' },
+                { id: '5490000000003@s.whatsapp.net', name: 'Alice', lid: '1000000000009@lid' }
+            ]);
+            store.linkLid('5490000000004@s.whatsapp.net', '1000000000002@lid');
+
+            expect(store.resolveIdentity('1000000000001').lid).toBe('1000000000001@lid');
+            expect(store.resolveIdentity('1000000000001').phoneJid).toBeNull();
+            expect(store.resolveIdentity('1000000000009').phoneJid).toBe('5490000000003@s.whatsapp.net');
+            expect(store.resolveIdentity('1000000000002').phoneJid).toBe('5490000000004@s.whatsapp.net');
+        });
     });
 
     describe('linkLid', () => {
