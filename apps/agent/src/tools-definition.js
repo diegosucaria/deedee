@@ -292,7 +292,7 @@ const toolDefinitions = [
       {
         name: "listJobs",
         category: "scheduler",
-        description: "List all currently scheduled jobs with details (name, schedule, task description). Use this to find a job ID before cancelling or modifying it.",
+        description: "List all currently scheduled jobs with details (name, schedule, task description). Use this to find a job ID before cancelling or modifying it. A job made by a run that read untrusted content shows taskHidden instead of its task; a paused job shows paused.",
         parameters: {
           type: "OBJECT",
           properties: {},

@@ -376,11 +376,23 @@ describe('a job made in a chat', () => {
             db.saveScheduledJob({ name: 'standup', cronExpression: '0 9 * * 1-5', taskType: 'agent_instruction', payload: { task: 'Post the standup reminder', targetSource: 'whatsapp:assistant', targetChatId: CONTACT_JID }, enabled: true });
             await scheduler.loadJobs();
 
-            await executor.execute('scheduleJob', { name: 'standup', cron: '30 9 * * 1-5', task: 'Post the standup reminder' }, inChat('whatsapp:assistant', OWNER_LID, MAIL));
+            await executor.execute('scheduleJob', { name: 'standup', cron: '30 9 * * 1-5', task: 'Post the standup reminder now' }, inChat('whatsapp:assistant', OWNER_LID, MAIL));
 
             const payload = savedRow(db, 'standup').payload;
             expect(payload.targetChatId).toBeUndefined();
             expect(payload).toMatchObject({ tainted: true, taintSources: MAIL });
+        });
+
+        test('moving a clean job from a chat run that read his calendar keeps it clean', async () => {
+            // "Move my briefing 30 minutes before my first meeting": the run reads
+            // the calendar, but new times carry no third party's words.
+            db.saveScheduledJob({ name: 'morning_briefing', cronExpression: '0 8 * * *', taskType: 'agent_instruction', payload: { task: 'Brief me' }, enabled: true });
+            await scheduler.loadJobs();
+
+            await executor.execute('scheduleJob', { name: 'morning_briefing', cron: '30 7 * * *' }, inChat('whatsapp:assistant', OWNER_LID, ['calendar (personal_calendar)']));
+
+            expect(savedRow(db, 'morning_briefing')).toMatchObject({ cronExpression: '30 7 * * *', payload: { task: 'Brief me' } });
+            expect(savedRow(db, 'morning_briefing').payload.tainted).toBeUndefined();
         });
 
         test('scheduleJob cannot overwrite a built-in job', async () => {
@@ -883,6 +895,46 @@ describe('a job made in a chat', () => {
             } finally {
                 jest.useRealTimers();
             }
+        });
+    });
+
+    describe('review round six', () => {
+        test('a one-time task that sent its answer with sendMessage and then said nothing is not reported as unfinished', async () => {
+            await executor.execute('scheduleTask', { time: new Date(Date.now() + 3600e3).toISOString(), task: 'Check the flight and tell me' }, inChat('whatsapp:assistant', OWNER_LID));
+            const [name] = Object.keys(scheduler.jobs);
+            agent.processMessage.mockImplementation(async () => ({
+                untrustedSources: [],
+                toolOutputs: [{ name: 'sendMessage', result: { success: true, info: 'Message sent to me' } }, { name: 'saveJobState', result: { error: 'not in this run\'s tool list' } }]
+            }));
+
+            await scheduler.jobs[name].invoke();
+
+            expect(delivered(agent)).toEqual([]);
+            expect(db.getJobLogs(5).logs[0].status).toBe('success');
+        });
+
+        test('a paused job restated from chat says it is paused, and listJobs shows it', async () => {
+            db.saveScheduledJob({ name: 'standup', cronExpression: '0 9 * * 1-5', taskType: 'agent_instruction', payload: { task: 'Standup note' }, enabled: false });
+            await scheduler.loadJobs();
+
+            const res = await executor.execute('scheduleJob', { name: 'standup', cron: '0 9 * * 1-5', task: 'Standup note' }, inChat('whatsapp:assistant', OWNER_LID));
+            const listed = await executor.execute('listJobs', {}, inChat('whatsapp:assistant', OWNER_LID));
+
+            expect(res.info).toMatch(/it is paused; nothing changed/);
+            expect(listed.jobs.find(j => j.name === 'standup')).toMatchObject({ paused: true, task: 'Standup note' });
+        });
+
+        test('a reminder he set in his own chat after reading mail stays in listJobs; a marked run\'s reminder is hidden', async () => {
+            const when = (m) => new Date(Date.now() + m * 60e3).toISOString();
+            await executor.execute('setReminder', { time: when(60), message: 'Renew the passport' }, inChat('whatsapp:assistant', OWNER_LID, MAIL));
+            const marked = { message: { source: 'scheduler', metadata: { chatId: 'scheduled_mail_1', jobName: 'mail', jobRun: { name: 'mail', runId: 'mail_1', madeByJob: false, markOwner: true } } }, untrustedTaint: MAIL };
+            await executor.execute('setReminder', { time: when(90), message: 'Reply yes and I will pay' }, marked);
+
+            const listed = await executor.execute('listJobs', {}, inChat('whatsapp:assistant', OWNER_LID));
+
+            const tasks = listed.jobs.map(j => j.task);
+            expect(tasks).toContain('Reminder: Renew the passport');
+            expect(JSON.stringify(listed)).not.toContain('Reply yes and I will pay');
         });
     });
 

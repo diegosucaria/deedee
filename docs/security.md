@@ -699,7 +699,10 @@ content, or was created by a run that did". Re-saving such a job from the
 dashboard keeps the taint while the task text is unchanged; rewriting the
 task is the owner's own instruction and clears it. A change through
 `scheduleJob` (the same name) keeps the taint whatever the new task says:
-the model writes that task and may copy what was planted. A job or reminder
+the model writes that task and may copy what was planted. A run that read
+untrusted content adds its own taint only when it writes new task text: new
+times and an ISO end date carry no third party's words, and moving a job
+next to a meeting reads the calendar. A job or reminder
 that a tainted run creates from a contact's chat reports to the owner
 channel, never to that chat. A job's result only ever goes to the owner:
 his own WhatsApp or Telegram chat where he made it, or else the owner
@@ -717,8 +720,9 @@ form re-save of the same text) makes none. A one-time task that ends with
 no answer is not run again (a thrown error is retried up to three times,
 unless the task was deleted, changed or paused meanwhile). No user job
 starts while its last run is still going. `cancelJob` refuses a built-in job, as the Tasks page does.
-`listJobs` leaves out the task of a job a tainted run made (`taskHidden`); a
-change without a task keeps it, and keeps its taint. A new job's name from a
+`listJobs` leaves out the task of a job a tainted run made (`taskHidden`),
+though not the text of a reminder he set in his own chat; a change without a
+task keeps it, and keeps its taint. A new job's name from a
 run that read untrusted content is a short slug, and an end date is an ISO
 date, so neither can carry a sentence back to a clean run through
 `listJobs`. The dashboard compares task texts without their line

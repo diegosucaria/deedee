@@ -177,15 +177,21 @@ class SchedulerExecutor extends BaseExecutor {
                 // Left out, the end date stays as it was.
                 const until = expiresAt || existing?.metadata?.expiresAt || undefined;
                 if (prev && sameTask && sameCron && (until ?? null) === (existing.metadata?.expiresAt ?? null)) {
-                    return { success: true, info: `Job '${jobName}' already runs at '${cron}' with that task; nothing changed.` };
+                    return existing.metadata?.enabled === false
+                        ? { success: true, info: `Job '${jobName}' has that schedule and task, and it is paused; nothing changed. The owner turns it on in Tasks.` }
+                        : { success: true, info: `Job '${jobName}' already runs at '${cron}' with that task; nothing changed.` };
                 }
                 // A job keeps the taint it was made with, whatever the change:
                 // the model writes the new task, and may copy what a third
                 // party planted. Only the owner's own re-save in the Tasks form
-                // clears it. A row can be tainted with no sources named.
-                let carried = taint;
+                // clears it. A row can be tainted with no sources named. A run
+                // that read untrusted content taints the job only when it
+                // writes new task text: new times and an ISO end date carry no
+                // third party's words, and "move my briefing before my first
+                // meeting" reads his calendar.
+                let carried = sameTask ? {} : taint;
                 if (prev?.tainted === true) {
-                    const merged = taintPayloadFields([...(prev.taintSources || []), ...(taint.taintSources || [])]);
+                    const merged = taintPayloadFields([...(prev.taintSources || []), ...(carried.taintSources || [])]);
                     carried = { tainted: true, ...(merged.taintSources ? { taintSources: merged.taintSources } : {}) };
                 }
                 // An unchanged task keeps its tool list.
@@ -323,8 +329,11 @@ class SchedulerExecutor extends BaseExecutor {
                     const meta = job.metadata || {};
                     const payload = meta.payload || {};
                     // A task a run wrote after reading untrusted content may hold a
-                    // third party's words: this list is trusted, so it leaves them out.
-                    const taskHidden = payload.tainted === true;
+                    // third party's words: this list is trusted, so it leaves them
+                    // out. A reminder he set in his own chat stays: it only repeats
+                    // a text he will read anyway, and he must be able to find it.
+                    const ownReminder = payload.isReminder === true && payload.markOnDelivery !== true;
+                    const taskHidden = payload.tainted === true && !ownReminder;
                     if (taskHidden) hidden = true;
 
                     jobList.push({
@@ -332,6 +341,7 @@ class SchedulerExecutor extends BaseExecutor {
                         cron: meta.cronExpression, // Original rule
                         task: taskHidden ? null : (payload.task || 'No description'),
                         ...(taskHidden ? { taskHidden: true } : {}),
+                        ...(meta.enabled === false ? { paused: true } : {}),
                         nextInvocation: job.nextInvocation() ? job.nextInvocation().toISOString() : null,
                         expiresAt: meta.expiresAt
                     });

@@ -773,10 +773,12 @@ class Scheduler {
                 // done part of its work. The owner hears once, where its result
                 // would have gone; the breaker's own note goes only to the bell.
                 // A run that paused on an approval card ends with no text: the
-                // card asks him. A run that just gave no answer tells him.
-                const paused = Array.isArray(summary?.toolOutputs)
-                    && summary.toolOutputs.some(o => /^Action PAUSED/.test(String(o?.result?.info || '')));
-                const why = final?.isError ? 'error' : stoppedWith || (!final && !mediaSent && !paused ? 'silent' : null);
+                // card asks him. A run that sent its answer with sendMessage has
+                // answered. A run that just gave no answer tells him.
+                const outputs = Array.isArray(summary?.toolOutputs) ? summary.toolOutputs : [];
+                const paused = outputs.some(o => /^Action PAUSED/.test(String(o?.result?.info || '')));
+                const sent = outputs.some(o => o?.name === 'sendMessage' && o?.result?.success === true);
+                const why = final?.isError ? 'error' : stoppedWith || (!final && !mediaSent && !paused && !sent ? 'silent' : null);
                 if (isOneOff && why) {
                     await this._tellTaskFailed(name, currentPayload, { why });
                     // Logged as a failure; the catch below neither retries it nor tells him again.
