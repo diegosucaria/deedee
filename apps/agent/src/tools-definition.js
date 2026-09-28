@@ -277,7 +277,7 @@ const toolDefinitions = [
       {
         name: "scheduleJob",
         category: "scheduler",
-        description: "Schedule a recurring task using cron syntax. The task must be a simple description that the agent will execute later.",
+        description: "Schedule a recurring task using cron syntax. The task must be a simple description that the agent will execute later. To change a job (its times, its task or its end date), call this again with the same name: the job keeps its saved state and still reports where it was made. Never cancel a job to change it. A run that has nothing to report answers [SILENT] and nothing is sent.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -302,7 +302,7 @@ const toolDefinitions = [
       {
         name: "cancelJob",
         category: "scheduler",
-        description: "Cancel a scheduled job by name.",
+        description: "Delete a scheduled job by name, with its saved state. To change a job instead, call scheduleJob with the same name.",
         parameters: {
           type: "OBJECT",
           properties: { name: { type: "STRING" } },

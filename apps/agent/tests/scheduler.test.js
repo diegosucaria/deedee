@@ -395,14 +395,15 @@ describe('Scheduler & Smart Notifications', () => {
             expect(agent.processMessage).toHaveBeenCalledTimes(1);
             expect(spy).toHaveBeenCalledWith(
                 expect.objectContaining({ text: 'Final result: turned off the lights' }),
-                expect.objectContaining({ task: 'turn off lights' }),
-                false // msgSource === 'scheduler' → alreadyDelivered=false
+                expect.objectContaining({ task: 'turn off lights' })
             );
         });
 
-        it('skips _processSmartNotification when user-origin already received the reply', async () => {
+        it('a job made in a chat runs in its own run chat and its result still goes through the smart notification', async () => {
+            // It used to run inside that chat, send every reply straight out and
+            // skip the smart notification, so a [SILENT] answer reached the owner.
             agent.processMessage = jest.fn().mockImplementation(async (msg, cb) => {
-                await cb({ content: 'Done' });
+                await cb({ content: 'Done', source: msg.source, metadata: { chatId: msg.metadata.chatId } });
             });
             const spy = jest.spyOn(scheduler, '_processSmartNotification').mockResolvedValue({});
 
@@ -413,8 +414,14 @@ describe('Scheduler & Smart Notifications', () => {
             });
             await callback();
 
-            // alreadyDelivered=true → _processSmartNotification returns early
-            expect(spy).toHaveBeenCalledWith(expect.anything(), expect.anything(), true);
+            const msg = agent.processMessage.mock.calls[0][0];
+            expect(msg.source).toBe('scheduler');
+            expect(msg.metadata.chatId).toMatch(/^scheduled_task_2_\d{13}$/);
+            expect(msg.metadata.jobOrigin).toEqual({ source: 'whatsapp', chatId: '12345@s.whatsapp.net' });
+            expect(msg.content).toContain('[SILENT]');
+            expect(spy).toHaveBeenCalledWith(expect.objectContaining({ text: 'Done' }), expect.objectContaining({ task: 'something' }));
+            // The interfaces service only logs a scheduler reply.
+            expect(agent.interface.send).toHaveBeenCalledWith(expect.objectContaining({ source: 'scheduler' }));
         });
 
         it('retry closure increments retryCount per attempt (regression for #145-style closure bug)', async () => {
@@ -427,7 +434,7 @@ describe('Scheduler & Smart Notifications', () => {
             const scheduleSpy = jest.spyOn(scheduler, 'scheduleOneOff').mockImplementation(() => {});
 
             const callback = scheduler._buildAgentInstructionCallback('task_retry', {
-                task: 'fails', retryCount: 0, targetSource: 'scheduler'
+                task: 'fails', retryCount: 0, isOneOff: true, targetSource: 'scheduler'
             });
 
             // First run fails → reschedules with retryCount=1

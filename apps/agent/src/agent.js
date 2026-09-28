@@ -3139,6 +3139,8 @@ class Agent {
       const errReply = createAssistantMessage(continuation?.fallbackText ? `${continuation.fallbackText}\n⚠️ ${userMessage}` : `⚠️ ${userMessage}`);
       errReply.metadata = { chatId: message.metadata?.chatId, ...approvedMeta(continuation) };
       errReply.source = message.source;
+      // A job run keeps this reply from the owner (Scheduler._processSmartNotification).
+      errReply.isError = true;
       // After an approved call the history must show it ran, or a later turn may run it again.
       if (continuation) {
         try { this.db.saveMessage(errReply); } catch (saveErr) { console.warn('[Agent] Could not store the approved outcome:', saveErr.message); }

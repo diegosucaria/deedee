@@ -5,6 +5,18 @@ const { taintFromPayload } = require('./utils/untrusted-content');
 // delivered, marked "(late)", when it is less than this overdue.
 const LATE_REMINDER_MAX_MS = 24 * 60 * 60 * 1000;
 
+// Every run of a job gets this note after its task.
+const JOB_RUN_NOTE = `[SYSTEM: This is a recurring job. To track changes between runs, use 'getJobState' to check previous data and 'saveJobState' to save new data. IMPORTANT: If the result of this task is "nothing to report" or "no action needed", prefix your ENTIRE response with the tag [SILENT] (e.g. "[SILENT] No commitments found."). This prevents unnecessary notifications to the user. Only omit [SILENT] when you have genuinely actionable or interesting information to share. If this run already sent its result with 'sendMessage', answer with only [SILENT], so it does not go out twice.]`;
+
+// A reply that starts with [SILENT] has nothing to report. The model
+// sometimes puts spaces or markdown around the tag.
+const SILENT_TAG = /^[\s*_`]*\[silent\][\s*_`]*/i;
+const isSilentReply = (text) => SILENT_TAG.test(String(text || ''));
+
+// Chats a job can be made in and report back to. A web chat is left out:
+// nobody watches it, so a job made there reports to the owner channel.
+const JOB_CHAT_CHANNELS = ['whatsapp', 'telegram', 'slack'];
+
 class Scheduler {
     constructor(agent) {
         this.agent = agent;
@@ -305,28 +317,57 @@ class Scheduler {
         console.log(`[Scheduler] Loaded ${Object.keys(this.jobs).length} jobs from DB.`);
     }
 
+    /**
+     * The chat a job was made in, or null: WhatsApp, Telegram, Slack or web.
+     * A run that no chat started (the Tasks form, a system job) has none.
+     */
+    _jobOrigin(payload) {
+        const source = String(payload?.targetSource || '');
+        const chatId = payload?.targetChatId ? String(payload.targetChatId) : '';
+        const channel = source.split(':')[0];
+        if (!chatId || !/^(?:whatsapp|telegram|slack|web)$/.test(channel)) return null;
+        if (/^(?:scheduled|system)_/.test(chatId)) return null;
+        return { source, chatId };
+    }
+
+    /**
+     * Where a job's result goes when it has something to say: the chat it
+     * was made in (WhatsApp, Telegram or Slack), or null for the owner channel.
+     * @returns {{ channel: string, target: string } | null} channel keeps its ':session' suffix
+     */
+    _jobChatTarget(payload) {
+        const origin = this._jobOrigin(payload);
+        if (!origin || !JOB_CHAT_CHANNELS.includes(origin.source.split(':')[0])) return null;
+        return { channel: origin.source, target: origin.chatId };
+    }
+
     async _processSmartNotification(result, payload, forceSilent = false) {
         if (forceSilent) return result;
 
         try {
             if (this.agent.interface && this.agent.settings) {
-                // Owner channel from fresh settings: notification_channel plus the
-                // id that channel needs (owner_phone or ALLOWED_TELEGRAM_IDS).
+                // A job made in a chat answers in that chat. Any other goes to
+                // the owner channel from fresh settings: notification_channel
+                // plus the id that channel needs (owner_phone or ALLOWED_TELEGRAM_IDS).
                 const delivery = this._delivery();
-                const owner = delivery.resolveOwnerTarget();
+                const chat = this._jobChatTarget(payload);
+                const owner = chat || delivery.resolveOwnerTarget();
                 const channel = owner ? owner.channel : 'none';
 
-                console.log(`[Scheduler] Smart Notification Evaluation - Owner channel: ${owner ? `${owner.channel} (${owner.target})` : 'MISSING'}`);
+                console.log(`[Scheduler] Smart Notification Evaluation - ${chat ? 'Job chat' : 'Owner channel'}: ${owner ? `${owner.channel} (${owner.target})` : 'MISSING'}`);
 
                 if (owner) {
                     const taskLower = (payload.task || '').toLowerCase();
                     let shouldNotify = false;
                     let notificationText = null;
 
-                    // 0. Check for error messages — never send raw errors to user
+                    // 0. Check for error messages — never send raw errors to user.
+                    // A job run says whether its final reply was the agent's own
+                    // error reply; other callers are judged by the text.
                     if (result && result.text) {
                         const text = result.text;
-                        if (text.startsWith('⚠️') || text.includes('exception TypeError') || text.includes('fetch failed') || text.includes('ECONNRESET')) {
+                        const looksLikeError = text.startsWith('⚠️') || text.includes('exception TypeError') || text.includes('fetch failed') || text.includes('ECONNRESET');
+                        if (typeof result.isError === 'boolean' ? result.isError : looksLikeError) {
                             console.log(`[Scheduler] Smart Notification: Suppressing error notification: ${text.substring(0, 100)}`);
                             result.decision = 'silent';
                             result.decisionReason = 'Error message suppressed';
@@ -338,8 +379,8 @@ class Scheduler {
                     if (result && result.text) {
                         const text = result.text;
 
-                        if (text.startsWith('[SILENT]') || text.startsWith('[silent]')) {
-                            const reasoning = text.replace(/^\[SILENT\]\s*/i, '').trim();
+                        if (isSilentReply(text)) {
+                            const reasoning = text.replace(SILENT_TAG, '').trim();
                             console.log(`[Scheduler] Smart Notification: Agent signaled [SILENT]. Suppressing notification.`);
                             console.log(`[Scheduler] Agent reasoning: ${reasoning.substring(0, 200)}`);
                             result.text = reasoning;
@@ -372,7 +413,8 @@ class Scheduler {
 
                         // If it's NOT an action and we haven't decided it's NOT worthy yet, we notify by default.
                         // Actions are quiet by default unless explicitly asked to alert.
-                        if (!shouldNotify && !isAction) {
+                        // A job made in a chat always answered there, actions too.
+                        if (!shouldNotify && (!isAction || chat)) {
                             shouldNotify = true;
                         }
 
@@ -389,8 +431,12 @@ class Scheduler {
                             // backoff and tries the other owner channel after two failures.
                             // No content dedupe: a job that fires every 5 minutes with
                             // the same text means every one of them.
+                            // A run held inside that chat (JOB_OWN_CHAT=0) already saved
+                            // its reply there: the same id keeps the thread mirror from
+                            // storing a second copy.
                             const outcome = await delivery.deliver('job_notification', owner.channel, owner.target,
-                                { content: notificationText, type: 'text' }, { origin, dedupe: false });
+                                { content: notificationText, type: 'text' },
+                                { origin, dedupe: false, ...(result?.savedReplyId ? { id: result.savedReplyId } : {}) });
                             if (result) {
                                 if (outcome.delivered) {
                                     result.decision = 'notified';
@@ -437,25 +483,30 @@ class Scheduler {
     }
 
     /**
-     * Build a callback that runs a persisted agent_instruction through the LLM and
-     * routes the output through _processSmartNotification.
+     * Build the callback for every job that runs an agent turn: persisted jobs
+     * (loadJobs), the scheduleJob and scheduleTask tools, and the Tasks form.
+     * Each retry gets a fresh closure with the incremented counter, the text
+     * of the latest reply wins, and the final result goes through
+     * _processSmartNotification.
      *
-     * Shared between loadJobs() (persisted jobs) and executors/scheduler.js
-     * scheduleTask (in-memory one-offs). Before unification, the in-memory path
-     * diverged from reconstructed — no smart notification, no text accumulation,
-     * and a stale retry closure that captured retryCount=0 indefinitely.
-     * This helper fixes all three: uses createCallback so each retry receives a
-     * fresh closure with the incremented counter, accumulates text across replies,
-     * and runs smart notification on the final result.
+     * A job runs as a job wherever it was made: its own run chat, the
+     * scheduler source, its tool list and the [SILENT] note. The chat it was
+     * made in only decides where the result goes. Until 2026-09 a job made in
+     * a chat ran inside that chat, and every reply went straight out, the
+     * [SILENT] tag and the "Thinking..." lines too. JOB_OWN_CHAT=0 runs it
+     * inside that chat again; its replies still wait for the end of the run.
      */
     _buildAgentInstructionCallback(name, payload) {
         const createCallback = (currentPayload) => async () => {
             console.log(`[Scheduler] Executing task '${name}': ${currentPayload.task} (Retry: ${currentPayload.retryCount || 0})`);
 
-            const msgSource = currentPayload.targetSource || 'scheduler';
+            const origin = this._jobOrigin(currentPayload);
+            const inChat = !!origin && process.env.JOB_OWN_CHAT === '0';
             const msgMeta = {
-                chatId: currentPayload.targetChatId || `scheduled_${name}_${Date.now()}`,
+                chatId: inChat ? origin.chatId : `scheduled_${name}_${Date.now()}`,
                 jobName: name,
+                // The chat the job came from: approvals show their card there too.
+                ...(origin && !inChat ? { jobOrigin: origin } : {}),
                 ...(currentPayload.model ? { forceModel: currentPayload.model } : {}),
                 ...(currentPayload.allowedTools ? { allowedTools: currentPayload.allowedTools } : {})
             };
@@ -464,20 +515,29 @@ class Scheduler {
             if (inherited.length > 0) msgMeta.untrustedTaint = inherited;
 
             let executionResult = null;
+            let savedReplyId = null;
+            let finalIsError = false;
             try {
                 await this.agent.processMessage({
                     role: 'user',
-                    content: `Scheduled Task: ${currentPayload.task}\n\n[SYSTEM: This is a recurring job. To track changes between runs, use 'getJobState' to check previous data and 'saveJobState' to save new data. IMPORTANT: If the result of this task is "nothing to report" or "no action needed", prefix your ENTIRE response with the tag [SILENT] (e.g. "[SILENT] No commitments found."). This prevents unnecessary notifications to the user. Only omit [SILENT] when you have genuinely actionable or interesting information to share.]`,
-                    source: msgSource,
+                    content: `Scheduled Task: ${currentPayload.task}\n\n${JOB_RUN_NOTE}`,
+                    source: inChat ? origin.source : 'scheduler',
                     metadata: msgMeta
                 }, async (reply) => {
-                    let sent;
-                    if (this.agent.interface) {
+                    // The interfaces service only logs a scheduler reply. A run
+                    // inside a chat sends nothing here: only its final reply may
+                    // go out, after the run, and not when it is [SILENT].
+                    let sent = true;
+                    if (!inChat && this.agent.interface) {
                         sent = await this.agent.interface.send(reply);
                     }
                     // Capture reply for smart notification.
                     // createAssistantMessage uses 'content', not 'text'.
                     const replyText = reply.content || reply.text;
+                    if (replyText) {
+                        savedReplyId = reply.id || null;
+                        finalIsError = reply.isError === true;
+                    }
                     if (!executionResult) {
                         executionResult = reply;
                         if (replyText) executionResult.text = replyText;
@@ -494,11 +554,11 @@ class Scheduler {
                 if (!executionResult.text) {
                     executionResult.text = String(executionResult.content || '');
                 }
+                if (inChat && savedReplyId) executionResult.savedReplyId = savedReplyId;
+                // A real result may start with ⚠️; only the agent's own error reply is held back.
+                executionResult.isError = finalIsError;
 
-                // Skip smart notification if the agent already delivered to a user-facing source
-                // (the callback's interface.send above sent the reply directly to origin).
-                const alreadyDelivered = msgSource !== 'scheduler';
-                return await this._processSmartNotification(executionResult, currentPayload, alreadyDelivered);
+                return await this._processSmartNotification(executionResult, currentPayload);
 
             } catch (error) {
                 console.error(`[Scheduler] Task '${name}' failed:`, error.message);
@@ -506,7 +566,12 @@ class Scheduler {
                 const currentRetry = currentPayload.retryCount || 0;
                 const MAX_RETRIES = 3;
 
-                if (currentRetry < MAX_RETRIES) {
+                // A repeating job runs again at its next time. A retry would
+                // take its name as a one-off, and a one-off is deleted once it
+                // has run, so one failed run used to end the job for good.
+                if (!currentPayload.isOneOff) {
+                    console.warn(`[Scheduler] Job '${name}' failed; it runs again at its next scheduled time.`);
+                } else if (currentRetry < MAX_RETRIES) {
                     console.log(`[Scheduler] Rescheduling '${name}' for retry ${currentRetry + 1}/${MAX_RETRIES} in 60s.`);
                     const nextPayload = { ...currentPayload, retryCount: currentRetry + 1 };
                     // Fresh closure with incremented counter — otherwise reusing the same

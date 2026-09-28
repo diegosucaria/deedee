@@ -1,5 +1,4 @@
 const express = require('express');
-const { taintFromPayload } = require('../utils/untrusted-content');
 const fs = require('fs');
 const path = require('path');
 const browserSecrets = require('../utils/browser-secrets');
@@ -317,42 +316,22 @@ function createInternalRouter(agent) {
             const keepTaint = prev && prev.tainted === true && prev.task === task
                 ? { tainted: true, ...(Array.isArray(prev.taintSources) ? { taintSources: prev.taintSources } : {}) }
                 : {};
+            // A job made in a chat keeps reporting there after an edit here.
             const payload = {
                 task,
+                ...(prev?.targetChatId ? { targetChatId: prev.targetChatId, targetSource: prev.targetSource } : {}),
                 ...keepTaint,
                 ...(model && model !== 'auto' ? { model: model.toUpperCase() } : {}),
                 ...(allowedTools ? { allowedTools } : {}),
                 ...(weekdaysOnly ? { weekdaysOnly: true } : {}),
-                ...(daytimeOnly ? { daytimeOnly: true } : {})
+                ...(daytimeOnly ? { daytimeOnly: true } : {}),
+                ...(isOneOff ? { isOneOff: true } : {})
             };
 
-            const callback = async () => {
-                console.log(`[Scheduler] Executing task: ${task}`);
-                let executionResult = null;
-                await agent.processMessage({
-                    role: 'user',
-                    content: `Scheduled Task: ${task}`,
-                    source: 'scheduler',
-                    metadata: {
-                        chatId: `scheduled_${name}_${Date.now()}`,
-                        // As the callback built at boot sets it: job state tools and the refusal metric read it.
-                        jobName: name,
-                        ...(payload.tainted ? { untrustedTaint: taintFromPayload(payload, `job "${name}"`) } : {}),
-                        ...(payload.model ? { forceModel: payload.model } : {}),
-                        ...(payload.allowedTools ? { allowedTools: payload.allowedTools } : {})
-                    }
-                }, async (reply) => {
-                    let sent;
-                    if (agent.interface) {
-                        sent = await agent.interface.send(reply);
-                    }
-                    if (!executionResult) executionResult = reply;
-                    else if (reply.text) executionResult.text = (executionResult.text || '') + '\n' + reply.text;
-                    // A false from the interface lets _deliverReply record the failure.
-                    return sent;
-                });
-                return executionResult;
-            };
+            // The callback a restart builds. This one used to skip the smart
+            // notification, so a result reached the owner only after the next
+            // restart, and it sent the run no [SILENT] note.
+            const callback = agent.scheduler._buildAgentInstructionCallback(name, payload);
 
             agent.scheduler.scheduleJob(name, cron, callback, {
                 persist: true,

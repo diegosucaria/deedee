@@ -1152,10 +1152,12 @@ class ApprovalService {
         const owner = this._delivery().resolveOwnerTarget();
         if (!owner) return { error: 'no owner channel configured (owner_phone or ALLOWED_TELEGRAM_IDS)' };
         const route = { replyChatId: owner.target, replyChannel: owner.channel, mode: 'deferred', ownerChannel: true };
-        // A job scheduled from a web chat runs with that chat id: show the card
-        // there too, so the owner sees it when he opens the chat.
-        if (unattended && chatId && splitChannel(source).channel === 'web' && !isSyntheticChatId(chatId)) {
-            route.mirror = { channel: 'web', chatId: String(chatId) };
+        // A job scheduled from a web chat: show the card there too, so the
+        // owner sees it when he opens the chat. The run names that chat in
+        // `jobOrigin`; with JOB_OWN_CHAT=0 it runs in the chat itself.
+        const origin = meta.jobOrigin && typeof meta.jobOrigin === 'object' ? meta.jobOrigin : { source, chatId };
+        if (unattended && origin.chatId && splitChannel(origin.source).channel === 'web' && !isSyntheticChatId(origin.chatId)) {
+            route.mirror = { channel: 'web', chatId: String(origin.chatId) };
         }
         return route;
     }
@@ -1218,7 +1220,7 @@ class ApprovalService {
         const ttlMs = route.mode === 'interactive' ? settings.ttlInteractiveMin * 60e3 : settings.ttlDeferredHours * 3600e3;
         const meta = message?.metadata || {};
         const originMeta = {};
-        for (const key of ['jobName', 'allowedTools', 'forceModel', 'session', 'phoneNumber', 'isGroup', 'groupName']) {
+        for (const key of ['jobName', 'jobOrigin', 'allowedTools', 'forceModel', 'session', 'phoneNumber', 'isGroup', 'groupName']) {
             if (meta[key] !== undefined) originMeta[key] = meta[key];
         }
         // What tainted the run: shown on the card, and kept so an approved

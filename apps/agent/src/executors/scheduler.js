@@ -1,5 +1,5 @@
 const { BaseExecutor } = require('./base');
-const { taintPayloadFields, taintFromPayload } = require('../utils/untrusted-content');
+const { taintPayloadFields } = require('../utils/untrusted-content');
 
 /**
  * Where a job, task or reminder created in this run reports, and the taint
@@ -8,11 +8,12 @@ const { taintPayloadFields, taintFromPayload } = require('../utils/untrusted-con
  * tainted and its outward actions ask the owner. Such a job never reports
  * to a contact's chat: when the run did not come from one of the owner's
  * chats, the target is dropped and the owner channel gets the result.
+ * `keep` is the target of a job being changed: it stays where it was made.
  */
-function originFor(context, scheduler) {
+function originFor(context, scheduler, keep = null) {
     const message = context?.message || {};
-    let targetChatId = message.metadata?.chatId;
-    let targetSource = message.source;
+    let targetChatId = keep ? keep.targetChatId : message.metadata?.chatId;
+    let targetSource = keep ? keep.targetSource : message.source;
     const taint = taintPayloadFields(context?.untrustedTaint);
     if (taint.tainted && targetChatId && scheduler && typeof scheduler._isOwnerOrigin === 'function'
         && !scheduler._isOwnerOrigin(targetSource, targetChatId)) {
@@ -22,45 +23,74 @@ function originFor(context, scheduler) {
     return { targetChatId, targetSource, taint };
 }
 
+/**
+ * The tools a job's task needs, picked once when the job is saved, as the
+ * Tasks form does. A job runs with only these; null (no scoper, or it
+ * failed) leaves every tool.
+ */
+async function scopeJobTools(services, task) {
+    const agent = services.agent;
+    if (!agent?.toolScoper) return null;
+    try {
+        const mcpTools = agent.mcp ? await agent.mcp.getTools() : [];
+        return await agent.toolScoper.scope(task, mcpTools);
+    } catch (e) {
+        console.warn(`[Scheduler] Tool scoping failed, the job keeps every tool: ${e.message}`);
+        return null;
+    }
+}
+
 class SchedulerExecutor extends BaseExecutor {
     async execute(name, args, context, callServices) {
         const services = this.getServices(callServices);
         const { scheduler } = services;
-        const { processMessage } = context;
 
         switch (name) {
             case 'scheduleJob': {
                 const { name: jobName, cron, task, expiresAt } = args;
-                const { targetChatId, targetSource, taint } = originFor(context, scheduler);
+                // The same name changes that job in place. Before, the model
+                // cancelled a job and made it again to change its end date; the
+                // new job reported to the chat the change came from, and the
+                // cancel deleted its saved state.
+                const existing = scheduler.jobs?.[jobName];
+                const prev = existing?.metadata?.payload || null;
+                if (prev?.isSystem) {
+                    return { error: `'${jobName}' is a built-in job. Its schedule and task cannot be changed here; the owner can change its model and tools on the Tasks page.` };
+                }
+                const keep = prev ? { targetChatId: prev.targetChatId, targetSource: prev.targetSource } : null;
+                const { targetChatId, targetSource, taint } = originFor(context, scheduler, keep);
+                // An unchanged task keeps its tool list and the taint it was
+                // made with, as a re-save from the Tasks form does.
+                const sameTask = !!prev && prev.task === task;
+                const carried = sameTask && prev.tainted === true
+                    ? taintPayloadFields([...(prev.taintSources || []), ...(taint.taintSources || [])])
+                    : taint;
+                const allowedTools = sameTask && Array.isArray(prev.allowedTools)
+                    ? prev.allowedTools
+                    : await scopeJobTools(services, task);
+                const until = expiresAt || existing?.metadata?.expiresAt || undefined;
 
-                // NOTE: Recurring jobs (scheduleJob) generally do NOT retry on failure in the same way 
-                // because they run again on the next cron interval. 
-                // However, user asked for "one-offs" specifically. 
-                // We'll leave recurring jobs as-is for now (simple execution) unless requested otherwise.
-
-                const callback = async () => {
-                    const meta = { chatId: targetChatId || `scheduled_${jobName}_${Date.now()}`, jobName };
-                    const inherited = taintFromPayload(taint, `job "${jobName}"`);
-                    if (inherited.length > 0) meta.untrustedTaint = inherited;
-                    await processMessage({
-                        role: 'user',
-                        content: `Scheduled Task: ${task}`,
-                        source: targetSource || 'scheduler',
-                        metadata: meta
-                    }, async (reply) => {
-                        if (services.interface) {
-                            await services.interface.send(reply);
-                        }
-                    });
+                const payload = {
+                    task,
+                    targetChatId,
+                    targetSource,
+                    ...(prev?.model ? { model: prev.model } : {}),
+                    ...(allowedTools ? { allowedTools } : {}),
+                    ...(prev?.weekdaysOnly ? { weekdaysOnly: true } : {}),
+                    ...(prev?.daytimeOnly ? { daytimeOnly: true } : {}),
+                    ...carried
                 };
+                // The same callback as after a restart: the run gets the
+                // [SILENT] note, and only its final reply may go out.
+                const callback = scheduler._buildAgentInstructionCallback(jobName, payload);
 
                 scheduler.scheduleJob(jobName, cron, callback, {
                     persist: true,
                     taskType: 'agent_instruction',
-                    payload: { task, targetChatId, targetSource, ...taint },
-                    expiresAt: expiresAt
+                    payload,
+                    expiresAt: until
                 });
-                return { success: true, info: `Job '${jobName}' scheduled for '${cron}'` + (expiresAt ? ` until ${expiresAt}` : '') };
+                return { success: true, info: `Job '${jobName}' ${prev ? 'changed' : 'scheduled'}: '${cron}'` + (until ? ` until ${until}` : '') };
             }
 
             case 'setReminder': {
@@ -114,12 +144,14 @@ class SchedulerExecutor extends BaseExecutor {
                 // system-origin results, [SILENT] support, and a proper retry closure
                 // (the old inline version captured retryCount=0 per-session, never
                 // hitting MAX_RETRIES until the process restarted).
+                const allowedTools = await scopeJobTools(services, task);
                 const initialPayload = {
                     task,
                     isOneOff: true,
                     targetChatId,
                     targetSource,
                     retryCount: 0,
+                    ...(allowedTools ? { allowedTools } : {}),
                     ...taint
                 };
 
