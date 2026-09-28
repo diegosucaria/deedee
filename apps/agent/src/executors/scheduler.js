@@ -23,21 +23,38 @@ function originFor(context, scheduler, keep = null) {
     return { targetChatId, targetSource, taint };
 }
 
-/**
- * The tools a job's task needs, picked once when the job is saved, as the
- * Tasks form does. A job runs with only these; null (no scoper, or it
- * failed) leaves every tool.
- */
-async function scopeJobTools(services, task) {
-    const agent = services.agent;
-    if (!agent?.toolScoper) return null;
-    try {
-        const mcpTools = agent.mcp ? await agent.mcp.getTools() : [];
-        return await agent.toolScoper.scope(task, mcpTools);
-    } catch (e) {
-        console.warn(`[Scheduler] Tool scoping failed, the job keeps every tool: ${e.message}`);
-        return null;
+// A job the model makes runs at most every 15 minutes. A run that read a
+// planted page could otherwise make one that runs every second: a job run
+// skips the chat rate limit, and a [SILENT] answer makes no sound. The Tasks
+// form is the owner's own and has no such floor.
+const MIN_JOB_MINUTES = 15;
+
+/** How many minutes of each hour a cron minute field fires on (1 to 60). */
+function minutesPerHour(field) {
+    let count = 0;
+    for (const part of String(field).split(',')) {
+        const [range, stepText] = part.split('/');
+        const step = stepText ? Math.max(1, parseInt(stepText, 10) || 1) : 1;
+        let span = 60;
+        if (range.includes('-')) {
+            const [from, to] = range.split('-').map(Number);
+            if (Number.isFinite(from) && Number.isFinite(to) && to >= from) span = to - from + 1;
+        } else if (range !== '*') {
+            // "5" is one minute; "5/20" starts at 5 and repeats.
+            span = stepText ? 60 - (Number(range) || 0) : 1;
+        }
+        count += Math.ceil(span / step);
     }
+    return Math.min(Math.max(count, 1), 60);
+}
+
+/** Why a cron the model gave runs too often, or null. */
+function tooOften(cron) {
+    const fields = String(cron || '').trim().split(/\s+/);
+    if (fields.length === 6) return 'it has a seconds field';
+    if (fields.length !== 5) return null;
+    const perHour = minutesPerHour(fields[0]);
+    return perHour > 60 / MIN_JOB_MINUTES ? `it runs ${perHour} times an hour` : null;
 }
 
 class SchedulerExecutor extends BaseExecutor {
@@ -48,6 +65,10 @@ class SchedulerExecutor extends BaseExecutor {
         switch (name) {
             case 'scheduleJob': {
                 const { name: jobName, cron, task, expiresAt } = args;
+                const often = tooOften(cron);
+                if (often) {
+                    return { error: `A job made here runs at most every ${MIN_JOB_MINUTES} minutes, and '${cron}' does not: ${often}. Pick a slower schedule; the owner can make a faster job on the Tasks page.` };
+                }
                 // The same name changes that job in place. Before, the model
                 // cancelled a job and made it again to change its end date; the
                 // new job reported to the chat the change came from, and the
@@ -59,16 +80,25 @@ class SchedulerExecutor extends BaseExecutor {
                 }
                 const keep = prev ? { targetChatId: prev.targetChatId, targetSource: prev.targetSource } : null;
                 const { targetChatId, targetSource, taint } = originFor(context, scheduler, keep);
-                // An unchanged task keeps its tool list and the taint it was
-                // made with, as a re-save from the Tasks form does.
+                // A job keeps the taint it was made with, whatever the change:
+                // the model writes the new task, and may copy what a third
+                // party planted. Only the owner's own re-save in the Tasks form
+                // clears it. A row can be tainted with no sources named.
                 const sameTask = !!prev && prev.task === task;
-                const carried = sameTask && prev.tainted === true
-                    ? taintPayloadFields([...(prev.taintSources || []), ...(taint.taintSources || [])])
-                    : taint;
+                let carried = taint;
+                if (prev?.tainted === true) {
+                    const merged = taintPayloadFields([...(prev.taintSources || []), ...(taint.taintSources || [])]);
+                    carried = { tainted: true, ...(merged.taintSources ? { taintSources: merged.taintSources } : {}) };
+                }
                 const allowedTools = sameTask && Array.isArray(prev.allowedTools)
                     ? prev.allowedTools
-                    : await scopeJobTools(services, task);
+                    : await scheduler.scopeJobTools(task, { recurring: true });
+                // Left out, the end date stays as it was.
                 const until = expiresAt || existing?.metadata?.expiresAt || undefined;
+                // The form's Weekdays and Daytime marks describe its times.
+                const sameCron = !!prev && String(existing.metadata?.cronExpression) === String(cron);
+                // A job the owner paused stays paused: he turns it on in Tasks.
+                const enabled = existing ? existing.metadata?.enabled !== false : true;
 
                 const payload = {
                     task,
@@ -76,8 +106,8 @@ class SchedulerExecutor extends BaseExecutor {
                     targetSource,
                     ...(prev?.model ? { model: prev.model } : {}),
                     ...(allowedTools ? { allowedTools } : {}),
-                    ...(prev?.weekdaysOnly ? { weekdaysOnly: true } : {}),
-                    ...(prev?.daytimeOnly ? { daytimeOnly: true } : {}),
+                    ...(sameCron && prev.weekdaysOnly ? { weekdaysOnly: true } : {}),
+                    ...(sameCron && prev.daytimeOnly ? { daytimeOnly: true } : {}),
                     ...carried
                 };
                 // The same callback as after a restart: the run gets the
@@ -88,9 +118,14 @@ class SchedulerExecutor extends BaseExecutor {
                     persist: true,
                     taskType: 'agent_instruction',
                     payload,
-                    expiresAt: until
+                    expiresAt: until,
+                    enabled
                 });
-                return { success: true, info: `Job '${jobName}' ${prev ? 'changed' : 'scheduled'}: '${cron}'` + (until ? ` until ${until}` : '') };
+                return {
+                    success: true,
+                    info: `Job '${jobName}' ${prev ? 'changed' : 'scheduled'}: '${cron}'` + (until ? ` until ${until}` : '')
+                        + (enabled ? '' : '. It stays paused; the owner turns it on in Tasks.')
+                };
             }
 
             case 'setReminder': {
@@ -144,7 +179,7 @@ class SchedulerExecutor extends BaseExecutor {
                 // system-origin results, [SILENT] support, and a proper retry closure
                 // (the old inline version captured retryCount=0 per-session, never
                 // hitting MAX_RETRIES until the process restarted).
-                const allowedTools = await scopeJobTools(services, task);
+                const allowedTools = await scheduler.scopeJobTools(task, { recurring: false });
                 const initialPayload = {
                     task,
                     isOneOff: true,
@@ -193,4 +228,4 @@ class SchedulerExecutor extends BaseExecutor {
     }
 }
 
-module.exports = { SchedulerExecutor, originFor };
+module.exports = { SchedulerExecutor, originFor, tooOften };

@@ -222,10 +222,19 @@ class CommunicationExecutor extends BaseExecutor {
                     const ledgerOpts = { origin: message?.metadata?.jobName ? `job:${message.metadata.jobName}` : 'sendMessage', dedupe: 'pending' };
                     const queuedText = (what) => `${what} is queued and will be retried, so it should not be sent again.`;
                     const isMedia = payload.type === 'image' || payload.type === 'audio';
+                    // A run of a job made in one of his chats, which read
+                    // third-party content, marks what it sends him. It used to
+                    // run inside that chat, where its tool results held back his
+                    // next word for messages, email and the house; the thread
+                    // mirror keeps the mark instead (Scheduler, jobOrigin).
+                    const fromChatJob = !!message?.metadata?.jobOrigin;
+                    const ownerTaint = toOwner && fromChatJob ? (taintPayloadFields(context?.untrustedTaint).taintSources || []) : [];
+                    const ownerMeta = { session: metadata.session, ...(ownerTaint.length > 0 ? { jobTaint: ownerTaint } : {}) };
+                    if (ownerTaint.length > 0) payload.metadata = { ...payload.metadata, jobTaint: ownerTaint };
 
                     if (toOwner && !isMedia) {
                         const outcome = await delivery.deliver(kind, svc, metadata.chatId,
-                            { content: resolvedContent, type: 'text', metadata: { session: metadata.session } }, ledgerOpts);
+                            { content: resolvedContent, type: 'text', metadata: ownerMeta }, ledgerOpts);
                         if (!outcome.delivered && outcome.queued) {
                             return { success: true, status: 'queued', queued: true, info: `Not delivered to ${cleanTo} yet: the messaging service did not take it. ${queuedText('It')}` };
                         }
@@ -243,7 +252,7 @@ class CommunicationExecutor extends BaseExecutor {
                             // The words matter more than the picture: they go
                             // through the ledger as text, so they still arrive.
                             const outcome = await delivery.deliver(kind, svc, metadata.chatId,
-                                { content: caption, type: 'text', metadata: { session: metadata.session } }, ledgerOpts);
+                                { content: caption, type: 'text', metadata: ownerMeta }, ledgerOpts);
                             if (outcome.delivered) {
                                 return { success: true, status: 'partial', info: `The picture to ${cleanTo} was not delivered. Its text went out without the picture, so it should not be sent again.` };
                             }

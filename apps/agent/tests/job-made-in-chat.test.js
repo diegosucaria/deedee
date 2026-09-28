@@ -5,7 +5,7 @@
  * The model cancelled it and made it again, so the new job belonged to the
  * WhatsApp chat. A job made in a chat ran inside that chat and sent every
  * reply straight out, so each run sent the owner "[SILENT] No earlier slots
- * found ...". Real SQLite, the real scheduler, executor, Tasks route and
+ * found ...". Real SQLite, the real scheduler, executors, Tasks route and
  * delivery ledger; a scripted model.
  */
 const fs = require('fs');
@@ -16,40 +16,55 @@ const express = require('express');
 const { AgentDB } = require('../src/db');
 const { Scheduler } = require('../src/scheduler');
 const { SchedulerExecutor } = require('../src/executors/scheduler');
+const { CommunicationExecutor } = require('../src/executors/communication');
 const { ApprovalService } = require('../src/services/approval-service');
+const { ToolScoper } = require('../src/services/tool-scoper');
+const { originsHaveTaintedRows } = require('../src/utils/untrusted-content');
 const { createInternalRouter } = require('../src/routes/internal');
 
 const OWNER_DIGITS = '10000000000';
 const OWNER_JID = `${OWNER_DIGITS}@s.whatsapp.net`;
 const OWNER_LID = '200000000000002@lid';
+const CONTACT_JID = '5490000000000@s.whatsapp.net';
+const TG_OWNER = '100000001';
 const CRON = '0 7,11,13 * * 1-5';
-const TASK = "Use my_appointments to find the appointment on Oct 1. Then use find_earlier for it. If there is an earlier slot, use sendMessage to 'me'. Do NOT book it.";
-const SCOPED = ['my_appointments', 'find_earlier', 'sendMessage', 'getJobState', 'saveJobState'];
+const TASK = "Use my_appointments to find the appointment. Then use find_earlier for it. If there is an earlier slot, use sendMessage to 'me'. Do NOT book it.";
+const SCOPED = ['my_appointments', 'find_earlier', 'sendMessage'];
+const MAIL = ['email (personal_gmail)'];
+// Dates from the run's clock: a fixed date turns into an expired job one day.
+const inDays = (days) => new Date(Date.now() + days * 864e5).toISOString().slice(0, 19);
 
 function makeAgent(db) {
-    return {
+    const agent = {
         db,
         settings: {},
         interface: { send: jest.fn().mockResolvedValue(true), broadcast: jest.fn().mockResolvedValue(true) },
         notifications: { create: jest.fn() },
         toolScoper: { scope: jest.fn().mockResolvedValue(SCOPED) },
         mcp: { getTools: jest.fn().mockResolvedValue([]) },
-        processMessage: jest.fn()
+        processMessage: jest.fn().mockResolvedValue({ untrustedSources: [] })
     };
+    // The owner id lookup maps his phone to the @lid id of his WhatsApp chat.
+    agent._getOwnerWaIds = jest.fn(async () => {
+        agent._ownerWaIds = new Set([OWNER_JID, OWNER_LID]);
+        return agent._ownerWaIds;
+    });
+    return agent;
 }
 
-// The model: a progress line while a tool runs, then its final answer.
-// `isError` marks the agent's own error reply, as agent.js does.
-function scriptRun(agent, finalText, { isError = false } = {}) {
+// The model: a progress line while a tool runs, then its last reply.
+// `flags` marks that reply as agent.js does (isError, isStatus, isImplicit).
+function scriptRun(agent, finalText, flags = {}, untrustedSources = []) {
     const ids = [];
     agent.processMessage.mockImplementation(async (msg, send) => {
-        const reply = (content) => {
-            const r = { id: `reply-${ids.length + 1}`, role: 'assistant', content, source: msg.source, metadata: { chatId: msg.metadata.chatId } };
+        const reply = (content, extra = {}) => {
+            const r = { id: `reply-${ids.length + 1}`, role: 'assistant', content, source: msg.source, metadata: { chatId: msg.metadata.chatId }, ...extra };
             ids.push(r.id);
             return r;
         };
-        await send(reply('Thinking... (Checking your appointments...)'));
-        await send(isError ? { ...reply(finalText), isError: true } : reply(finalText));
+        await send(reply('Thinking... (Checking your appointments...)', { isProgress: true }));
+        await send(reply(finalText, flags));
+        return { untrustedSources };
     });
     return ids;
 }
@@ -57,7 +72,7 @@ function scriptRun(agent, finalText, { isError = false } = {}) {
 // What reached a person. The interfaces service only logs a scheduler reply.
 const delivered = (agent) => agent.interface.send.mock.calls.map(c => c[0]).filter(m => m.source !== 'scheduler');
 const inChat = (source, chatId, taint = []) => ({ message: { source, metadata: { chatId } }, untrustedTaint: taint });
-const savedPayload = (db, name) => db.getScheduledJobs().find(j => j.name === name)?.payload;
+const savedRow = (db, name) => db.getScheduledJobs().find(j => j.name === name);
 
 describe('a job made in a chat', () => {
     let dir, db, agent, scheduler, executor, env;
@@ -89,146 +104,372 @@ describe('a job made in a chat', () => {
         jest.restoreAllMocks();
     });
 
-    test('extended from WhatsApp by a cancel and a new job, a [SILENT] run sends nothing', async () => {
-        await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK, expiresAt: '2026-09-25T23:59:00' }, inChat('web', 'web-chat-1'));
-        // The owner asks on WhatsApp for one more week, and the model does what it did.
-        const whatsapp = inChat('whatsapp:assistant', OWNER_LID);
-        await executor.execute('cancelJob', { name: 'check_slots' }, whatsapp);
-        await executor.execute('scheduleJob', {
-            name: 'check_slots', cron: CRON, expiresAt: '2026-10-01T23:59:00',
-            task: `${TASK} If no slots are found, prefix your ENTIRE response with [SILENT] so no message is sent.`
-        }, whatsapp);
-        scriptRun(agent, '[SILENT] No earlier slots found before Oct 1.');
+    describe('what reaches the owner', () => {
+        test('extended from WhatsApp by a cancel and a new job, a [SILENT] run sends nothing', async () => {
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK, expiresAt: inDays(1) }, inChat('web', 'web-chat-1'));
+            // The owner asks on WhatsApp for one more week, and the model does what it did.
+            const whatsapp = inChat('whatsapp:assistant', OWNER_LID);
+            await executor.execute('cancelJob', { name: 'check_slots' }, whatsapp);
+            await executor.execute('scheduleJob', {
+                name: 'check_slots', cron: CRON, expiresAt: inDays(8),
+                task: `${TASK} If no slots are found, prefix your ENTIRE response with [SILENT] so no message is sent.`
+            }, whatsapp);
+            scriptRun(agent, '[SILENT] No earlier slots found.');
 
-        await scheduler.jobs.check_slots.invoke();
+            await scheduler.jobs.check_slots.invoke();
 
-        expect(delivered(agent)).toEqual([]);
-        expect(db.listRecentOutbox({ limit: 5 })).toEqual([]);
-        const run = agent.processMessage.mock.calls[0][0];
-        expect(run.source).toBe('scheduler');
-        expect(run.metadata.chatId).toMatch(/^scheduled_check_slots_\d{13}$/);
-        expect(run.metadata.allowedTools).toEqual(SCOPED);
-        expect(run.content).toContain('prefix your ENTIRE response with the tag [SILENT]');
-        // Job History keeps the run and why it stayed quiet.
-        const { logs } = db.getJobLogs(5);
-        expect(logs).toHaveLength(1);
-        expect(JSON.parse(logs[0].output)).toMatchObject({ decision: 'silent', text: 'No earlier slots found before Oct 1.' });
+            expect(delivered(agent)).toEqual([]);
+            expect(db.listRecentOutbox({ limit: 5 })).toEqual([]);
+            const run = agent.processMessage.mock.calls[0][0];
+            expect(run.source).toBe('scheduler');
+            expect(run.metadata.chatId).toMatch(/^scheduled_check_slots_\d{13}$/);
+            expect(run.metadata.allowedTools).toEqual([...SCOPED, 'getJobState', 'saveJobState']);
+            expect(run.content).toContain('prefix your ENTIRE response with the tag [SILENT]');
+            // Job History keeps the run and why it stayed quiet.
+            const { logs } = db.getJobLogs(5);
+            expect(logs).toHaveLength(1);
+            expect(JSON.parse(logs[0].output)).toMatchObject({ decision: 'silent', text: 'No earlier slots found.' });
+        });
+
+        test('a run with news answers once, in the chat the job was made in, with no progress lines', async () => {
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
+            scriptRun(agent, 'Earlier slot: Sep 30 at 10:00.');
+
+            await scheduler.jobs.check_slots.invoke();
+
+            expect(delivered(agent)).toEqual([expect.objectContaining({
+                source: 'whatsapp', content: 'Earlier slot: Sep 30 at 10:00.', metadata: { chatId: OWNER_LID, session: 'assistant' }
+            })]);
+            expect(db.listRecentOutbox({ limit: 5 })).toEqual([expect.objectContaining({ kind: 'job_notification', target: OWNER_LID, status: 'sent' })]);
+        });
+
+        test('a line about the run is never its result, and "Action X completed" is not news for a repeating job', async () => {
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
+            scriptRun(agent, 'I am stuck in a loop. Stopping now.', { isStatus: true });
+            await scheduler.jobs.check_slots.invoke();
+            scriptRun(agent, '✅ Action sendMessage completed.', { isImplicit: true });
+            await scheduler.jobs.check_slots.invoke();
+
+            expect(delivered(agent)).toEqual([]);
+        });
+
+        test('a result that starts with ⚠️ still goes out; the agent\'s own error reply does not', async () => {
+            await executor.execute('scheduleJob', { name: 'weather', cron: '0 7 * * *', task: 'Check the weather' }, inChat('whatsapp:assistant', OWNER_LID));
+            scriptRun(agent, '⚠️ Storm warning after 3 pm.');
+            await scheduler.jobs.weather.invoke();
+            expect(delivered(agent)).toEqual([expect.objectContaining({ content: '⚠️ Storm warning after 3 pm.' })]);
+
+            agent.interface.send.mockClear();
+            scriptRun(agent, '⚠️ The AI model is currently experiencing high demand. Please try again in a moment.', { isError: true });
+            await scheduler.jobs.weather.invoke();
+            expect(delivered(agent)).toEqual([]);
+        });
+
+        test('a one-time task gets its own note, and confirms a plain action', async () => {
+            const when = new Date(Date.now() + 3600e3).toISOString();
+            await executor.execute('scheduleTask', { time: when, task: 'Turn off the AC' }, inChat('whatsapp:assistant', OWNER_LID));
+            const [name] = Object.keys(scheduler.jobs);
+            scriptRun(agent, '✅ Action ha_call_service completed.', { isImplicit: true });
+
+            await scheduler.jobs[name].invoke();
+
+            const run = agent.processMessage.mock.calls[0][0];
+            expect(run.content).toContain('This is a one-time task');
+            expect(run.content).not.toContain('recurring job');
+            expect(run.metadata.allowedTools).toEqual(SCOPED);
+            expect(delivered(agent)).toEqual([expect.objectContaining({ content: '✅ Action ha_call_service completed.', metadata: { chatId: OWNER_LID, session: 'assistant' } })]);
+        });
+
+        test('after a restart the job is still quiet on a [SILENT] run', async () => {
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
+            await scheduler.stop();
+            scheduler = new Scheduler(agent);
+            await scheduler.loadJobs();
+            scriptRun(agent, '  **[SILENT]** Nothing earlier.');
+
+            await scheduler.jobs.check_slots.invoke();
+
+            expect(delivered(agent)).toEqual([]);
+            expect(agent.processMessage.mock.calls[0][0]).toMatchObject({ source: 'scheduler', metadata: { jobOrigin: { source: 'whatsapp:assistant', chatId: OWNER_LID } } });
+        });
+
+        test('a job made in the web chat reports to the owner channel, and its approval card still shows in that chat', async () => {
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('web', 'web-chat-1'));
+            scriptRun(agent, 'Earlier slot: Sep 30 at 10:00.');
+
+            await scheduler.jobs.check_slots.invoke();
+
+            expect(delivered(agent)).toEqual([expect.objectContaining({ source: 'whatsapp', metadata: { chatId: OWNER_JID, session: 'assistant' } })]);
+            const run = agent.processMessage.mock.calls[0][0];
+            const approvals = new ApprovalService({ ...agent, delivery: scheduler._delivery() });
+            expect(await approvals.route(run)).toMatchObject({ replyChatId: OWNER_JID, mode: 'deferred', mirror: { channel: 'web', chatId: 'web-chat-1' } });
+            approvals.stop();
+        });
+
+        test("a job made in the owner's Telegram chat answers there and keeps the answer in that chat", async () => {
+            process.env.ALLOWED_TELEGRAM_IDS = TG_OWNER;
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('telegram', TG_OWNER));
+            scriptRun(agent, 'Earlier slot: Sep 30 at 10:00.');
+
+            await scheduler.jobs.check_slots.invoke();
+
+            expect(delivered(agent)).toEqual([expect.objectContaining({ source: 'telegram', metadata: { chatId: TG_OWNER } })]);
+            expect(db.getRecentMessageOrigins(TG_OWNER, 5)).toEqual([expect.objectContaining({ role: 'assistant', head: 'Earlier slot: Sep 30 at 10:00.' })]);
+        });
     });
 
-    test('a run with news answers once, in the chat the job was made in, with no progress lines', async () => {
-        await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
-        scriptRun(agent, 'Earlier slot: Sep 30 at 10:00.');
+    describe('old rows aimed at someone else', () => {
+        test('a job saved with a contact chat of his own account, or a Slack channel, still does nothing', async () => {
+            // Before #240 a job took the chat of any run. Those chats are passive:
+            // the agent stores their messages and never ran such a job.
+            for (const [name, targetSource, targetChatId] of [['old_contact', 'whatsapp:user', CONTACT_JID], ['old_slack', 'slack', 'C0EXAMPLE1']]) {
+                db.saveScheduledJob({ name, cronExpression: CRON, taskType: 'agent_instruction', payload: { task: 'Summarise my calendar', targetSource, targetChatId }, enabled: true });
+            }
+            await scheduler.loadJobs();
 
-        await scheduler.jobs.check_slots.invoke();
+            await scheduler.jobs.old_contact.invoke();
+            await scheduler.jobs.old_slack.invoke();
 
-        expect(delivered(agent)).toEqual([expect.objectContaining({
-            source: 'whatsapp', content: 'Earlier slot: Sep 30 at 10:00.', metadata: { chatId: OWNER_LID, session: 'assistant' }
-        })]);
-        expect(db.listRecentOutbox({ limit: 5 })).toEqual([expect.objectContaining({ kind: 'job_notification', target: OWNER_LID, status: 'sent' })]);
+            expect(agent.processMessage).not.toHaveBeenCalled();
+            expect(agent.interface.send).not.toHaveBeenCalled();
+        });
+
+        test("a job made in a contact's chat with the assistant reports to the owner, never to that contact", async () => {
+            db.saveScheduledJob({ name: 'old_assistant_chat', cronExpression: CRON, taskType: 'agent_instruction', payload: { task: 'Summarise my calendar', targetSource: 'whatsapp:assistant', targetChatId: CONTACT_JID }, enabled: true });
+            await scheduler.loadJobs();
+            scriptRun(agent, 'Three meetings today.');
+
+            await scheduler.jobs.old_assistant_chat.invoke();
+
+            expect(delivered(agent)).toEqual([expect.objectContaining({ content: 'Three meetings today.', metadata: { chatId: OWNER_JID, session: 'assistant' } })]);
+        });
+
+        test('a job made in a chat before this change gets a tool list on its first run, and keeps it', async () => {
+            db.saveScheduledJob({ name: 'old_job', cronExpression: CRON, taskType: 'agent_instruction', payload: { task: TASK, targetSource: 'whatsapp:assistant', targetChatId: OWNER_LID }, enabled: true });
+            await scheduler.loadJobs();
+            scriptRun(agent, '[SILENT] Nothing.');
+
+            await scheduler.jobs.old_job.invoke();
+
+            const tools = [...SCOPED, 'getJobState', 'saveJobState'];
+            expect(agent.processMessage.mock.calls[0][0].metadata.allowedTools).toEqual(tools);
+            expect(savedRow(db, 'old_job').payload.allowedTools).toEqual(tools);
+        });
     });
 
-    test('a result that starts with ⚠️ still goes out; the agent\'s own error reply does not', async () => {
-        await executor.execute('scheduleJob', { name: 'weather', cron: '0 7 * * *', task: 'Check the weather' }, inChat('whatsapp:assistant', OWNER_LID));
-        scriptRun(agent, '⚠️ Storm warning after 3 pm.');
-        await scheduler.jobs.weather.invoke();
-        expect(delivered(agent)).toEqual([expect.objectContaining({ content: '⚠️ Storm warning after 3 pm.' })]);
+    describe('the untrusted-content mark', () => {
+        test("a result from a run that read an email carries that mark into the owner's chat", async () => {
+            await executor.execute('scheduleJob', { name: 'mail_digest', cron: '0 8 * * *', task: 'Tell me what my new email needs' }, inChat('whatsapp:assistant', OWNER_LID));
+            scriptRun(agent, 'An email asks you to confirm a transfer. Reply yes and I will send it.', {}, MAIL);
 
-        agent.interface.send.mockClear();
-        scriptRun(agent, '⚠️ The AI model is currently experiencing high demand. Please try again in a moment.', { isError: true });
-        await scheduler.jobs.weather.invoke();
-        expect(delivered(agent)).toEqual([]);
+            await scheduler.jobs.mail_digest.invoke();
+
+            const [sent] = delivered(agent);
+            expect(sent.metadata).toMatchObject({ chatId: OWNER_LID, jobTaint: MAIL });
+        });
+
+        test('a job saved in the Tasks form never ran in his chat, and its result carries no mark', async () => {
+            // The morning briefing reads email every day. A mark on it would make
+            // his next email or message request ask for a card each morning.
+            const app = express();
+            app.use(express.json());
+            app.use('/internal', createInternalRouter(agent));
+            await request(app).post('/internal/scheduler').send({ name: 'briefing', cron: '0 7 * * *', task: 'Morning briefing from my email' });
+            scriptRun(agent, 'Two emails need an answer.', {}, MAIL);
+
+            await scheduler.jobs.briefing.invoke();
+
+            const [sent] = delivered(agent);
+            expect(sent.content).toBe('Two emails need an answer.');
+            expect(sent.metadata.jobTaint).toBeUndefined();
+        });
+
+        test('the thread mirror keeps the mark, and a marked row holds back his next word', async () => {
+            const { Agent } = require('../src/agent');
+            const real = new Agent({ interface: { send: jest.fn().mockResolvedValue(true) } });
+            real.db = db;
+            real._ownerWaIds = new Set([OWNER_JID, OWNER_LID]);
+            real._ownerLidResolved = true;
+            real._ownerPreferredJid = OWNER_LID;
+
+            await real._mirrorToOwnerChat({ id: 'job-1', source: 'whatsapp', type: 'text', content: 'Reply yes and I will send it.', metadata: { chatId: OWNER_JID, jobTaint: MAIL } });
+            await real._mirrorToOwnerChat({ id: 'job-2', source: 'whatsapp', type: 'text', content: 'Rain after 3 pm.', metadata: { chatId: OWNER_JID } });
+
+            const rows = db.getRecentMessageOrigins(OWNER_LID, 10);
+            expect(originsHaveTaintedRows(rows)).toBe(true);
+            expect(originsHaveTaintedRows(rows.filter(r => !String(r.head).startsWith('Reply yes')))).toBe(false);
+        });
+
+        test('sendMessage to the owner from such a run carries the mark too; from a form job or a chat, it does not', async () => {
+            const comms = new CommunicationExecutor({ db, agent: { ...agent, delivery: scheduler._delivery() }, interface: agent.interface });
+            const jobRun = (jobOrigin) => ({ message: { source: 'scheduler', metadata: { chatId: 'scheduled_mail_1', jobName: 'mail', ...(jobOrigin ? { jobOrigin } : {}) } }, untrustedTaint: MAIL });
+            // His own number is a known contact; the first-contact check has its own tests.
+            jest.spyOn(db, 'isVerifiedContact').mockReturnValue(true);
+
+            await comms.execute('sendMessage', { to: 'me', content: 'From a job made in his chat.' }, jobRun({ source: 'whatsapp:assistant', chatId: OWNER_LID }));
+            await comms.execute('sendMessage', { to: 'me', content: 'From a form job.' }, jobRun(null));
+            await comms.execute('sendMessage', { to: 'me', content: 'From his web chat.' }, { message: { source: 'web', metadata: { chatId: 'web-chat-1' } }, untrustedTaint: MAIL });
+
+            const byText = Object.fromEntries(delivered(agent).map(m => [m.content, m.metadata.jobTaint]));
+            expect(byText).toEqual({ 'From a job made in his chat.': MAIL, 'From a form job.': undefined, 'From his web chat.': undefined });
+        });
     });
 
-    test('after a restart the job is still quiet on a [SILENT] run', async () => {
-        await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
-        await scheduler.stop();
-        scheduler = new Scheduler(agent);
-        await scheduler.loadJobs();
-        scriptRun(agent, '  **[SILENT]** Nothing earlier.');
+    describe('changing a job', () => {
+        test('scheduleJob with the same name changes the job in place: its chat, saved state and end date stay', async () => {
+            const end = inDays(3);
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK, expiresAt: end }, inChat('web', 'web-chat-1'));
+            db.setKey('job:check_slots:seen', ['2026-09-30 10:00']);
 
-        await scheduler.jobs.check_slots.invoke();
+            const res = await executor.execute('scheduleJob', { name: 'check_slots', cron: '0 9 * * 1-5', task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
 
-        expect(delivered(agent)).toEqual([]);
-        expect(agent.processMessage.mock.calls[0][0]).toMatchObject({ source: 'scheduler', metadata: { jobOrigin: { source: 'whatsapp:assistant', chatId: OWNER_LID } } });
+            expect(res.success).toBe(true);
+            expect(savedRow(db, 'check_slots').payload).toMatchObject({ targetSource: 'web', targetChatId: 'web-chat-1', allowedTools: [...SCOPED, 'getJobState', 'saveJobState'] });
+            expect(scheduler.jobs.check_slots.metadata).toMatchObject({ cronExpression: '0 9 * * 1-5', expiresAt: end });
+            expect(db.getJobState('check_slots')).toEqual([expect.objectContaining({ key: 'seen' })]);
+            // The same task keeps its tool list; a new task gets a new one.
+            expect(agent.toolScoper.scope).toHaveBeenCalledTimes(1);
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: 'Something else' }, inChat('web', 'web-chat-1'));
+            expect(agent.toolScoper.scope).toHaveBeenCalledTimes(2);
+        });
+
+        test('an edit from chat keeps a paused job paused, and so does an edit in the Tasks form', async () => {
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
+            scheduler.toggleJob('check_slots', false);
+
+            const res = await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK, expiresAt: inDays(8) }, inChat('whatsapp:assistant', OWNER_LID));
+
+            expect(res.info).toMatch(/stays paused/);
+            expect(scheduler.jobs.check_slots.metadata.enabled).toBe(false);
+            expect(scheduler.jobs.check_slots.nextInvocation()).toBeNull();
+            expect(savedRow(db, 'check_slots').enabled).toBe(false);
+
+            const app = express();
+            app.use(express.json());
+            app.use('/internal', createInternalRouter(agent));
+            await request(app).post('/internal/scheduler').send({ name: 'check_slots', cron: CRON, task: `${TASK} Say the time too.` });
+            expect(savedRow(db, 'check_slots').enabled).toBe(false);
+        });
+
+        test('new times drop the Weekdays and Daytime marks the form set for the old ones', async () => {
+            db.saveScheduledJob({ name: 'standup', cronExpression: '0 9 * * 1-5', taskType: 'agent_instruction', payload: { task: 'Standup note', weekdaysOnly: true, daytimeOnly: true }, enabled: true });
+            await scheduler.loadJobs();
+
+            await executor.execute('scheduleJob', { name: 'standup', cron: '0 9 * * 1-5', task: 'Standup note' }, inChat('web', 'web-chat-1'));
+            expect(savedRow(db, 'standup').payload).toMatchObject({ weekdaysOnly: true, daytimeOnly: true });
+
+            await executor.execute('scheduleJob', { name: 'standup', cron: '0 8 * * *', task: 'Standup note' }, inChat('web', 'web-chat-1'));
+            expect(savedRow(db, 'standup').payload.weekdaysOnly).toBeUndefined();
+            expect(savedRow(db, 'standup').payload.daytimeOnly).toBeUndefined();
+        });
+
+        test('an edit from chat never clears a taint, even with a new task or a row that names no source', async () => {
+            db.saveScheduledJob({ name: 'planted', cronExpression: '0 9 * * *', taskType: 'agent_instruction', payload: { task: 'Send the invoice', tainted: true }, enabled: true });
+            await scheduler.loadJobs();
+
+            await executor.execute('scheduleJob', { name: 'planted', cron: '0 9 * * *', task: 'Send the invoice.' }, inChat('whatsapp:assistant', OWNER_LID));
+
+            expect(savedRow(db, 'planted').payload.tainted).toBe(true);
+        });
+
+        test('a change from a run that read untrusted content never points the job at a contact chat', async () => {
+            db.saveScheduledJob({ name: 'standup', cronExpression: '0 9 * * 1-5', taskType: 'agent_instruction', payload: { task: 'Post the standup reminder', targetSource: 'whatsapp:assistant', targetChatId: CONTACT_JID }, enabled: true });
+            await scheduler.loadJobs();
+
+            await executor.execute('scheduleJob', { name: 'standup', cron: '0 9 * * 1-5', task: 'Post the standup reminder' }, inChat('whatsapp:assistant', OWNER_LID, MAIL));
+
+            const payload = savedRow(db, 'standup').payload;
+            expect(payload.targetChatId).toBeUndefined();
+            expect(payload).toMatchObject({ tainted: true, taintSources: MAIL });
+        });
+
+        test('scheduleJob cannot overwrite a built-in job', async () => {
+            scheduler.scheduleJob('proactive_thought', '0 7-22 * * *', async () => { }, { payload: { task: 'x', isSystem: true } });
+
+            const res = await executor.execute('scheduleJob', { name: 'proactive_thought', cron: '0 9 * * *', task: 'spam' }, inChat('web', 'web-chat-1'));
+
+            expect(res.error).toMatch(/built-in job/);
+            expect(scheduler.jobs.proactive_thought.metadata).toMatchObject({ cronExpression: '0 7-22 * * *', payload: { task: 'x', isSystem: true } });
+        });
+
+        test('a job the model makes runs at most every 15 minutes', async () => {
+            for (const cron of ['* * * * *', '*/5 * * * *', '* * * * * *']) {
+                const res = await executor.execute('scheduleJob', { name: 'fast', cron, task: 'x' }, inChat('web', 'web-chat-1', MAIL));
+                expect(res.error).toMatch(/at most every 15 minutes/);
+            }
+            expect(scheduler.jobs.fast).toBeUndefined();
+            expect((await executor.execute('scheduleJob', { name: 'fast', cron: '*/15 * * * *', task: 'x' }, inChat('web', 'web-chat-1'))).success).toBe(true);
+        });
     });
 
-    test('a job made in the web chat reports to the owner channel, and its approval card still shows in that chat', async () => {
-        await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('web', 'web-chat-1'));
-        scriptRun(agent, 'Earlier slot: Sep 30 at 10:00.');
+    describe('runs', () => {
+        test('a repeating job that fails keeps its schedule', async () => {
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
+            agent.processMessage.mockRejectedValue(new Error('model down'));
 
-        await scheduler.jobs.check_slots.invoke();
+            await scheduler.jobs.check_slots.invoke();
 
-        expect(delivered(agent)).toEqual([expect.objectContaining({ source: 'whatsapp', metadata: { chatId: OWNER_JID, session: 'assistant' } })]);
-        const run = agent.processMessage.mock.calls[0][0];
-        const approvals = new ApprovalService({ ...agent, delivery: scheduler._delivery() });
-        expect(await approvals.route(run)).toMatchObject({ replyChatId: OWNER_JID, mode: 'deferred', mirror: { channel: 'web', chatId: 'web-chat-1' } });
-        approvals.stop();
-    });
+            expect(scheduler.jobs.check_slots.metadata).toMatchObject({ cronExpression: CRON });
+            expect(scheduler.jobs.check_slots.metadata.payload.isOneOff).toBeFalsy();
+            expect(savedRow(db, 'check_slots')).toMatchObject({ cronExpression: CRON });
+            expect(db.getJobLogs(5).logs[0]).toMatchObject({ status: 'failure', output: 'model down' });
+        });
 
-    test('scheduleJob with the same name changes the job in place: its chat, saved state and end date stay', async () => {
-        await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK, expiresAt: '2026-10-01T23:59:00' }, inChat('web', 'web-chat-1'));
-        db.setKey('job:check_slots:seen', ['2026-09-30 10:00']);
+        test("a one-time task's retry stays in the list and the database", async () => {
+            const when = new Date(Date.now() + 3600e3).toISOString();
+            await executor.execute('scheduleTask', { time: when, task: 'Check the flight and tell me' }, inChat('whatsapp:assistant', OWNER_LID));
+            const [name] = Object.keys(scheduler.jobs);
+            agent.processMessage.mockRejectedValue(new Error('model down'));
 
-        const res = await executor.execute('scheduleJob', { name: 'check_slots', cron: '0 9 * * 1-5', task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
+            await scheduler.jobs[name].invoke();
 
-        expect(res.success).toBe(true);
-        expect(savedPayload(db, 'check_slots')).toMatchObject({ targetSource: 'web', targetChatId: 'web-chat-1', allowedTools: SCOPED });
-        expect(scheduler.jobs.check_slots.metadata).toMatchObject({ cronExpression: '0 9 * * 1-5', expiresAt: '2026-10-01T23:59:00' });
-        expect(db.getJobState('check_slots')).toEqual([expect.objectContaining({ key: 'seen' })]);
-        // The same task keeps its tool list; a new task gets a new one.
-        expect(agent.toolScoper.scope).toHaveBeenCalledTimes(1);
-        await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: 'Something else' }, inChat('web', 'web-chat-1'));
-        expect(agent.toolScoper.scope).toHaveBeenCalledTimes(2);
-    });
+            expect(scheduler.jobs[name]).toBeDefined();
+            expect(savedRow(db, name).payload).toMatchObject({ retryCount: 1, isOneOff: true });
+        });
 
-    test('a change from a run that read untrusted content never points the job at a contact chat', async () => {
-        await executor.execute('scheduleJob', { name: 'standup', cron: '0 9 * * 1-5', task: 'Post the standup reminder' }, inChat('slack', 'C0EXAMPLE1'));
-        expect(savedPayload(db, 'standup')).toMatchObject({ targetSource: 'slack', targetChatId: 'C0EXAMPLE1' });
+        test('a tick while the last run still goes is skipped', async () => {
+            await executor.execute('scheduleJob', { name: 'slow', cron: '0 * * * *', task: 'Slow report' }, inChat('web', 'web-chat-1'));
+            let finish;
+            agent.processMessage.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
 
-        await executor.execute('scheduleJob', { name: 'standup', cron: '0 9 * * 1-5', task: 'Post the standup reminder' },
-            inChat('whatsapp:assistant', OWNER_LID, ['email (personal_gmail)']));
+            const first = scheduler.jobs.slow.invoke();
+            await new Promise(r => setImmediate(r));
+            await scheduler.jobs.slow.invoke();
+            finish({ untrustedSources: [] });
+            await first;
 
-        const payload = savedPayload(db, 'standup');
-        expect(payload.targetChatId).toBeUndefined();
-        expect(payload).toMatchObject({ tainted: true, taintSources: ['email (personal_gmail)'] });
-    });
+            expect(agent.processMessage).toHaveBeenCalledTimes(1);
+            expect(db.getJobLogs(5).logs.map(l => JSON.parse(l.output || '{}').reason)).toContain('the last run is still going');
+        });
 
-    test('scheduleJob cannot overwrite a built-in job', async () => {
-        scheduler.scheduleJob('proactive_thought', '0 7-22 * * *', async () => { }, { payload: { task: 'x', isSystem: true } });
+        test('JOB_OWN_CHAT=0 runs it inside its chat, and still sends only a final reply that is not [SILENT]', async () => {
+            process.env.JOB_OWN_CHAT = '0';
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
+            scriptRun(agent, '[SILENT] Nothing earlier.');
 
-        const res = await executor.execute('scheduleJob', { name: 'proactive_thought', cron: '* * * * *', task: 'spam' }, inChat('web', 'web-chat-1'));
+            await scheduler.jobs.check_slots.invoke();
 
-        expect(res.error).toMatch(/built-in job/);
-        expect(scheduler.jobs.proactive_thought.metadata).toMatchObject({ cronExpression: '0 7-22 * * *', payload: { task: 'x', isSystem: true } });
-    });
+            expect(agent.processMessage.mock.calls[0][0]).toMatchObject({ source: 'whatsapp:assistant', metadata: { chatId: OWNER_LID } });
+            expect(agent.interface.send).not.toHaveBeenCalled();
 
-    test('a repeating job that fails keeps its schedule', async () => {
-        await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
-        agent.processMessage.mockRejectedValue(new Error('model down'));
+            const ids = scriptRun(agent, 'Earlier slot: Sep 30 at 10:00.');
+            await scheduler.jobs.check_slots.invoke();
 
-        await scheduler.jobs.check_slots.invoke();
+            // One message, under the id the run saved it with, so the thread keeps one copy.
+            expect(delivered(agent)).toEqual([expect.objectContaining({ id: ids[1], content: 'Earlier slot: Sep 30 at 10:00.', metadata: { chatId: OWNER_LID, session: 'assistant' } })]);
+        });
 
-        expect(scheduler.jobs.check_slots.metadata).toMatchObject({ cronExpression: CRON });
-        expect(scheduler.jobs.check_slots.metadata.payload.isOneOff).toBeFalsy();
-        expect(db.getScheduledJobs().find(j => j.name === 'check_slots')).toMatchObject({ cronExpression: CRON });
-        expect(db.getJobLogs(5).logs[0]).toMatchObject({ status: 'failure', output: 'model down' });
-    });
+        test("JOB_OWN_CHAT=0 with a web-made job sends the owner a fresh copy, so his WhatsApp thread keeps it", async () => {
+            process.env.JOB_OWN_CHAT = '0';
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('web', 'web-chat-1'));
+            const ids = scriptRun(agent, 'Earlier slot: Sep 30 at 10:00.');
 
-    test('JOB_OWN_CHAT=0 runs it inside its chat, and still sends only a final reply that is not [SILENT]', async () => {
-        process.env.JOB_OWN_CHAT = '0';
-        await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
-        scriptRun(agent, '[SILENT] Nothing earlier.');
+            await scheduler.jobs.check_slots.invoke();
 
-        await scheduler.jobs.check_slots.invoke();
-
-        expect(agent.processMessage.mock.calls[0][0]).toMatchObject({ source: 'whatsapp:assistant', metadata: { chatId: OWNER_LID } });
-        expect(agent.interface.send).not.toHaveBeenCalled();
-
-        const ids = scriptRun(agent, 'Earlier slot: Sep 30 at 10:00.');
-        await scheduler.jobs.check_slots.invoke();
-
-        // One message, under the id the run saved it with, so the thread keeps one copy.
-        expect(delivered(agent)).toEqual([expect.objectContaining({ id: ids[1], content: 'Earlier slot: Sep 30 at 10:00.', metadata: { chatId: OWNER_LID, session: 'assistant' } })]);
+            const [sent] = delivered(agent);
+            expect(sent.metadata.chatId).toBe(OWNER_JID);
+            expect(sent.id).not.toBe(ids[1]);
+        });
     });
 
     describe('saved from the Tasks form', () => {
@@ -255,7 +496,16 @@ describe('a job made in a chat', () => {
 
             await request(app()).post('/internal/scheduler').send({ name: 'check_slots', cron: CRON, task: `${TASK} Say the time too.` });
 
-            expect(savedPayload(db, 'check_slots')).toMatchObject({ targetSource: 'whatsapp:assistant', targetChatId: OWNER_LID });
+            expect(savedRow(db, 'check_slots').payload).toMatchObject({ targetSource: 'whatsapp:assistant', targetChatId: OWNER_LID });
         });
+    });
+});
+
+describe('ToolScoper', () => {
+    test('a home job gets the tools that switch devices, not only the device names', async () => {
+        const scoper = new ToolScoper('test-key', null);
+        scoper.client = { models: { generateContent: jest.fn().mockResolvedValue({ text: '["smarthome"]' }) } };
+        const tools = await scoper.scope('Turn off the AC at 6', [{ name: 'ha_call_service', serverName: 'homeassistant' }]);
+        expect(tools).toEqual(expect.arrayContaining(['lookupDevice', 'ha_call_service']));
     });
 });

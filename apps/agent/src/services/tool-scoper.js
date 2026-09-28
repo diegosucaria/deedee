@@ -32,6 +32,11 @@ const CATEGORY_DESCRIPTIONS = {
     automation: 'Node-RED automation workflows'
 };
 
+// Categories that only work together. Device aliases (smarthome) name a
+// device; Home Assistant's own tools (smarthome_mcp) switch it. The chat
+// router's "home" group holds both, so a job that picked one gets both.
+const PAIRED = { smarthome: ['smarthome_mcp'], smarthome_mcp: ['smarthome'] };
+
 // MCP namespace patterns → categories
 const MCP_PATTERNS = [
     { pattern: /gws/i, category: 'calendar_email' },
@@ -150,7 +155,9 @@ Example: ["slack", "calendar_email", "memory", "subagent", "scheduler"]`;
 
             // Resolve categories to tool names
             const toolNames = new Set();
-            for (const cat of categories) {
+            const wanted = new Set(categories);
+            for (const cat of categories) for (const pair of PAIRED[cat] || []) wanted.add(pair);
+            for (const cat of wanted) {
                 const internal = internalByCategory[cat];
                 if (internal) internal.forEach(t => toolNames.add(t));
                 const mcp = mcpByCategory[cat];

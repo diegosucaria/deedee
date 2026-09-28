@@ -5,22 +5,32 @@ const { taintFromPayload } = require('./utils/untrusted-content');
 // delivered, marked "(late)", when it is less than this overdue.
 const LATE_REMINDER_MAX_MS = 24 * 60 * 60 * 1000;
 
-// Every run of a job gets this note after its task.
+// Every run of a repeating job gets this note after its task.
 const JOB_RUN_NOTE = `[SYSTEM: This is a recurring job. To track changes between runs, use 'getJobState' to check previous data and 'saveJobState' to save new data. IMPORTANT: If the result of this task is "nothing to report" or "no action needed", prefix your ENTIRE response with the tag [SILENT] (e.g. "[SILENT] No commitments found."). This prevents unnecessary notifications to the user. Only omit [SILENT] when you have genuinely actionable or interesting information to share. If this run already sent its result with 'sendMessage', answer with only [SILENT], so it does not go out twice.]`;
+// And a one-time task this one: the owner asked for it, so it answers.
+const TASK_RUN_NOTE = `[SYSTEM: This is a one-time task. Your reply goes to the owner, so reply with the result, even when all is well. Answer with only [SILENT] when the task says to report only if something happens and it did not, or when this run already sent its result with 'sendMessage'.]`;
 
 // A reply that starts with [SILENT] has nothing to report. The model
 // sometimes puts spaces or markdown around the tag.
 const SILENT_TAG = /^[\s*_`]*\[silent\][\s*_`]*/i;
 const isSilentReply = (text) => SILENT_TAG.test(String(text || ''));
 
-// Chats a job can be made in and report back to. A web chat is left out:
-// nobody watches it, so a job made there reports to the owner channel.
-const JOB_CHAT_CHANNELS = ['whatsapp', 'telegram', 'slack'];
+// Chats whose messages the agent only stores (agent.js, PASSIVE MODE). A job
+// made in one never ran a turn there, so it still does nothing.
+const PASSIVE_SOURCES = ['whatsapp:user', 'slack'];
+
+// The JOB_RUN_NOTE tells every run of a repeating job to use these.
+const JOB_STATE_TOOLS = ['getJobState', 'saveJobState'];
+
+// A tool call waits this long for the scoper before the job keeps every tool.
+const SCOPE_TIMEOUT_MS = 20e3;
 
 class Scheduler {
     constructor(agent) {
         this.agent = agent;
         this.jobs = {}; // Store job references
+        // Jobs with a run in progress: the next tick waits for the next time.
+        this._runningJobs = new Set();
         console.log('[Scheduler] Initialized.');
     }
 
@@ -91,6 +101,9 @@ class Scheduler {
                 console.warn(`[Scheduler] One-off job '${name}' is scheduled in the PAST (${rule.toISOString()}). Running IMMEDIATELY.`);
 
                 // Execute immediately
+                // A failed run may register its retry under this name; that
+                // one must survive the clean-up below.
+                const before = this.jobs[name];
                 (async () => {
                     // The duration is how Job History finds the run's messages and cost.
                     const start = Date.now();
@@ -112,10 +125,12 @@ class Scheduler {
                     } finally {
                         // Cleanup
                         console.log(`[Scheduler] Immediate job '${name}' completed. Cleaning up...`);
-                        delete this.jobs[name];
-                        if (this.agent.db) {
-                            this.agent.db.deleteScheduledJob(name);
-                            this.agent.db.deleteJobState(name);
+                        if (this.jobs[name] === before) {
+                            delete this.jobs[name];
+                            if (this.agent.db) {
+                                this.agent.db.deleteScheduledJob(name);
+                                this.agent.db.deleteJobState(name);
+                            }
                         }
                     }
                 })();
@@ -158,8 +173,9 @@ class Scheduler {
                 this.agent.interface?.broadcast('joblog:update', { jobName: name, status, duration });
             }
 
-            // Auto-cleanup one-off jobs
-            if (options.oneOff) {
+            // Auto-cleanup one-off jobs. A retry the run registered under
+            // this name has replaced this job; it stays.
+            if (options.oneOff && this.jobs[name] === job) {
                 console.log(`[Scheduler] One-off job '${name}' completed. Cleaning up...`);
                 delete this.jobs[name];
                 this.agent.db.deleteScheduledJob(name);
@@ -332,13 +348,77 @@ class Scheduler {
 
     /**
      * Where a job's result goes when it has something to say: the chat it
-     * was made in (WhatsApp, Telegram or Slack), or null for the owner channel.
-     * @returns {{ channel: string, target: string } | null} channel keeps its ':session' suffix
+     * was made in when that is the owner's own chat with the assistant
+     * (WhatsApp or Telegram), or null for the owner channel. A web chat is
+     * not watched, and a contact, a group or a Slack channel never gets a
+     * job's result: only a sendMessage call, with its checks, reaches others.
+     * @returns {Promise<{ channel: string, target: string } | null>} channel keeps its ':session' suffix
      */
-    _jobChatTarget(payload) {
+    async _jobChatTarget(payload) {
         const origin = this._jobOrigin(payload);
-        if (!origin || !JOB_CHAT_CHANNELS.includes(origin.source.split(':')[0])) return null;
-        return { channel: origin.source, target: origin.chatId };
+        if (!origin) return null;
+        const [channel, session] = origin.source.split(':');
+        if (channel === 'whatsapp' && session && session !== 'assistant') return null;
+        if (channel !== 'whatsapp' && channel !== 'telegram') return null;
+        // His WhatsApp chat carries his @lid id, which only the owner id
+        // lookup knows (it is cached after the first call).
+        if (channel === 'whatsapp' && typeof this.agent._getOwnerWaIds === 'function') {
+            try { await this.agent._getOwnerWaIds(); } catch { /* the phone JID still counts */ }
+        }
+        return this._isOwnerOrigin(origin.source, origin.chatId) ? { channel: origin.source, target: origin.chatId } : null;
+    }
+
+    /**
+     * The tools a job's task needs, picked once when the job is saved
+     * (ToolScoper). A repeating job always keeps getJobState and
+     * saveJobState. Null when there is no scoper, it failed or it took too
+     * long: the job then has every tool.
+     */
+    async scopeJobTools(task, { recurring = true } = {}) {
+        const scoper = this.agent.toolScoper;
+        if (!scoper || typeof scoper.scope !== 'function') return null;
+        let timer;
+        try {
+            const mcpTools = this.agent.mcp ? await this.agent.mcp.getTools() : [];
+            const tools = await Promise.race([
+                scoper.scope(String(task || ''), mcpTools),
+                new Promise(resolve => { timer = setTimeout(() => resolve(null), SCOPE_TIMEOUT_MS); })
+            ]);
+            if (!Array.isArray(tools) || tools.length === 0) return null;
+            return recurring ? [...new Set([...tools, ...JOB_STATE_TOOLS])] : tools;
+        } catch (e) {
+            console.warn(`[Scheduler] Tool scoping failed, the job keeps every tool: ${e.message}`);
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /**
+     * A job made in a chat before 2026-09-28 has no tool list: it ran as a
+     * chat turn, where the router picks the tools. As a job run it would get
+     * every tool, so it gets a list on its first run and keeps it.
+     */
+    async _giveToolList(name, payload) {
+        const tools = await this.scopeJobTools(payload.task, { recurring: !payload.isOneOff });
+        if (!tools) return;
+        payload.allowedTools = tools;
+        const job = this.jobs[name];
+        if (!job || job.metadata?.payload !== payload || !this.agent.db) return;
+        try {
+            const cron = job.metadata.cronExpression;
+            this.agent.db.saveScheduledJob({
+                name,
+                cronExpression: typeof cron === 'string' ? cron : new Date(cron).toISOString(),
+                taskType: 'agent_instruction',
+                payload: { ...payload },
+                expiresAt: job.metadata.expiresAt,
+                enabled: job.metadata.enabled !== false
+            });
+            console.log(`[Scheduler] Job '${name}' got a tool list of ${tools.length} tools.`);
+        } catch (e) {
+            console.warn(`[Scheduler] Could not save the tool list of '${name}': ${e.message}`);
+        }
     }
 
     async _processSmartNotification(result, payload, forceSilent = false) {
@@ -350,7 +430,7 @@ class Scheduler {
                 // the owner channel from fresh settings: notification_channel
                 // plus the id that channel needs (owner_phone or ALLOWED_TELEGRAM_IDS).
                 const delivery = this._delivery();
-                const chat = this._jobChatTarget(payload);
+                const chat = await this._jobChatTarget(payload);
                 const owner = chat || delivery.resolveOwnerTarget();
                 const channel = owner ? owner.channel : 'none';
 
@@ -431,12 +511,26 @@ class Scheduler {
                             // backoff and tries the other owner channel after two failures.
                             // No content dedupe: a job that fires every 5 minutes with
                             // the same text means every one of them.
-                            // A run held inside that chat (JOB_OWN_CHAT=0) already saved
-                            // its reply there: the same id keeps the thread mirror from
-                            // storing a second copy.
+                            // A run held inside the chat it reports to (JOB_OWN_CHAT=0)
+                            // already saved its reply there: the same id keeps the thread
+                            // mirror from storing a second copy.
+                            const sameChat = !!(chat && result?.savedReplyId && result.savedReplyChat === chat.target);
+                            const taint = Array.isArray(result?.jobTaint) ? result.jobTaint : [];
                             const outcome = await delivery.deliver('job_notification', owner.channel, owner.target,
-                                { content: notificationText, type: 'text' },
-                                { origin, dedupe: false, ...(result?.savedReplyId ? { id: result.savedReplyId } : {}) });
+                                { content: notificationText, type: 'text', ...(taint.length > 0 ? { metadata: { jobTaint: taint } } : {}) },
+                                { origin, dedupe: false, ...(sameChat ? { id: result.savedReplyId } : {}) });
+                            // A WhatsApp chat of his gets the text through the thread
+                            // mirror. A Telegram chat keeps it here, so an answer there
+                            // has the context the run used to leave in that chat.
+                            if (chat && !sameChat && outcome.delivered && !chat.channel.startsWith('whatsapp')
+                                && typeof this.agent.db?.saveMessageIfNew === 'function') {
+                                try {
+                                    this.agent.db.saveMessageIfNew({
+                                        id: outcome.id, role: 'assistant', content: notificationText, source: chat.channel, chatId: chat.target,
+                                        ...(taint.length > 0 ? { metadata: { jobTaint: taint } } : {})
+                                    });
+                                } catch (e) { console.warn(`[Scheduler] Could not keep the result in chat ${chat.target}: ${e.message}`); }
+                            }
                             if (result) {
                                 if (outcome.delivered) {
                                     result.decision = 'notified';
@@ -498,10 +592,32 @@ class Scheduler {
      */
     _buildAgentInstructionCallback(name, payload) {
         const createCallback = (currentPayload) => async () => {
+            // One run of a job at a time: a tick that comes while the last run
+            // still goes is skipped, so a slow run cannot pile up copies.
+            if (this._runningJobs.has(name)) {
+                console.warn(`[Scheduler] Job '${name}' is still running; this tick is skipped.`);
+                return { skipped: true, reason: 'the last run is still going' };
+            }
+            this._runningJobs.add(name);
+            try {
+                return await runOnce(currentPayload);
+            } finally {
+                this._runningJobs.delete(name);
+            }
+        };
+        const runOnce = async (currentPayload) => {
             console.log(`[Scheduler] Executing task '${name}': ${currentPayload.task} (Retry: ${currentPayload.retryCount || 0})`);
 
             const origin = this._jobOrigin(currentPayload);
+            if (origin && PASSIVE_SOURCES.includes(origin.source)) {
+                console.warn(`[Scheduler] Job '${name}' was made in a ${origin.source} chat, where the agent only reads. It does nothing, as before.`);
+                return { skipped: true, reason: `made in a ${origin.source} chat` };
+            }
             const inChat = !!origin && process.env.JOB_OWN_CHAT === '0';
+            const isOneOff = currentPayload.isOneOff === true;
+            if (origin && !inChat && !Array.isArray(currentPayload.allowedTools)) {
+                await this._giveToolList(name, currentPayload);
+            }
             const msgMeta = {
                 chatId: inChat ? origin.chatId : `scheduled_${name}_${Date.now()}`,
                 jobName: name,
@@ -514,13 +630,13 @@ class Scheduler {
             const inherited = taintFromPayload(currentPayload, `job "${name}"`);
             if (inherited.length > 0) msgMeta.untrustedTaint = inherited;
 
-            let executionResult = null;
-            let savedReplyId = null;
-            let finalIsError = false;
+            // The run's answer: its last reply that is not a progress line
+            // ("Thinking...") or a line about the run ("Stopped: ...").
+            let final = null;
             try {
-                await this.agent.processMessage({
+                const summary = await this.agent.processMessage({
                     role: 'user',
-                    content: `Scheduled Task: ${currentPayload.task}\n\n${JOB_RUN_NOTE}`,
+                    content: `Scheduled Task: ${currentPayload.task}\n\n${isOneOff ? TASK_RUN_NOTE : JOB_RUN_NOTE}`,
                     source: inChat ? origin.source : 'scheduler',
                     metadata: msgMeta
                 }, async (reply) => {
@@ -531,32 +647,30 @@ class Scheduler {
                     if (!inChat && this.agent.interface) {
                         sent = await this.agent.interface.send(reply);
                     }
-                    // Capture reply for smart notification.
                     // createAssistantMessage uses 'content', not 'text'.
                     const replyText = reply.content || reply.text;
-                    if (replyText) {
-                        savedReplyId = reply.id || null;
-                        finalIsError = reply.isError === true;
-                    }
-                    if (!executionResult) {
-                        executionResult = reply;
-                        if (replyText) executionResult.text = replyText;
-                    } else if (replyText) {
-                        // Always keep the latest text — final assistant message overwrites intermediate "Thinking..." messages
-                        executionResult.text = replyText;
+                    if (replyText && !reply.isProgress && !reply.isStatus) {
+                        final = { text: replyText, id: reply.id || null, isError: reply.isError === true, isImplicit: reply.isImplicit === true };
                     }
                     // A false from the interface lets _deliverReply record the failure.
                     return sent;
                 });
 
-                // Ensure result has text for smart notification
-                if (!executionResult) executionResult = { text: '' };
-                if (!executionResult.text) {
-                    executionResult.text = String(executionResult.content || '');
-                }
-                if (inChat && savedReplyId) executionResult.savedReplyId = savedReplyId;
-                // A real result may start with ⚠️; only the agent's own error reply is held back.
-                executionResult.isError = finalIsError;
+                const executionResult = {
+                    // "✅ Action X completed." is said for a model that gave no
+                    // answer. A repeating job then has nothing to say; a one-time
+                    // task confirms that it ran.
+                    text: final && !(final.isImplicit && !isOneOff) ? final.text : '',
+                    // A real result may start with ⚠️; only the agent's own error reply is held back.
+                    isError: !!final?.isError,
+                    // What the run read that a third party wrote. A job made in
+                    // a chat used to run inside it, and its tool results there
+                    // held back his next word for messages, email and the house.
+                    // Its result carries the mark instead. A job made in the
+                    // Tasks form never ran in his chat and carries none.
+                    jobTaint: origin && Array.isArray(summary?.untrustedSources) ? summary.untrustedSources.slice(0, 20).map(String) : [],
+                    ...(inChat && final?.id ? { savedReplyId: final.id, savedReplyChat: origin.chatId } : {})
+                };
 
                 return await this._processSmartNotification(executionResult, currentPayload);
 

@@ -181,7 +181,13 @@ his approval. It counts when all of these hold:
   window as the model: 20 rows on Flash, 50 otherwise). A web message in a
   chat whose id holds `@` never counts either. A message he forwarded is
   still his own message: it reads like a tool result a third party wrote
-  (`originsHaveTaintedRows`), so it holds back only the rules below.
+  (`originsHaveTaintedRows`), so it holds back only the rules below. So does
+  a message from a job made in one of his chats whose run read untrusted
+  content: its result, or a `sendMessage` to him. Before 2026-09-28 such a job
+  ran inside his chat and left its tool results there. Now it runs in a chat
+  of its own, and the thread mirror stores the run's taint on the row instead
+  (`metadata.jobTaint`). A job made in the Tasks form never ran in his chat
+  and carries no mark (see Known gaps).
 
 Then a call the rules above pause runs with no card and no guardian call,
 and the history stores `owner_instructed`. Three limits stay:
@@ -505,7 +511,7 @@ by name.
 What the list does not cover, by design or for later:
 
 - **A child may hold tools its parent lacks.** A parent that names `tools` for `spawnAgent` can name any tool: the system jobs fan out that way (a briefing that holds no mail tool starts a mail reader). A parent that gives no `tools` hands down its own list, so silence never widens. The child's taint, the approval gates and the breaker it shares with its parent still hold.
-- **A job, task or watcher that a listed run creates carries no list.** Its later runs get every tool; the taint it carries and the approval gates hold them.
+- **A watcher that a listed run creates carries no list.** Its later runs get every tool; the taint it carries and the approval gates hold them. A job or task gets its own list from `ToolScoper` when it is saved (`Scheduler.scopeJobTools`), never the list of the run that made it; when the scoper fails, it has every tool.
 - **A run resumed after an approval keeps no list.** No listed run reaches that path today: jobs are answered deferred and run the one approved call, and a sub-agent cannot ask.
 - **A watcher run on a contact's chat still gets every tool**, held by the approval gates and the untrusted-content rules.
 
@@ -688,10 +694,17 @@ on retries too. Its outward actions ask; its reports to the owner and
 reminders stay silent. The card then reads "This run read untrusted
 content, or was created by a run that did". Re-saving such a job from the
 dashboard keeps the taint while the task text is unchanged; rewriting the
-task is the owner's own instruction and clears it. A job or reminder that a
-tainted run creates from a contact's chat reports to the owner channel,
-never to that chat. A call the owner approves runs with the taint of the
-run that asked.
+task is the owner's own instruction and clears it. A change through
+`scheduleJob` (the same name) keeps the taint whatever the new task says:
+the model writes that task and may copy what was planted. A job or reminder
+that a tainted run creates from a contact's chat reports to the owner
+channel, never to that chat. A job's result only ever goes to the owner:
+his own WhatsApp or Telegram chat where he made it, or else the owner
+channel. A job saved long ago with a contact's chat of his own account or a
+Slack channel still does nothing, as those chats are passive. A job the
+model makes runs at most every 15 minutes (a job run skips the chat rate
+limit), and no job starts while its last run is still going. A call the
+owner approves runs with the taint of the run that asked.
 
 **Goals carry taint too**: `addGoal` and `updateGoalProgress` run unasked,
 but in a tainted run they store `tainted` and `taintSources` in the goal's
@@ -725,6 +738,10 @@ state can carry text into later prompts and tool results that count as
 trusted. `learnDevice` aliases do the same for device
 names; misuse stays within home control, which runs unasked anyway. A reminder's text can quote untrusted text
 back to the owner. The autopilot reply service does not use this tool loop.
+The result of a job made in the Tasks form, and its `sendMessage` to him,
+reach his chat with no mark even when the run read email. A mark there would
+make his next email or message request ask for a card after every morning
+briefing.
 
 ## Personal data guard
 

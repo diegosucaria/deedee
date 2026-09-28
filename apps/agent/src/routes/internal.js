@@ -298,17 +298,9 @@ function createInternalRouter(agent) {
                 return res.status(403).json({ error: 'Cannot modify system jobs' });
             }
 
-            // Auto-scope tools for this job prompt
-            let allowedTools = null;
-            try {
-                if (agent.toolScoper) {
-                    const mcpTools = await agent.mcp.getTools();
-                    allowedTools = await agent.toolScoper.scope(task, mcpTools);
-                    console.log(`[Scheduler] Auto-scoped ${allowedTools?.length || 0} tools for job '${name}'`);
-                }
-            } catch (e) {
-                console.warn(`[Scheduler] Tool scoping failed for '${name}', falling back to all tools:`, e.message);
-            }
+            // Auto-scope tools for this job prompt; null leaves every tool.
+            const allowedTools = await agent.scheduler.scopeJobTools(task, { recurring: !isOneOff });
+            console.log(`[Scheduler] Auto-scoped ${allowedTools?.length || 0} tools for job '${name}'`);
 
             // A job a tainted run created stays tainted while its task text is
             // unchanged. Rewriting the task is the owner's own instruction.
@@ -338,7 +330,9 @@ function createInternalRouter(agent) {
                 taskType: 'agent_instruction',
                 payload,
                 expiresAt: expiresAt || null,
-                oneOff: !!isOneOff
+                oneOff: !!isOneOff,
+                // An edit leaves a paused job paused; the toggle turns it on.
+                enabled: existingJob ? existingJob.metadata?.enabled !== false : true
             });
 
             if (agent.interface) {

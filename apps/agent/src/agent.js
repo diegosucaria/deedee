@@ -91,6 +91,9 @@ const { NotificationService } = require('./utils/notifications');
 const { DeliveryService } = require('./services/delivery-service');
 const { TIER1_LIMIT_OVERRIDES } = require('./utils/tool-loop-limits');
 
+// A line about the run itself ("Stopped: ...", "I am stuck in a loop"), not
+// an answer. A scheduled job never sends one as its result.
+const statusReply = (text) => Object.assign(createAssistantMessage(text), { isStatus: true });
 
 // Compact, redacted JSON-ish preview of tool args/results for the chat UI.
 // We strip large base64 blobs, drop image-like keys, and cap total length.
@@ -394,6 +397,9 @@ class Agent {
     // thread as inbound user replies (which Baileys delivers as @lid).
     const chatId = this._ownerPreferredJid || targetChatId;
     const content = payload.caption || (t === 'text' ? payload.content : '') || '';
+    // A job run in a chat of its own that read third-party content marks what
+    // it sends here: the mark holds back his next word (originsHaveTaintedRows).
+    const jobTaint = Array.isArray(payload.metadata?.jobTaint) ? payload.metadata.jobTaint : [];
     try {
       this.db.saveMessageIfNew({
         id: payload.id,
@@ -401,7 +407,7 @@ class Agent {
         content,
         source: 'whatsapp:assistant',
         chatId,
-        metadata: { type: t, imagePath: payload.imagePath || null }
+        metadata: { type: t, imagePath: payload.imagePath || null, ...(jobTaint.length > 0 ? { jobTaint: jobTaint.slice(0, 20).map(String) } : {}) }
       });
     } catch (e) {
       console.warn('[Mirror] saveMessageIfNew failed:', e.message);
@@ -2439,7 +2445,7 @@ class Agent {
         // CHECK ABORT (sub-agent timeout or other internal cancel)
         if (this._abortedChats.has(chatId)) {
           console.log(`${logPrefix} Abort flag detected for chat ${chatId}. Breaking loop.`);
-          await activeSendCallback(createAssistantMessage('Stopped: the task was cancelled before it finished.'));
+          await activeSendCallback(statusReply('Stopped: the task was cancelled before it finished.'));
           stoppedEarly = 'cancelled';
           break;
         }
@@ -2447,7 +2453,7 @@ class Agent {
         // CHECK GUARDIAN BREAKER: too many refused actions mean the run is being steered.
         if (approvalRun.stopped) {
           console.warn(`${logPrefix} Approval guardian breaker tripped. Breaking loop.`);
-          await activeSendCallback(createAssistantMessage('Stopped: several actions were refused in this run. The owner was notified.'));
+          await activeSendCallback(statusReply('Stopped: several actions were refused in this run. The owner was notified.'));
           stoppedEarly = 'the approval guardian breaker';
           break;
         }
@@ -2457,7 +2463,7 @@ class Agent {
           console.log(`${logPrefix} Stop flag detected for chat ${chatId}. Breaking loop.`);
           // Cancel any active MCP tool calls (e.g. a long browser_ step)
           if (this.mcp) this.mcp.cancelActiveCalls();
-          await activeSendCallback(createAssistantMessage('🛑 Execution stopped by user.'));
+          await activeSendCallback(statusReply('🛑 Execution stopped by user.'));
           this.stopFlags.delete(chatId);
           // Do NOT delete GLOBAL_STOP here, so it hits other concurrent loops.
           // It will be cleared on next user input.
@@ -2477,7 +2483,7 @@ class Agent {
             message: `Agent reached the maximum tool call iteration limit and was stopped.`,
             metadata: { loopCount, maxLoops, chatId, source: message.source, link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history' }
           });
-          await activeSendCallback(createAssistantMessage('I am stuck in a loop. Stopping now.'));
+          await activeSendCallback(statusReply('I am stuck in a loop. Stopping now.'));
           stoppedEarly = 'the loop limit';
           break;
         }
@@ -2487,6 +2493,7 @@ class Agent {
           const thinkText = getThinkingMessage(functionCalls);
           if (thinkText) {
             const updateMsg = createAssistantMessage(`Still working... (${thinkText})`);
+            updateMsg.isProgress = true;
             updateMsg.metadata = { chatId: message.metadata?.chatId };
             updateMsg.source = message.source;
             await activeSendCallback(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
@@ -2635,7 +2642,7 @@ class Agent {
         }
 
         if (functionCalls.length === 0 && loopWarnings.length > 0) {
-          await activeSendCallback(createAssistantMessage(`Stopped: ${loopWarnings.join('; ')}. Try a different approach.`));
+          await activeSendCallback(statusReply(`Stopped: ${loopWarnings.join('; ')}. Try a different approach.`));
           stoppedEarly = 'a repeated call';
           break;
         }
@@ -2649,6 +2656,7 @@ class Agent {
           const thinkText = getThinkingMessage(functionCalls);
           if (thinkText) {
             const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
+            thinkingMsg.isProgress = true;
             thinkingMsg.metadata = { chatId: message.metadata?.chatId };
             thinkingMsg.source = message.source;
             await activeSendCallback(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
@@ -3094,6 +3102,8 @@ class Agent {
             this.db.saveMessage(createAssistantMessage('Audio sent.'));
           } else {
             const reply = createAssistantMessage(`✅ Action ${lastTool.name} completed.`);
+            // Said for the model, which gave no answer of its own.
+            reply.isImplicit = true;
             reply.metadata = { chatId: message.metadata?.chatId };
             reply.source = message.source;
 
@@ -3106,7 +3116,7 @@ class Agent {
         } else {
           console.warn('[Agent] No text response found. Response dump:', JSON.stringify(response, null, 2));
           // Fallback notification to user
-          const reply = createAssistantMessage("I received an empty response from my brain. Please try again.");
+          const reply = statusReply("I received an empty response from my brain. Please try again.");
           reply.metadata = { chatId: message.metadata?.chatId };
           reply.source = message.source;
           this.db.saveMessage(reply); // Persist error so it appears in history
