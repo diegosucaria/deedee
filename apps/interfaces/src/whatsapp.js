@@ -445,15 +445,11 @@ class SQLiteStore {
                 }
             }
 
-            // An address that has written to the owner is that address: no guess.
-            // Only incoming messages count: a send to a mistyped number is not a chat.
-            const ownChat = !contact && !knownLid && guess && maybePhone && digits.length >= 7
-                && this.db.prepare('SELECT 1 FROM messages WHERE remote_jid = ? AND from_me = 0 LIMIT 1').get(isPhoneJid ? identifier : `${digits}@s.whatsapp.net`);
 
             // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54).
             // Typed numbers and phone JIDs only: the digits of a WhatsApp ID (LID) or a
             // group id have nothing to do with a phone number, so a match there finds a stranger.
-            if (!contact && !knownLid && !ownChat && guess && maybePhone && digits.length >= 7) {
+            if (!contact && !knownLid && guess && maybePhone && digits.length >= 7) {
                 const suffix = digits.slice(-7);
                 contact = this.db.prepare("SELECT id, name, notify, lid FROM contacts WHERE id LIKE ?").get(`%${suffix}@s.whatsapp.net`);
             }
@@ -575,8 +571,7 @@ class SQLiteStore {
         const results = [];
 
         for (const r of rows) {
-            // A chat's own address is exact: no suffix guess.
-            const identity = this.resolveIdentity(r.remote_jid, { guess: false });
+            const identity = this.resolveIdentity(r.remote_jid);
             const canonicalJid = identity.phoneJid || r.remote_jid;
 
             if (seen.has(canonicalJid)) {

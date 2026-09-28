@@ -278,47 +278,6 @@ describe('WhatsApp SQLiteStore', () => {
             const history = store.getChatHistory('100000000000002@s.whatsapp.net');
             expect(history.map(m => m.message.conversation)).toEqual(['From the ID chat']);
         });
-
-        test('a send to a mistyped number does not hide the saved contact', async () => {
-            ev.emit('contacts.upsert', [{ id: '1110000000001@s.whatsapp.net', name: 'Alice' }]);
-            ev.emit('messages.upsert', {
-                messages: [{ key: { remoteJid: '110000000001@s.whatsapp.net', id: 'm1', fromMe: true }, messageTimestamp: 1000, message: { conversation: 'sent to the wrong form' } }],
-                type: 'notify'
-            });
-            await new Promise(r => setTimeout(r, 600));
-
-            expect(store.resolveIdentity('110000000001').phoneJid).toBe('1110000000001@s.whatsapp.net');
-        });
-
-        // listConversations lists a chat by its own address; reading that
-        // address must give that chat, not a contact whose number ends the same.
-        test('a chat\'s own address reads that chat, never a guessed contact', async () => {
-            ev.emit('contacts.upsert', [{ id: '1110000000002@s.whatsapp.net', name: 'Alice' }]);
-            ev.emit('messages.upsert', {
-                messages: [
-                    { key: { remoteJid: '5490000000002@s.whatsapp.net', id: 'm1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'from the chat' } },
-                    { key: { remoteJid: '1110000000002@s.whatsapp.net', id: 'm2', fromMe: false }, messageTimestamp: 2000, message: { conversation: 'from Alice' } }
-                ],
-                type: 'notify'
-            });
-            await new Promise(r => setTimeout(r, 600));
-
-            expect(store.getChatHistory('5490000000002@s.whatsapp.net').map(m => m.message.conversation)).toEqual(['from the chat']);
-            expect(store.resolveIdentity('5490000000002').phoneJid).toBe('5490000000002@s.whatsapp.net');
-        });
-
-        test('recent chats never guess from a chat\'s own address', async () => {
-            ev.emit('contacts.upsert', [{ id: '1110000000002@s.whatsapp.net', name: 'Alice' }]);
-            ev.emit('messages.upsert', {
-                messages: [{ key: { remoteJid: '5490000000002@s.whatsapp.net', id: 'msg1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'Hello' } }],
-                type: 'notify'
-            });
-            await new Promise(r => setTimeout(r, 600));
-
-            const [chat] = store.getRecentChats(5);
-            expect(chat.jid).toBe('5490000000002@s.whatsapp.net');
-            expect(chat.name).toBeUndefined();
-        });
     });
 
     describe('linkLid', () => {
