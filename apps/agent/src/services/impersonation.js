@@ -279,7 +279,8 @@ Output a concise list of rules for this specific relationship.
                 content: [],
                 timer: null,
                 metadata: message.metadata,
-                source: message.source
+                source: message.source,
+                contactString
             });
         }
 
@@ -312,8 +313,9 @@ Output a concise list of rules for this specific relationship.
 
             // Extend by another 10s (refreshing as long as they type)
             buffer.timer = setTimeout(async () => {
-                // Use stored contact info or fallback to chatId
-                const contactStr = buffer.metadata?.phoneNumber || (chatId.includes('@') ? chatId.split('@')[0] : chatId);
+                // Use stored contact info or fallback to chatId. The contact the
+                // status was looked up by comes first: it can be a WhatsApp ID's digits.
+                const contactStr = buffer.contactString || buffer.metadata?.phoneNumber || (chatId.includes('@') ? chatId.split('@')[0] : chatId);
                 await this.processBufferedMessage(chatId, contactStr);
             }, 10000);
         }

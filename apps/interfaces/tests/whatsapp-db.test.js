@@ -230,6 +230,196 @@ describe('WhatsApp SQLiteStore', () => {
             const result = store.resolveIdentity('5551234@s.whatsapp.net');
             expect(result.name).toBe('NotifyName');
         });
+
+        // The last 7 digits of this WhatsApp ID and of this group id are the
+        // stranger's. A suffix match used to hand back the stranger's number.
+        test('a WhatsApp ID never takes the number of a contact whose digits end the same way', () => {
+            ev.emit('contacts.upsert', [{ id: '5490000000002@s.whatsapp.net', name: 'Stranger' }]);
+
+            const result = store.resolveIdentity('100000000000002@lid');
+            expect(result.phoneJid).toBeNull();
+            expect(result.name).toBeNull();
+        });
+
+        test('a group id never takes the number of a contact whose digits end the same way', () => {
+            ev.emit('contacts.upsert', [{ id: '5490000000002@s.whatsapp.net', name: 'Stranger' }]);
+
+            expect(store.resolveIdentity('120000000000000002@g.us').phoneJid).toBeNull();
+        });
+
+        test('a number typed with a 00 prefix still finds the contact', () => {
+            ev.emit('contacts.upsert', [{ id: '1110000000001@s.whatsapp.net', name: 'Alice' }]);
+
+            expect(store.resolveIdentity('001110000000001').phoneJid).toBe('1110000000001@s.whatsapp.net');
+        });
+
+        test('guess: false never matches by the last digits (an address WhatsApp gave is exact)', () => {
+            ev.emit('contacts.upsert', [{ id: '5490000000002@s.whatsapp.net', name: 'Stranger' }]);
+
+            expect(store.resolveIdentity('1110000000002@s.whatsapp.net', { guess: false }).phoneJid).toBe('1110000000002@s.whatsapp.net');
+            expect(store.resolveIdentity('1110000000002@s.whatsapp.net').phoneJid).toBe('5490000000002@s.whatsapp.net');
+        });
+
+        // readChatHistory turns bare digits into "<digits>@s.whatsapp.net". The
+        // digits of a WhatsApp ID we have seen used to find a stranger's chat.
+        test('the digits of a known WhatsApp ID read that chat, never a stranger whose number ends the same way', async () => {
+            ev.emit('contacts.upsert', [{ id: '5490000000002@s.whatsapp.net', name: 'Stranger' }]);
+            ev.emit('messages.upsert', {
+                messages: [{ key: { remoteJid: '100000000000002@lid', id: 'msg1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'From the ID chat' } }],
+                type: 'notify'
+            });
+            await new Promise(r => setTimeout(r, 600));
+
+            for (const input of ['100000000000002', '100000000000002@s.whatsapp.net']) {
+                const result = store.resolveIdentity(input);
+                expect(result.phoneJid).toBeNull();
+                expect(result.lid).toBe('100000000000002@lid');
+            }
+            const history = store.getChatHistory('100000000000002@s.whatsapp.net');
+            expect(history.map(m => m.message.conversation)).toEqual(['From the ID chat']);
+        });
+
+        // Known by a contact row keyed by the ID, a phone row that holds it, or a saved link.
+        test('the digits of a WhatsApp ID known from contacts or a link are that ID too', () => {
+            ev.emit('contacts.upsert', [
+                { id: '5490000000002@s.whatsapp.net', name: 'Stranger' },
+                { id: '1000000000001@lid', notify: 'Shop' },
+                { id: '5490000000003@s.whatsapp.net', name: 'Alice', lid: '1000000000009@lid' }
+            ]);
+            store.linkLid('5490000000004@s.whatsapp.net', '1000000000002@lid');
+
+            expect(store.resolveIdentity('1000000000001').lid).toBe('1000000000001@lid');
+            expect(store.resolveIdentity('1000000000001').phoneJid).toBeNull();
+            expect(store.resolveIdentity('1000000000009').phoneJid).toBe('5490000000003@s.whatsapp.net');
+            expect(store.resolveIdentity('1000000000002').phoneJid).toBe('5490000000004@s.whatsapp.net');
+        });
+    });
+
+    describe('linkLid', () => {
+        const LID = '100000000000002@lid';
+        const PHONE_JID = '5490000000001@s.whatsapp.net';
+
+        afterEach(() => { delete process.env.WHATSAPP_LID_ALT; });
+
+        test('a linked WhatsApp ID resolves both ways and leaves the contact list alone', () => {
+            ev.emit('contacts.upsert', [{ id: LID, notify: 'Clinic' }]);
+
+            expect(store.linkLid(PHONE_JID, LID)).toBe(true);
+
+            expect(store.resolveIdentity(LID).phoneJid).toBe(PHONE_JID);
+            expect(store.resolveIdentity(LID).name).toBeNull();
+            expect(store.resolveIdentity('5490000000001').allJids).toEqual([PHONE_JID, LID]);
+            expect(store.getContacts().map(c => c.id)).toEqual([LID]);
+            expect(store.db.prepare('SELECT lid, phone_jid FROM lid_links').all()).toEqual([{ lid: LID, phone_jid: PHONE_JID }]);
+            expect(store.linkLid(PHONE_JID, LID)).toBe(true);
+        });
+
+        // A named row made listConversations show the chat by name alone, and
+        // readChatHistory cannot find a chat by name. WhatsApp sends the push
+        // name as a contacts.update; it must not name a linked chat.
+        test('recent chats list a linked chat under its number, even after a name update', async () => {
+            ev.emit('contacts.upsert', [{ id: LID, notify: 'Clinic' }]);
+            ev.emit('messages.upsert', {
+                messages: [{ key: { remoteJid: LID, id: 'msg1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'Reminder' } }],
+                type: 'notify'
+            });
+            await new Promise(r => setTimeout(r, 600));
+
+            store.linkLid(PHONE_JID, LID);
+            ev.emit('contacts.update', [{ id: PHONE_JID, notify: 'Clinic' }]);
+
+            const [chat] = store.getRecentChats(5);
+            expect(chat.jid).toBe(PHONE_JID);
+            expect(chat.name).toBeUndefined();
+        });
+
+        test('a saved contact keeps its row and name; the link adds its WhatsApp ID', () => {
+            ev.emit('contacts.upsert', [{ id: PHONE_JID, name: 'Alice' }]);
+
+            expect(store.linkLid(PHONE_JID, LID)).toBe(true);
+
+            expect(store.getContact(PHONE_JID).lid).toBeNull();
+            const byLid = store.resolveIdentity(LID);
+            expect([byLid.phoneJid, byLid.name]).toEqual([PHONE_JID, 'Alice']);
+            expect(store.resolveIdentity(PHONE_JID).allJids).toEqual([PHONE_JID, LID]);
+        });
+
+        test('a number that already holds another WhatsApp ID keeps it, and so does an ID', () => {
+            ev.emit('contacts.upsert', [{ id: PHONE_JID, name: 'Alice', lid: '100000000000001@lid' }]);
+            const OTHER = '5490000000003@s.whatsapp.net';
+
+            expect(store.linkLid(PHONE_JID, LID)).toBe(false);
+            expect(store.linkLid(OTHER, '100000000000001@lid')).toBe(false);
+            expect(store.linkLid(OTHER, '100000000000003@lid')).toBe(true);
+            expect(store.linkLid(OTHER, LID)).toBe(false);
+            expect(store.linkLid('5490000000004@s.whatsapp.net', '100000000000003@lid')).toBe(false);
+            expect(store.resolveIdentity('100000000000003@lid').phoneJid).toBe(OTHER);
+            expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+        });
+
+        // A link saved while the number had no WhatsApp ID in contacts. When a
+        // contact sync gives the number another ID, the old ID's chat must stay
+        // its own, not show the number's current chat.
+        test('a link goes stale once contacts give its number another WhatsApp ID', async () => {
+            const OLD = '100000000000003@lid';
+            const NOW = '100000000000001@lid';
+            ev.emit('messages.upsert', {
+                messages: [
+                    { key: { remoteJid: OLD, id: 'm1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'from the old ID' } },
+                    { key: { remoteJid: NOW, id: 'm2', fromMe: false }, messageTimestamp: 2000, message: { conversation: 'from the number now' } }
+                ],
+                type: 'notify'
+            });
+            await new Promise(r => setTimeout(r, 600));
+
+            expect(store.linkLid(PHONE_JID, OLD)).toBe(true);
+            ev.emit('contacts.upsert', [{ id: PHONE_JID, name: 'Alice', lid: NOW }]);
+
+            expect(store.resolveIdentity(OLD).phoneJid).toBeNull();
+            expect(store.getChatHistory(OLD).map(m => m.message.conversation)).toEqual(['from the old ID']);
+            expect(store.resolveIdentity(PHONE_JID).allJids).toEqual([PHONE_JID, NOW]);
+            // The stale link gives way to a new one.
+            expect(store.linkLid('5490000000004@s.whatsapp.net', OLD)).toBe(true);
+            expect(store.resolveIdentity(OLD).phoneJid).toBe('5490000000004@s.whatsapp.net');
+        });
+
+        test('a link goes stale once contacts give its WhatsApp ID another number', async () => {
+            ev.emit('messages.upsert', {
+                messages: [{ key: { remoteJid: LID, id: 'm1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'from the ID' } }],
+                type: 'notify'
+            });
+            await new Promise(r => setTimeout(r, 600));
+
+            expect(store.linkLid(PHONE_JID, LID)).toBe(true);
+            ev.emit('contacts.upsert', [{ id: '5490000000004@s.whatsapp.net', name: 'Bob', lid: LID }]);
+
+            expect(store.resolveIdentity(LID).phoneJid).toBe('5490000000004@s.whatsapp.net');
+            expect(store.getChatHistory(PHONE_JID)).toEqual([]);
+            // The number is free again for a new link.
+            expect(store.linkLid(PHONE_JID, '100000000000003@lid')).toBe(true);
+            expect(store.resolveIdentity(PHONE_JID).allJids).toEqual([PHONE_JID, '100000000000003@lid']);
+        });
+
+        test('WHATSAPP_LID_ALT=0 makes the resolver ignore saved links', () => {
+            store.linkLid(PHONE_JID, LID);
+            process.env.WHATSAPP_LID_ALT = '0';
+
+            expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+            expect(store.resolveIdentity('5490000000001').allJids).toEqual([PHONE_JID]);
+        });
+
+        test('history by number finds the messages filed under the WhatsApp ID', async () => {
+            ev.emit('messages.upsert', {
+                messages: [{ key: { remoteJid: LID, id: 'msg1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'Reminder' } }],
+                type: 'notify'
+            });
+            await new Promise(r => setTimeout(r, 600));
+
+            store.linkLid(PHONE_JID, LID);
+
+            const history = store.getChatHistory('5490000000001');
+            expect(history.map(m => m.message.conversation)).toEqual(['Reminder']);
+        });
     });
 
     test('getChatHistory should smart-resolve JID from LID', async () => {

@@ -285,6 +285,82 @@ describe('Message Watchers & Passive Mode', () => {
         expect(errorReplies).toEqual([]);
     });
 
+    // WhatsApp shows some chats by a WhatsApp ID (LID). The interfaces send
+    // the phone number when they know it, and the WhatsApp ID in metadata.lid.
+    it('a watcher saved with a WhatsApp ID still fires once the message arrives under the phone number', async () => {
+        agent.client = {};
+        db.createWatcher({ name: 'WhatsApp ID Watcher', contactString: '100000000000002', condition: '*', instruction: 'Say done', status: 'active' });
+
+        await agent.processMessage({
+            id: 'msg_lid_1',
+            role: 'user',
+            content: 'Reminder: Tuesday at 17:00',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: '5490000000001', lid: '100000000000002@lid', chatId: '100000000000002@lid' }
+        }, jest.fn());
+
+        expect(db.getAllWatchers()[0].last_triggered_at).not.toBeNull();
+    });
+
+    it('a watcher on a phone number stays quiet for another sender\'s WhatsApp ID', async () => {
+        agent.client = {};
+        db.createWatcher({ name: 'Phone Watcher', contactString: '5490000000001', condition: '*', instruction: 'Say done', status: 'active' });
+
+        await agent.processMessage({
+            id: 'msg_lid_2',
+            role: 'user',
+            content: 'Hello',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: '100000000000002', lid: '100000000000002@lid', chatId: '100000000000002@lid' }
+        }, jest.fn());
+
+        expect(db.getAllWatchers()[0].last_triggered_at).toBeNull();
+    });
+
+    it('a watcher on the last 8 digits of a number never matches the end of a WhatsApp ID', async () => {
+        db.createWatcher({ name: 'Short Watcher', contactString: '00000002', condition: '*', instruction: 'Say done', status: 'active' });
+
+        await agent.processMessage({
+            id: 'msg_lid_3',
+            role: 'user',
+            content: 'Hello',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: '5490000000001', lid: '100000000000002@lid', chatId: '100000000000002@lid' }
+        }, jest.fn());
+
+        expect(db.getAllWatchers()[0].last_triggered_at).toBeNull();
+    });
+
+    it('autopilot still finds a person saved under the WhatsApp ID once messages arrive under the number', async () => {
+        db.createPerson({ name: 'Alice', phone: '100000000000002', source: 'test', identifiers: { whatsapp_lid: '100000000000002' } });
+        const spy = jest.spyOn(agent.impersonationService, 'handleMessage').mockResolvedValue();
+        const message = {
+            id: 'msg_lid_4',
+            role: 'user',
+            content: 'Hello',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: '5490000000001', lid: '100000000000002@lid', chatId: '100000000000002@lid' }
+        };
+        try {
+            await agent.processMessage(message, jest.fn());
+            expect(spy).toHaveBeenLastCalledWith('100000000000002@lid', expect.anything(), '100000000000002');
+
+            // A group, or a chat shown by number, keeps the number.
+            await agent.processMessage({ ...message, id: 'msg_lid_6', metadata: { ...message.metadata, chatId: '120000000000000002@g.us', isGroup: true, groupName: 'Unknown Group' } }, jest.fn());
+            expect(spy).toHaveBeenLastCalledWith('120000000000000002@g.us', expect.anything(), '5490000000001');
+            await agent.processMessage({ ...message, id: 'msg_lid_7', metadata: { ...message.metadata, chatId: '5490000000001@s.whatsapp.net' } }, jest.fn());
+            expect(spy).toHaveBeenLastCalledWith('5490000000001@s.whatsapp.net', expect.anything(), '5490000000001');
+
+            // Someone saved under the number wins.
+            db.createPerson({ name: 'Bob', phone: '5490000000001', source: 'test' });
+            await agent.processMessage({ ...message, id: 'msg_lid_5' }, jest.fn());
+            expect(spy).toHaveBeenLastCalledWith('100000000000002@lid', expect.anything(), '5490000000001');
+        } finally {
+            spy.mockRestore();
+            db.db.exec("DELETE FROM people WHERE phone IN ('100000000000002', '5490000000001')");
+        }
+    });
+
     // Validating specific regex logic from agent.js
     it('should match conditions correctly', () => {
         const check = (condition, content) => {

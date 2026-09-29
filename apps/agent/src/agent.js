@@ -1525,6 +1525,10 @@ class Agent {
         const isUserSession = message.source === 'whatsapp:user' || message.source === 'slack';
         const isFromMe = !!message.metadata?.fromMe;
         const contactString = message.metadata?.phoneNumber || message.metadata?.slackUserName || message.metadata?.chatId;
+        // The sender's WhatsApp ID (LID), when the interfaces know it. A watcher
+        // saved with it matches exactly: the suffix rules below are for phone
+        // number variants (549 vs 54), and an ID has none.
+        const senderLid = String(message.metadata?.lid || '').replace(/\D/g, '');
         const groupName = message.metadata?.groupName;
         const msgContent = message.content?.toLowerCase() || '';
 
@@ -1561,6 +1565,10 @@ class Agent {
             if (!isContactMatch) {
               isContactMatch = w.contact_string.includes(contactString);
             }
+          }
+
+          if (!isContactMatch && senderLid) {
+            isContactMatch = w.contact_string.replace(/\D/g, '') === senderLid;
           }
 
           if (!isContactMatch && groupName) {
@@ -1655,10 +1663,17 @@ class Agent {
 
           // --- AUTOPILOT LOGIC (skip for fromMe — we don't want to draft replies to ourselves) ---
           if (!isFromMe) {
+            // In a one-to-one chat shown by a WhatsApp ID, a person saved under that
+            // ID alone is still found by its digits, as before the interfaces knew
+            // the number. Groups and chats shown by number keep the number.
+            const lid = message.metadata?.lid;
+            const lidDigits = lid && !groupName && message.metadata?.chatId === lid ? lid.split('@')[0] : null;
+            const autopilotId = lidDigits && lidDigits !== contactString && !this.db.getPerson(contactString) && this.db.getPerson(lidDigits)
+              ? lidDigits : contactString;
             // handleMessage is async and not awaited: catch its rejection on the
             // promise. A try/catch here only sees synchronous throws, so a
             // failure became an unhandled rejection.
-            this.impersonationService.handleMessage(chatId, message, contactString)
+            this.impersonationService.handleMessage(chatId, message, autopilotId)
               .catch(e => console.error('[Agent] Autopilot failed:', e.message));
           }
 

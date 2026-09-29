@@ -3,8 +3,9 @@ const request = require('supertest');
 const child_process = require('child_process');
 const EventEmitter = require('events');
 const { Readable, Writable } = require('stream');
-const { WhatsAppService } = require('../src/whatsapp');
+const { WhatsAppService, SQLiteStore } = require('../src/whatsapp');
 const fs = require('fs');
+const path = require('path');
 
 // Mock external dependencies
 jest.mock('qrcode', () => ({
@@ -90,6 +91,19 @@ describe('WhatsAppService Unit Tests', () => {
         expect(whatsapp.sock).toBeDefined();
         expect(whatsapp.store).toBeDefined(); // Verify store init
         expect(typeof whatsapp.store.bind).toBe('function');
+    });
+
+    // Links the personal session saves from a message key must never reach
+    // the assistant session's allowlist: each session has its own store file.
+    test('each session keeps its own store file', async () => {
+        const user = new WhatsAppService('http://mock-agent', 'user');
+        jest.spyOn(user, '_importBaileys').mockResolvedValue(mockBaileys);
+        await whatsapp.connect();
+        await user.connect();
+
+        expect(path.basename(whatsapp.store.path)).toBe('messages_test-session.db');
+        expect(path.basename(user.store.path)).toBe('messages_user.db');
+        for (const s of [whatsapp, user]) { clearInterval(s.store.queueFlushInterval); s.store.close(); }
     });
 
     test('getStatus() should return initial status', () => {
@@ -440,7 +454,7 @@ describe('WhatsAppService Unit Tests', () => {
         });
 
         // Verify resolver was called and message was processed
-        expect(whatsapp.store.resolveIdentity).toHaveBeenCalledWith(lidJid);
+        expect(whatsapp.store.resolveIdentity).toHaveBeenCalledWith(lidJid, { guess: false });
         expect(spyAxios).toHaveBeenCalledWith(
             expect.anything(),
             expect.objectContaining({ content: 'Hello' })
@@ -652,6 +666,147 @@ describe('fromMe feedback loop prevention', () => {
         });
 
         expect(spyAxios).not.toHaveBeenCalled();
+    });
+});
+
+describe('a chat shown by WhatsApp ID (LID)', () => {
+    const LID = '100000000000002@lid';
+    const PHONE = '5490000000001';
+    let store;
+    let spyAxios;
+
+    const service = (session) => {
+        const s = new WhatsAppService('http://mock-agent', session);
+        s.store = store;
+        return s;
+    };
+    const reminder = (key) => ({
+        key: { id: 'm1', fromMe: false, ...key },
+        message: { conversation: 'Reminder: your visit is on Tuesday at 17:00' }
+    });
+    const sent = () => spyAxios.mock.calls.at(-1)[1];
+
+    let allowedBefore;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        jest.spyOn(console, 'log').mockImplementation(() => {});
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        allowedBefore = process.env.ALLOWED_WHATSAPP_NUMBERS;
+        process.env.ALLOWED_WHATSAPP_NUMBERS = PHONE;
+        store = new SQLiteStore(path.join(process.env.DATA_DIR, `lid-${Date.now()}-${Math.random()}.db`));
+        spyAxios = require('axios').post;
+        spyAxios.mockResolvedValue({});
+    });
+
+    afterEach(() => {
+        clearInterval(store.queueFlushInterval);
+        store.close();
+        delete process.env.WHATSAPP_LID_ALT;
+        process.env.ALLOWED_WHATSAPP_NUMBERS = allowedBefore;
+        jest.restoreAllMocks();
+    });
+
+    test('the personal session files a chat the store cannot place under the number in its key, and saves the link', async () => {
+        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(sent().metadata.phoneNumber).toBe(PHONE);
+        expect(sent().metadata.lid).toBe(LID);
+        expect(store.resolveIdentity(LID).phoneJid).toBe(`${PHONE}@s.whatsapp.net`);
+    });
+
+    test('the assistant session does not trust the number in the key: an unknown WhatsApp ID stays blocked', async () => {
+        await service('assistant').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(spyAxios).not.toHaveBeenCalled();
+        expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+    });
+
+    test('WHATSAPP_LID_ALT=0 keeps the WhatsApp ID digits and saves no link', async () => {
+        process.env.WHATSAPP_LID_ALT = '0';
+
+        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
+        expect(sent().metadata.lid).toBeUndefined();
+        expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+    });
+
+    test('WHATSAPP_LID_ALT=0 also ignores a link saved before', async () => {
+        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+        process.env.WHATSAPP_LID_ALT = '0';
+
+        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
+    });
+
+    test('a link that cannot be saved leaves the message under its ID digits', async () => {
+        jest.spyOn(store, 'linkLid').mockImplementation(() => { throw new Error('disk I/O error'); });
+
+        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
+    });
+
+    test("the owner's own message never saves a link: its key can describe him instead", async () => {
+        await service('user').handleMessage({
+            key: { id: 'm2', fromMe: true, remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' },
+            message: { imageMessage: { mimetype: 'image/jpeg' } }
+        });
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
+        expect(sent().metadata.lid).toBeUndefined();
+        expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+    });
+
+    test('a number already linked to another WhatsApp ID: the message keeps its ID digits, as the store does', async () => {
+        await store.upsertContacts([{ id: `${PHONE}@s.whatsapp.net`, name: 'Alice', lid: '100000000000001@lid' }]);
+        const user = service('user');
+
+        await user.handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+        await user.handleMessage(reminder({ id: 'm2', remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
+        expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+        // The refusal is logged once, not on every message.
+        expect(console.warn.mock.calls.filter(c => String(c[0]).includes('keeps its digits'))).toHaveLength(1);
+    });
+
+    test('the assistant session sends no WhatsApp ID, so its watchers see only the number', async () => {
+        await service('assistant').handleMessage(reminder({ remoteJid: `${PHONE}@s.whatsapp.net`, remoteJidAlt: LID, addressingMode: 'pn' }));
+
+        expect(sent().metadata.phoneNumber).toBe(PHONE);
+        expect(sent().metadata.lid).toBeUndefined();
+    });
+
+    test('a stranger whose address ends like an allowed number stays blocked in the assistant session', async () => {
+        await store.upsertContacts([{ id: '5490000000002@s.whatsapp.net', name: 'Alice' }]);
+        process.env.ALLOWED_WHATSAPP_NUMBERS = '5490000000002';
+
+        await service('assistant').handleMessage(reminder({ remoteJid: '100000000000002@lid', addressingMode: 'lid' }));
+        await service('assistant').handleMessage(reminder({ remoteJid: '100000000000002@s.whatsapp.net', addressingMode: 'pn' }));
+
+        expect(spyAxios).not.toHaveBeenCalled();
+    });
+
+    test('a chat shown by phone number keeps it and carries its WhatsApp ID', async () => {
+        await service('user').handleMessage(reminder({ remoteJid: `${PHONE}@s.whatsapp.net`, remoteJidAlt: LID, addressingMode: 'pn' }));
+
+        expect(sent().metadata.phoneNumber).toBe(PHONE);
+        expect(sent().metadata.lid).toBe(LID);
+    });
+
+    test('a group message never takes the number of a contact whose digits end like the group id', async () => {
+        await store.upsertContacts([{ id: '5490000000002@s.whatsapp.net', name: 'Stranger' }]);
+
+        await service('user').handleMessage(reminder({
+            remoteJid: '120000000000000002@g.us', participant: LID, participantAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid'
+        }));
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
+        expect(sent().metadata.lid).toBe(LID);
     });
 });
 
