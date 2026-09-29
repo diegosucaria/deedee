@@ -14,6 +14,7 @@ class CommunicationExecutor extends BaseExecutor {
                 const { to, content, session, service, type, imagePath } = args;
                 // An owner-approved call (see services/approval-service.js) may open a first contact.
                 const approved = context?.approved === true;
+                let sentToOwner = false;
                 console.log(`[CommunicationExecutor] Sending ${type || 'text'} to ${to} via ${service || 'whatsapp'} (Session: ${session || 'default'})${imagePath ? ` [imagePath=${imagePath}]` : ''}`);
 
                 const svc = service || 'whatsapp';
@@ -216,18 +217,28 @@ class CommunicationExecutor extends BaseExecutor {
                     const delivery = services.agent?.delivery;
                     const toOwner = !!(delivery && typeof delivery.deliver === 'function'
                         && typeof delivery.isOwnerTarget === 'function' && delivery.isOwnerTarget(svc, metadata.chatId));
+                    sentToOwner = toOwner;
                     const kind = message?.source === 'scheduler' ? 'job_notification' : 'reply';
                     // Every send the model asks for goes out, even an equal text.
                     // Only a copy still waiting in the queue is not queued twice.
                     const ledgerOpts = { origin: message?.metadata?.jobName ? `job:${message.metadata.jobName}` : 'sendMessage', dedupe: 'pending' };
                     const queuedText = (what) => `${what} is queued and will be retried, so it should not be sent again.`;
                     const isMedia = payload.type === 'image' || payload.type === 'audio';
+                    // A job run the scheduler marks (a job that answers in his
+                    // own chat, or one a tainted run made), or a sub-agent of
+                    // one, marks what it sends him when it has read third-party
+                    // content. The thread mirror keeps the mark; it holds back
+                    // his next word for messages, email and the house.
+                    const marked = message?.metadata?.jobRun?.markOwner === true;
+                    const ownerTaint = toOwner && marked ? (taintPayloadFields(context?.untrustedTaint).taintSources || []) : [];
+                    const ownerMeta = { session: metadata.session, ...(ownerTaint.length > 0 ? { jobTaint: ownerTaint } : {}) };
+                    if (ownerTaint.length > 0) payload.metadata = { ...payload.metadata, jobTaint: ownerTaint };
 
                     if (toOwner && !isMedia) {
                         const outcome = await delivery.deliver(kind, svc, metadata.chatId,
-                            { content: resolvedContent, type: 'text', metadata: { session: metadata.session } }, ledgerOpts);
+                            { content: resolvedContent, type: 'text', metadata: ownerMeta }, ledgerOpts);
                         if (!outcome.delivered && outcome.queued) {
-                            return { success: true, status: 'queued', queued: true, info: `Not delivered to ${cleanTo} yet: the messaging service did not take it. ${queuedText('It')}` };
+                            return { success: true, status: 'queued', queued: true, toOwner: true, info: `Not delivered to ${cleanTo} yet: the messaging service did not take it. ${queuedText('It')}` };
                         }
                         if (!outcome.delivered) {
                             return { success: false, error: `Not delivered to ${cleanTo} (${outcome.error || outcome.status || 'unknown reason'}), and nothing is queued.` };
@@ -243,12 +254,12 @@ class CommunicationExecutor extends BaseExecutor {
                             // The words matter more than the picture: they go
                             // through the ledger as text, so they still arrive.
                             const outcome = await delivery.deliver(kind, svc, metadata.chatId,
-                                { content: caption, type: 'text', metadata: { session: metadata.session } }, ledgerOpts);
+                                { content: caption, type: 'text', metadata: ownerMeta }, ledgerOpts);
                             if (outcome.delivered) {
-                                return { success: true, status: 'partial', info: `The picture to ${cleanTo} was not delivered. Its text went out without the picture, so it should not be sent again.` };
+                                return { success: true, status: 'partial', toOwner: true, info: `The picture to ${cleanTo} was not delivered. Its text went out without the picture, so it should not be sent again.` };
                             }
                             if (outcome.queued) {
-                                return { success: true, status: 'queued', queued: true, info: `The picture to ${cleanTo} was not delivered. ${queuedText('Its text')}` };
+                                return { success: true, status: 'queued', queued: true, toOwner: true, info: `The picture to ${cleanTo} was not delivered. ${queuedText('Its text')}` };
                             }
                             return { success: false, error: `Neither the picture nor its text reached ${cleanTo} (${outcome.error || outcome.status || 'unknown reason'}), and nothing is queued.` };
                         }
@@ -291,7 +302,8 @@ class CommunicationExecutor extends BaseExecutor {
                     console.warn('[Communication] Active Learning Hook Failed:', learningErr.message);
                 }
 
-                return { success: true, info: `Message sent to ${cleanTo}` };
+                // A scheduled task that sent this to the owner has answered (Scheduler).
+                return { success: true, info: `Message sent to ${cleanTo}`, ...(sentToOwner ? { toOwner: true } : {}) };
             }
 
             case 'addWatcher': {

@@ -12,7 +12,7 @@ Each one made a single attempt; the only trace was the dashboard bell.
 
 | kind | source |
 |---|---|
-| `job_notification` | scheduler smart notifications (`_processSmartNotification`), and a text the `sendMessage` tool sends to the owner from a job |
+| `job_notification` | scheduler smart notifications (`_processSmartNotification`): a job's result, to the owner's own WhatsApp or Telegram chat the job was made in, or else to the owner channel; the one line a one-time task that did not finish sends there; and a text the `sendMessage` tool sends to the owner from a job |
 | `reminder` | `setReminder` jobs, also late ones found at boot |
 | `system_alert` | `agent.deliverSystemAlert` (Slack token expiry, WhatsApp needs repair, ...) |
 | `ask_user` | questions the `askUser` tool sends |

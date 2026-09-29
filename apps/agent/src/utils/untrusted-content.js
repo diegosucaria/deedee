@@ -56,6 +56,7 @@ const INTERNAL_TRUSTED = Object.freeze(new Set([
     'rememberFact', 'updateFact', 'forgetFact', 'saveJobState', 'getJobState', 'getFact',
     'addGoal', 'updateGoalProgress', 'completeGoal',
     'readFile', 'writeFile', 'listDirectory', 'rollbackLastChange', 'pullLatestChanges', 'commitAndPush',
+    // listJobs leaves out the task of a job a tainted run made (executors/scheduler.js).
     'logJournal', 'scheduleJob', 'listJobs', 'cancelJob', 'setReminder', 'scheduleTask',
     'generateImage', 'cityWeatherImage', 'lookupDevice', 'learnDevice', 'listDeviceAliases', 'deleteDeviceAlias',
     'sendMessage', 'searchContacts', 'listPeople', 'getPerson', 'searchPeople', 'updatePerson', 'deletePerson',
@@ -537,7 +538,9 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
         case 'rollbackLastChange': return 'change the code';
         // Scheduling lands on the owner: the job or watcher stores this run's
         // taint (taintPayloadFields), so its later runs start tainted and
-        // their outward actions ask then.
+        // their outward actions ask then. The one change that stores none is
+        // new times or end date typed in his own chat, no more often and no
+        // later (executors/scheduler.js).
         default: break;
     }
     if (INTERNAL_TRUSTED.has(name) || Object.prototype.hasOwnProperty.call(INTERNAL_UNTRUSTED, name)) return null;
@@ -636,14 +639,21 @@ function originsHaveForeignText(rows) {
 /**
  * Do a chat's newest rows carry someone else's words inside a message the
  * owner sent: a forwarded message, or a prompt written by a run that had read
- * third-party content? They read like a tool result a third party wrote, so
- * they hold back messages, email and the house, and nothing else.
+ * third-party content? Or a message a job run sent here from a chat of its
+ * own, after reading such content (`jobTaint`)? A job made in his chat used
+ * to run inside it and leave its tool results here; now only its result
+ * comes, and the mark stands in for them. They read like a tool result a
+ * third party wrote, so they hold back messages, email and the house, and
+ * nothing else. Our own replies in this chat do not count: what they read is
+ * in this chat's history, which historyHasUntrusted checks.
  */
 function originsHaveTaintedRows(rows) {
     for (const r of Array.isArray(rows) ? rows : []) {
-        if (!r || r.role !== 'user') continue;
+        if (!r) continue;
         const meta = rowMeta(r);
-        if (meta && Array.isArray(meta.untrustedTaint) && meta.untrustedTaint.length > 0) return true;
+        if (!meta) continue;
+        if (Array.isArray(meta.jobTaint) && meta.jobTaint.length > 0) return true;
+        if (r.role === 'user' && Array.isArray(meta.untrustedTaint) && meta.untrustedTaint.length > 0) return true;
     }
     return false;
 }

@@ -277,22 +277,22 @@ const toolDefinitions = [
       {
         name: "scheduleJob",
         category: "scheduler",
-        description: "Schedule a recurring task using cron syntax. The task must be a simple description that the agent will execute later.",
+        description: "Schedule a recurring task using cron syntax, at most every 15 minutes. The task must be a simple description that the agent will execute later. To change a repeating job (its times, its task or its end date), call this again with the same name: the job keeps its saved state, its end date when you give none, and a pause; it still reports where it was made. Never cancel a repeating job to change it. To move a one-time task, cancel it and make a new one with scheduleTask. A run that has nothing to report answers [SILENT] and nothing is sent.",
         parameters: {
           type: "OBJECT",
           properties: {
             name: { type: "STRING", description: "Unique name for the job" },
             cron: { type: "STRING", description: "Cron expression (e.g. '0 9 * * *' for daily at 9am)" },
-            task: { type: "STRING", description: "Description of the task to perform (e.g. 'Check weather and send report')" },
+            task: { type: "STRING", description: "Description of the task to perform (e.g. 'Check weather and send report'). Needed for a new job; leave it out to keep an existing job's task." },
             expiresAt: { type: "STRING", description: "Optional. ISO 8601 Date String (e.g. '2025-12-31T23:59:00') when this job should stop running and be deleted." }
           },
-          required: ["name", "cron", "task"]
+          required: ["name", "cron"]
         }
       },
       {
         name: "listJobs",
         category: "scheduler",
-        description: "List all currently scheduled jobs with details (name, schedule, task description). Use this to find a job ID before cancelling or modifying it.",
+        description: "List all currently scheduled jobs with details (name, schedule, task description). Use this to find a job ID before cancelling or modifying it. A job made by a run that read untrusted content shows taskHidden instead of its task; a paused job shows paused.",
         parameters: {
           type: "OBJECT",
           properties: {},
@@ -302,7 +302,7 @@ const toolDefinitions = [
       {
         name: "cancelJob",
         category: "scheduler",
-        description: "Cancel a scheduled job by name.",
+        description: "Delete a scheduled job by name, with its saved state. Built-in jobs cannot be deleted. To change a job instead, call scheduleJob with the same name.",
         parameters: {
           type: "OBJECT",
           properties: { name: { type: "STRING" } },

@@ -86,6 +86,8 @@ describe('jobs created by a tainted run', () => {
         await executor.execute('scheduleTask', { time: when, task: 'send the report' }, ctx(MAIL));
         const [name] = Object.keys(captured);
         expect(captured[name].options.payload).toMatchObject({ tainted: true, taintSources: MAIL });
+        // A one-time task that gives no answer at all tells the owner it did not finish.
+        agent.processMessage.mockImplementationOnce(async (msg, send) => { await send({ content: 'Report sent.' }); return {}; });
         await captured[name].callback();
         expect(agent.processMessage.mock.calls[0][0].metadata.untrustedTaint).toEqual([`email (personal_gmail) [carried by job "${name}"]`]);
     });

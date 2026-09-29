@@ -1,5 +1,4 @@
 const express = require('express');
-const { taintFromPayload } = require('../utils/untrusted-content');
 const fs = require('fs');
 const path = require('path');
 const browserSecrets = require('../utils/browser-secrets');
@@ -299,68 +298,51 @@ function createInternalRouter(agent) {
                 return res.status(403).json({ error: 'Cannot modify system jobs' });
             }
 
-            // Auto-scope tools for this job prompt
-            let allowedTools = null;
-            try {
-                if (agent.toolScoper) {
-                    const mcpTools = await agent.mcp.getTools();
-                    allowedTools = await agent.toolScoper.scope(task, mcpTools);
-                    console.log(`[Scheduler] Auto-scoped ${allowedTools?.length || 0} tools for job '${name}'`);
-                }
-            } catch (e) {
-                console.warn(`[Scheduler] Tool scoping failed for '${name}', falling back to all tools:`, e.message);
-            }
+            // Auto-scope tools for this job prompt; null leaves every tool.
+            const allowedTools = await agent.scheduler.scopeJobTools(task);
+            console.log(`[Scheduler] Auto-scoped ${allowedTools?.length || 0} tools for job '${name}'`);
 
             // A job a tainted run created stays tainted while its task text is
             // unchanged. Rewriting the task is the owner's own instruction.
             const prev = existingJob?.metadata?.payload;
-            const keepTaint = prev && prev.tainted === true && prev.task === task
+            // The form sends its text area with CRLF line ends: compare the text,
+            // not the line ends, or a change of time alone would clear the taint.
+            const sameText = (a, b) => String(a ?? '').replace(/\r\n?/g, '\n').trim() === String(b ?? '').replace(/\r\n?/g, '\n').trim();
+            // A job a job made keeps that mark the same way: it may not make jobs.
+            const keepMadeByJob = prev?.madeByJob === true && sameText(prev.task, task);
+            const keepTaint = prev && prev.tainted === true && sameText(prev.task, task)
                 ? { tainted: true, ...(Array.isArray(prev.taintSources) ? { taintSources: prev.taintSources } : {}) }
                 : {};
+            // A job made in a chat keeps reporting there after an edit here.
             const payload = {
                 task,
+                ...(prev?.targetChatId ? { targetChatId: prev.targetChatId, targetSource: prev.targetSource } : {}),
                 ...keepTaint,
+                ...(keepMadeByJob ? { madeByJob: true } : {}),
                 ...(model && model !== 'auto' ? { model: model.toUpperCase() } : {}),
                 ...(allowedTools ? { allowedTools } : {}),
                 ...(weekdaysOnly ? { weekdaysOnly: true } : {}),
-                ...(daytimeOnly ? { daytimeOnly: true } : {})
+                ...(daytimeOnly ? { daytimeOnly: true } : {}),
+                ...(isOneOff ? { isOneOff: true } : {})
             };
 
-            const callback = async () => {
-                console.log(`[Scheduler] Executing task: ${task}`);
-                let executionResult = null;
-                await agent.processMessage({
-                    role: 'user',
-                    content: `Scheduled Task: ${task}`,
-                    source: 'scheduler',
-                    metadata: {
-                        chatId: `scheduled_${name}_${Date.now()}`,
-                        // As the callback built at boot sets it: job state tools and the refusal metric read it.
-                        jobName: name,
-                        ...(payload.tainted ? { untrustedTaint: taintFromPayload(payload, `job "${name}"`) } : {}),
-                        ...(payload.model ? { forceModel: payload.model } : {}),
-                        ...(payload.allowedTools ? { allowedTools: payload.allowedTools } : {})
-                    }
-                }, async (reply) => {
-                    let sent;
-                    if (agent.interface) {
-                        sent = await agent.interface.send(reply);
-                    }
-                    if (!executionResult) executionResult = reply;
-                    else if (reply.text) executionResult.text = (executionResult.text || '') + '\n' + reply.text;
-                    // A false from the interface lets _deliverReply record the failure.
-                    return sent;
-                });
-                return executionResult;
-            };
+            // The callback a restart builds. This one used to skip the smart
+            // notification, so a result reached the owner only after the next
+            // restart, and it sent the run no [SILENT] note.
+            const callback = agent.scheduler._buildAgentInstructionCallback(name, payload);
 
-            agent.scheduler.scheduleJob(name, cron, callback, {
+            const scheduled = agent.scheduler.scheduleJob(name, cron, callback, {
                 persist: true,
                 taskType: 'agent_instruction',
                 payload,
                 expiresAt: expiresAt || null,
-                oneOff: !!isOneOff
+                oneOff: !!isOneOff,
+                // An edit leaves a paused job paused; the toggle turns it on.
+                enabled: existingJob ? existingJob.metadata?.enabled !== false : true
             });
+            if (scheduled === false) {
+                return res.status(400).json({ error: `'${cron}' is not a schedule the scheduler understands${existingJob ? '; the job was not changed' : ''}.` });
+            }
 
             if (agent.interface) {
                 agent.interface.broadcast('jobs:update', { action: 'create', name });

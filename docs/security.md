@@ -181,7 +181,16 @@ his approval. It counts when all of these hold:
   window as the model: 20 rows on Flash, 50 otherwise). A web message in a
   chat whose id holds `@` never counts either. A message he forwarded is
   still his own message: it reads like a tool result a third party wrote
-  (`originsHaveTaintedRows`), so it holds back only the rules below.
+  (`originsHaveTaintedRows`), so it holds back only the rules below. So does
+  a message from a marked job run, or one of its sub-agents, that read
+  untrusted content: its result, a `sendMessage` to him or an `askUser`
+  question. A run is marked (`jobRun.markOwner`) when its job answers in his
+  own chat (before 2026-09-28 such a job ran inside that chat and left its
+  tool results there) or when a tainted run made the job. A reminder a
+  marked job run set after reading untrusted content is marked too; one he
+  set in his own chat, or one a built-in or form job set, is not. The thread mirror stores the mark on the row
+  (`metadata.jobTaint`). A job made in the web chat or the Tasks form, and a
+  built-in job, carries no mark (see Known gaps).
 
 Then a call the rules above pause runs with no card and no guardian call,
 and the history stores `owner_instructed`. Three limits stay:
@@ -505,7 +514,7 @@ by name.
 What the list does not cover, by design or for later:
 
 - **A child may hold tools its parent lacks.** A parent that names `tools` for `spawnAgent` can name any tool: the system jobs fan out that way (a briefing that holds no mail tool starts a mail reader). A parent that gives no `tools` hands down its own list, so silence never widens. The child's taint, the approval gates and the breaker it shares with its parent still hold.
-- **A job, task or watcher that a listed run creates carries no list.** Its later runs get every tool; the taint it carries and the approval gates hold them.
+- **A watcher that a listed run creates carries no list.** Its later runs get every tool; the taint it carries and the approval gates hold them. A job or task gets its own list from `ToolScoper` when it is saved (`Scheduler.scopeJobTools`), never the list of the run that made it; when the scoper fails, it has every tool.
 - **A run resumed after an approval keeps no list.** No listed run reaches that path today: jobs are answered deferred and run the one approved call, and a sub-agent cannot ask.
 - **A watcher run on a contact's chat still gets every tool**, held by the approval gates and the untrusted-content rules.
 
@@ -688,10 +697,44 @@ on retries too. Its outward actions ask; its reports to the owner and
 reminders stay silent. The card then reads "This run read untrusted
 content, or was created by a run that did". Re-saving such a job from the
 dashboard keeps the taint while the task text is unchanged; rewriting the
-task is the owner's own instruction and clears it. A job or reminder that a
-tainted run creates from a contact's chat reports to the owner channel,
-never to that chat. A call the owner approves runs with the taint of the
-run that asked.
+task is the owner's own instruction and clears it. A change through
+`scheduleJob` (the same name) keeps the taint whatever the new task says:
+the model writes that task and may copy what was planted. A tainted run's
+change stores its taint too, as a new job does: that is why scheduleJob runs
+unasked there. One change is spared: new times or a new end date typed in one
+of his own chats (not a forwarded message, not a contact's, group's or
+channel's chat opened on the web) that run no more often, as node-schedule's
+own cron parser reads both schedules, and end no later ("move my briefing
+before my first meeting" reads his calendar). A contact's message, a
+sub-agent or a job run that moves a job taints it. A job or reminder
+that a tainted run creates from a contact's chat reports to the owner
+channel, never to that chat. A job's result only ever goes to the owner:
+his own WhatsApp or Telegram chat where he made it, or else the owner
+channel. A job saved long ago with a contact's chat of his own account or a
+Slack channel still does nothing, as those chats are passive. A job run
+skips the chat rate limit, so what the model makes is held. A schedule must
+parse with node-schedule's own cron parser and fire at most once a minute
+and on at most four minutes of an hour, unless the job keeps its times and
+its task: a second reading of cron differed from the real one ("0*" is every
+minute). A job's run and its
+sub-agents (they carry its record, `metadata.jobRun`) make and change no
+repeating jobs, make at most two one-time tasks (the count is checked and
+taken with no await in between, so calls side by side count), and cancel
+only their own job
+or a task a job made. A task a job run made (`madeByJob`, kept by a Tasks
+form re-save of the same text) makes none. A one-time task that ends with
+no answer is not run again (a thrown error is retried up to three times,
+unless the task was deleted, changed or paused meanwhile). No user job
+starts while its last run is still going. `cancelJob` refuses a built-in job, as the Tasks page does.
+`listJobs` leaves out the task of a job a tainted run made (`taskHidden`),
+though not the text of a reminder he set in one of his own chats (a watcher
+run's, a sub-agent's or a job's reminder stays hidden); a change without a
+task keeps it, and keeps its taint. A new job's name from a
+run that read untrusted content is a short slug, and an end date is an ISO
+date, so neither can carry a sentence back to a clean run through
+`listJobs`. The dashboard compares task texts without their line
+ends, since the form sends CRLF. A call the owner approves runs with the
+taint of the run that asked.
 
 **Goals carry taint too**: `addGoal` and `updateGoalProgress` run unasked,
 but in a tainted run they store `tainted` and `taintSources` in the goal's
@@ -725,6 +768,17 @@ state can carry text into later prompts and tool results that count as
 trusted. `learnDevice` aliases do the same for device
 names; misuse stays within home control, which runs unasked anyway. A reminder's text can quote untrusted text
 back to the owner. The autopilot reply service does not use this tool loop.
+The result of a job made in the Tasks form or the web chat, or of a built-in
+job such as `proactive_thought`, and its `sendMessage` to him, reach his chat
+with no mark even when the run read email, unless a tainted run made the job.
+A mark there would make his next email or message request ask for a card
+after every morning briefing. A watcher run has no job record, so the
+limits on making jobs and tasks do not hold there, and any run may add
+watchers, a job's run too: a job can reach a repeating job that way, once
+the watched contact writes. A contact's messages can make tasks at the pace
+they arrive.
+A reminder is not counted either: it runs no model, and only repeats a
+text.
 
 ## Personal data guard
 

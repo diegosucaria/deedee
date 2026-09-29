@@ -3953,9 +3953,10 @@ class AgentDB {
    * numbers sort as text the way they sort as numbers, so the range below is
    * one seek in idx_messages_chat_time per prefix. The run's own chat is the
    * FIRST one in its window: when runs of one job overlap, the later chats
-   * belong to the later runs. A job that reports into a chat of its own
-   * (`targetChatId`) has no such chat: its link is that chat, between the
-   * moment the run began and the moment it ended.
+   * belong to the later runs. A run that wrote into the chat its job was
+   * made in (`targetChatId`: runs before 2026-09-28, or with JOB_OWN_CHAT=0)
+   * has no such chat: its link is that chat, between the moment the run
+   * began and the moment it ended.
    * @returns {{ chatId: string, since?: string, until?: string } | null}
    */
   getJobRunHistory(log) {

@@ -114,7 +114,7 @@ class SubAgentService {
      * Spawn a sub-agent to perform a specific task.
      * @returns {string|object} taskId (async) or { taskId, result } (blocking)
      */
-    async spawn({ task, model, tools, timeoutMinutes, parentChatId, parentSource = null, waitForResult = true, parentDepth = 0, lightweight = false, untrustedTaint = [], approvalRunId = null }) {
+    async spawn({ task, model, tools, timeoutMinutes, parentChatId, parentSource = null, waitForResult = true, parentDepth = 0, lightweight = false, untrustedTaint = [], approvalRunId = null, jobRun = null }) {
         // Concurrent limit
         if (this.running.size >= this.MAX_CONCURRENT) {
             throw new Error(`Max concurrent sub-agents reached (${this.MAX_CONCURRENT}). Wait for existing tasks to complete.`);
@@ -161,7 +161,10 @@ class SubAgentService {
                 // starts tainted, so it cannot act on that content unasked.
                 ...(Array.isArray(untrustedTaint) && untrustedTaint.length > 0 ? { untrustedTaint: [...untrustedTaint] } : {}),
                 // Guardian denials in the sub-agent count toward the parent's breaker.
-                ...(approvalRunId ? { approvalRunId: String(approvalRunId) } : {})
+                ...(approvalRunId ? { approvalRunId: String(approvalRunId) } : {}),
+                // Spawned by a job run: its limits on making jobs and tasks, and
+                // its taint mark on messages to the owner, hold here too.
+                ...(jobRun && typeof jobRun === 'object' && jobRun.runId ? { jobRun: { ...jobRun } } : {})
             }
         };
 
