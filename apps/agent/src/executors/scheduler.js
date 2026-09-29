@@ -81,13 +81,17 @@ function noMoreOften(oldCron, newCron) {
     // month list as long as the month is "every day of the month".
     const days = (list) => (list.length === 8 ? 7 : new Set(list.map(v => v % 7)).size);
     const numeric = (list) => list.every(v => typeof v === 'number');
-    const everyDayOfMonth = a.dayOfMonth.length === 31 && new Set(a.dayOfMonth).size === 31;
+    // "L" and "5L" stay text in the list: only the 31 numbers are every day.
+    const everyDayOfMonth = numeric(a.dayOfMonth) && new Set(a.dayOfMonth).size === 31;
     if (everyDayOfMonth && numeric(a.dayOfWeek) && numeric(b.dayOfWeek)) {
         if (days(b.dayOfWeek) > days(a.dayOfWeek)) return false;
     } else if (!same(a.dayOfWeek, b.dayOfWeek)) {
         return false;
     }
     const n = (list) => new Set(list).size;
+    // With exactly 24 hour entries the parser turns off its DST care, so a
+    // repeated list runs the hour the clocks go back twice.
+    if (b.hour.length === 24 && n(b.hour) < 24) return false;
     if (n(b.second) > n(a.second)) return false;
     return n(b.minute) * n(b.hour) <= n(a.minute) * n(a.hour);
 }

@@ -1088,6 +1088,17 @@ describe('a job made in a chat', () => {
             expect(noMoreOften(`0 9 ${Array(31).fill(1).join(',')} * *`, `0 9 ${Array(31).fill(1).join(',')} * 1`)).toBe(false);
         });
 
+        test('a day list with L in it is not every day, and repeated minutes or 24 hour entries cannot hide a run', () => {
+            const { noMoreOften, tooOften } = require('../src/executors/scheduler');
+            // "L" and "5L" stay text in the parsed list: 31 entries are not 31 days.
+            expect(noMoreOften('0 9 1-14,16-31,L * *', '0 9 1-14,16-31,L * 0-6')).toBe(false);
+            // Minutes match by value: "20,20" is one run an hour, not two.
+            expect(noMoreOften('20,20 9 * * *', '20,40 9 * * *')).toBe(false);
+            expect(tooOften('0,0,15,30,45 * * * *')).toBeNull();
+            // With 24 hour entries the parser skips its DST care: the hour the clocks go back runs twice.
+            expect(noMoreOften('0 1 * * *', `0 ${Array(24).fill(1).join(',')} * * *`)).toBe(false);
+        });
+
         test('a Slack channel or a Telegram group opened on the web is not his own chat', async () => {
             await executor.execute('scheduleJob', { name: 'text_alice', cron: '0 8 * * *', task: 'Text Alice good morning' }, inChat('web', 'web-chat-1'));
             await executor.execute('scheduleJob', { name: 'text_bob', cron: '0 8 * * *', task: 'Text Bob good morning' }, inChat('web', 'web-chat-1'));
