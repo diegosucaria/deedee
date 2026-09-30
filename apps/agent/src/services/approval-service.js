@@ -953,6 +953,9 @@ class ApprovalService {
             if (existing) {
                 console.log(`[Approvals] ${toolName} already waits for approval (${existing.id}); no second card.`);
                 const where = existing.mode === 'interactive' ? 'in this chat' : 'on his notification channel';
+                // He asked for it again in his own chat: the card shows again as
+                // the newest message, so his next bare yes can decide it.
+                if (kind === 'chat' && (await this._stillAsking(existing, message)) === false) await this._showAgain(existing, message);
                 const row = this._record({
                     ...withHits, outcome: 'escalated_duplicate', decidedBy: 'owner', approvalId: existing.id,
                     reason: 'A card for this action already waits for him.'
@@ -1310,6 +1313,39 @@ class ApprovalService {
         if (channel === 'telegram') return telegramOwnerIds().includes(String(chatId));
         if (channel === 'whatsapp') return this._isOwnerWaChat(chatId);
         return false;
+    }
+
+    /**
+     * Post a waiting card again, unchanged, where it waits: other messages
+     * came after it, and he asked for the same step again.
+     */
+    async _showAgain(row, message) {
+        try {
+            let others = this.db.listPendingConfirmations({ replyChatId: row.reply_chat_id }).filter(r => r.id !== row.id);
+            if (splitChannel(row.reply_channel).channel === 'whatsapp' && await this._isOwnerWaChat(row.reply_chat_id)) {
+                const seen = new Set([row.id, ...others.map(o => o.id)]);
+                for (const r of this.db.listPendingConfirmations()) {
+                    if (seen.has(r.id) || splitChannel(r.reply_channel).channel !== 'whatsapp') continue;
+                    if (await this._isOwnerWaChat(r.reply_chat_id)) others.push(r);
+                }
+            }
+            const outgoing = createAssistantMessage(this.buildCard(row, { others, origin: describeOrigin(message) }));
+            outgoing.source = row.reply_channel;
+            outgoing.metadata = {
+                chatId: row.reply_chat_id,
+                approval: { id: row.id, status: 'pending', toolName: row.tool_name, summary: row.summary, expiresAt: row.expires_at, mode: row.mode }
+            };
+            if (row.mode === 'deferred') {
+                outgoing.metadata.session = 'assistant';
+                outgoing.isNotification = true;
+            }
+            try { this.db.saveMessage(outgoing); } catch (e) { console.warn('[Approvals] saveMessage failed:', e.message); }
+            await this._delivery().deliver('approval', row.reply_channel, row.reply_chat_id, outgoing, {
+                id: outgoing.id, origin: `approval:${row.id}`, expiresAt: row.expires_at, dedupe: false
+            });
+        } catch (e) {
+            console.warn(`[Approvals] could not show ${row.id} again: ${e.message}`);
+        }
     }
 
     /**
@@ -1754,11 +1790,17 @@ class ApprovalService {
             }
             const { rows, more } = this.db.listChatMessagesSince([row.reply_chat_id, chatId, ...ownerIds], row.created_at, { excludeId: message?.id || null });
             if (more) return false;
-            // A Telegram chat keeps no copy of a job's note; the delivery ledger does.
+            // A Telegram chat keeps no copy of a job's note or a reminder; the
+            // delivery ledger does. Anything it took there after the card, but
+            // the card's own delivery, counts.
+            const shownAt = [...rows].reverse().find(m => m.role === 'assistant' && m.metadata?.approval?.id === row.id && m.metadata.approval.status === 'pending')?.timestamp || row.created_at;
             if (splitChannel(row.reply_channel).channel !== 'whatsapp' && typeof this.db.listOutboxSince === 'function'
-                && this.db.listOutboxSince([row.reply_chat_id, chatId], row.created_at).length > 0) return false;
+                && this.db.listOutboxSince([row.reply_chat_id, chatId], shownAt).some(d => d.origin !== `approval:${row.id}`)) return false;
             const runId = row.origin_meta?.cardRunId || null;
-            for (const m of rows) {
+            // The card may have been shown again (_showAgain): count from its latest showing.
+            let from = 0;
+            rows.forEach((m, i) => { if (m.role === 'assistant' && m.metadata?.approval?.id === row.id && m.metadata.approval.status === 'pending') from = i; });
+            for (const m of rows.slice(from)) {
                 const meta = m.metadata || {};
                 if (m.role === 'user') {
                     if (meta.answeredCard || meta.answeredQuestion) continue;
@@ -1948,8 +1990,10 @@ class ApprovalService {
     async _deliverTo(target, text, row) {
         const outgoing = createAssistantMessage(text);
         outgoing.source = target.channel;
-        // approvalLine: a line about a settled card, which asks him nothing (see _stillAsking).
-        outgoing.metadata = { chatId: target.chatId, approval: { id: row.id, status: row.status, toolName: row.tool_name }, approvalLine: true };
+        // approvalLine: a line about a settled card, which asks him nothing
+        // (see _stillAsking). A plain card's lines (an errand's) may ask him
+        // something ("decime otro horario"), so they carry no mark.
+        outgoing.metadata = { chatId: target.chatId, approval: { id: row.id, status: row.status, toolName: row.tool_name }, ...(row.origin_meta?.card ? {} : { approvalLine: true }) };
         const channel = splitChannel(target.channel).channel;
         let owner = false;
         try { owner = this._delivery().isOwnerTarget(channel, target.chatId); } catch { owner = false; }

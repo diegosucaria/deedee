@@ -271,7 +271,7 @@ function getTurnContext({ dateString, activeGoals, skillsContext, vaultContext, 
         if (waitingCard && waitingCard.id) {
                 // An errand's card is his choice about an open errand: his word in his chat does that step.
                 const how = waitingCard.toolName === 'answerErrand'
-                        ? `If his message answers that card, do its step with 'answerErrand' (the open errands list it), or tell him to reply /confirm ${waitingCard.id}.`
+                        ? `If his message says yes to that card, do exactly its step with 'answerErrand' (the open errands list each card's step by its id), or tell him to reply /confirm ${waitingCard.id}; if it says no, tell him to reply /cancel ${waitingCard.id}.`
                         : `If his message answers that card, tell him to reply /confirm ${waitingCard.id} or /cancel ${waitingCard.id}. You cannot approve it yourself.`;
                 lines.push(`A CARD WAITS IN THIS CHAT: ${waitingCard.id} (${waitingCard.toolName}). His short yes or no did not decide it, because other messages came after it. ${how} If it answers your own last question, go on as usual.`);
         }

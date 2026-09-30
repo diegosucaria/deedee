@@ -284,9 +284,13 @@ another card is settled (`approvalLine`), an `askUser` question he
 answered, the run's own "Still working..." lines, and his words that only
 answered a card or a question (marked `answeredCard`, `answeredQuestion`).
 Anything else may be what his word answers: his words to the model and the
-reply to them (a run resumed after another card included), a job's note (it
-may ask something; on Telegram the delivery ledger shows it), a question
-that lapsed, another card. So after he asks for a draft and
+reply to them (a run resumed after another card included), a job's note or
+a reminder (it may ask something; on Telegram, which keeps no copy of them,
+the delivery ledger shows what went there after the card), a question that
+lapsed, another card. A card counts from its latest showing: when he asks in
+his own chat for a step whose card already waits but no longer reads as the
+question, the card is posted again (`_showAgain`), and his next bare yes
+decides it. So after he asks for a draft and
 Deedee shows it, "dale, mandalo" answers the draft, never a job's card from
 the morning. A card that lands after Deedee's question is the newest
 question, so a bare yes answers it. When his bare yes or no reaches no card

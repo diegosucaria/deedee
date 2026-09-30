@@ -262,7 +262,7 @@ const TEXTS = {
         whyOutside: (w) => `está fuera de tu rango (${w})`,
         whyBusy: 'tenés algo en el calendario a esa hora',
         whyCalendar: 'no pude revisar tu calendario',
-        whySoon: 'empieza en menos de 15 minutos',
+        whySoon: 'empieza muy pronto',
         whyNight: 'es tarde y a esta hora no contesto por mi cuenta',
         whyVoice: 'también mandó un audio que no pude entender',
         understood: (sum) => `Lo que sí entendí: ${sentence(sum)}`,
@@ -283,6 +283,7 @@ const TEXTS = {
         unreadAfter: 'no pude leer el mensaje.',
         after: (n, id, sum, s) => `${n} escribió de nuevo después de reservar (pedido #${id}): ${sentence(sum)} Tu calendario sigue con el ${s}.`,
         takeoverHeld: (n, s) => ` Estaba por aceptarle a ${n} el ${s} y agendarlo; no lo hice: decime si lo agendo.`,
+        heldAcceptNote: (n, s) => ` Estaba por aceptarle a ${n} el ${s}; no está en tu calendario.`,
         notSent: ' Tu último paso no salió.',
         noAnswerYet: (n, id) => `${n} escribió pero todavía no contestó lo que le pedí (pedido #${id}). No le vuelvo a escribir por mi cuenta; decime si querés.`,
         whyAnd: (a, b) => `${a}, y ${b}`,
@@ -303,7 +304,7 @@ const TEXTS = {
         cardExpired: (n, id, s) => `Pedido #${id}: la propuesta de ${n}${s ? ` (${s})` : ''} sigue esperando tu respuesta. Decime si la acepto, pido otro horario o lo cancelo.`,
         wroteAgain: (n) => `${n} escribió de nuevo antes de que saliera; no mandé nada. Leo lo nuevo y te aviso.`,
         held: (own) => (own ? ' No mandé lo tuyo todavía: decime si sigo.' : ' Todavía no le contesté: decime qué hago.'),
-        checking: (n, id) => `${n} dijo que se fija y avisa (pedido #${id}). No mandé lo tuyo; espero su respuesta.`,
+        checking: (n, id, step) => `${n} dijo que se fija y avisa (pedido #${id}). No mandé lo tuyo${step ? ` ("${step}")` : ''}; espero su respuesta.`,
         told: (n, t) => `Le dije a ${n}: "${t}".`,
         alreadyClosed: (id) => `El pedido #${id} ya estaba cerrado; no mandé nada.`,
         isClosed: (id) => `El pedido #${id} ya estaba cerrado.`,
@@ -349,7 +350,7 @@ const TEXTS = {
         whyOutside: (w) => `outside your window (${w})`,
         whyBusy: 'your calendar is busy then',
         whyCalendar: 'I could not check your calendar',
-        whySoon: 'it starts in less than 15 minutes',
+        whySoon: 'it starts very soon',
         whyNight: 'it is late, and I do not answer on my own at this hour',
         whyVoice: 'they also sent a voice note I could not understand',
         understood: (sum) => `What I did understand: ${sentence(sum)}`,
@@ -370,6 +371,7 @@ const TEXTS = {
         unreadAfter: 'I could not read it.',
         after: (n, id, sum, s) => `${n} wrote again after the booking (errand #${id}): ${sentence(sum)} Your calendar still has ${s}.`,
         takeoverHeld: (n, s) => ` I was about to accept ${s} with ${n} and add it to your calendar; I did not: tell me if I should.`,
+        heldAcceptNote: (n, s) => ` I was about to accept ${s} with ${n}; it is not on your calendar.`,
         notSent: ' Your last step did not go out.',
         noAnswerYet: (n, id) => `${n} wrote but has not answered what I asked yet (errand #${id}). I won't write again on my own; tell me if you want me to.`,
         whyAnd: (a, b) => `${a}, and ${b}`,
@@ -390,7 +392,7 @@ const TEXTS = {
         cardExpired: (n, id, s) => `Errand #${id}: ${n}'s offer${s ? ` (${s})` : ''} still waits for your answer. Tell me to accept it, ask for another time, or cancel.`,
         wroteAgain: (n) => `${n} wrote again before this went out; nothing was sent. I am reading it and will tell you.`,
         held: (own) => (own ? ' Your step has not gone out: tell me whether to go ahead.' : ' I have not answered yet: tell me what to do.'),
-        checking: (n, id) => `${n} said they will check and answer (errand #${id}). Your step has not gone out; I am waiting for their answer.`,
+        checking: (n, id, step) => `${n} said they will check and answer (errand #${id}). Your step${step ? ` ("${step}")` : ''} has not gone out; I am waiting for their answer.`,
         told: (n, t) => `Told ${n}: "${t}".`,
         alreadyClosed: (id) => `Errand #${id} was already closed; nothing was sent.`,
         isClosed: (id) => `Errand #${id} was already closed.`,
@@ -1365,7 +1367,7 @@ class ErrandService {
                 if (!waiting) return null;
                 this.db.updateErrand(id, { next_action: null, next_check_at: null, state: 'waiting_contact' });
                 this._event(id, 'decided', { dropped: true, why: 'later' });
-                return waiting.owner ? this._notifyOnly(errand, t.checking(name, id)) : null;
+                return waiting.owner ? this._notifyOnly(errand, t.checking(name, id, this._stepName(errand, waiting))) : null;
             }
             // Small talk. A step he approved that waited for these words to be read goes ahead now.
             if (waiting?.owner) {
@@ -1375,6 +1377,12 @@ class ErrandService {
             }
             return null;
         }
+        // News, or a photo, in the same burst as an answer still reaches him:
+        // first, so a card for the answer stays the newest thing he reads.
+        const extra = form.tellOwner && errand.goal === 'book' && ['offer', 'confirm', 'decline'].includes(form.kind)
+            ? { text: t.also(name, id, form.summary), taint: true }
+            : unread.some(u => u.media) ? { text: t.media(name, id), taint: false } : null;
+        if (extra) await this._notifyOnly(errand, extra.text, { taint: extra.taint });
         // A voice note it could not read came with the words it did read: it
         // may say something else, so nothing goes out on its own.
         if (unread.some(u => u.unreadable)) {
@@ -1382,13 +1390,8 @@ class ErrandService {
             // What was understood still reaches him (her words, so marked).
             return form.summary ? this._askNote(errand, `${t.voice(name, id)} ${t.understood(form.summary)}`, { taint: true }) : this._askNote(errand, t.voice(name, id));
         }
-        // News, or a photo, in the same burst as an answer still reaches him.
-        const extra = form.tellOwner && errand.goal === 'book' && ['offer', 'confirm', 'decline'].includes(form.kind)
-            ? { text: t.also(name, id, form.summary), taint: true }
-            : unread.some(u => u.media) ? { text: t.media(name, id), taint: false } : null;
-        const out = errand.goal === 'ask' ? await this._decideAsk(errand, form) : await this._decideBook(errand, form);
-        if (extra) await this._notifyOnly(this.db.getErrand(id) || errand, extra.text, { taint: extra.taint });
-        return out;
+        if (errand.goal === 'ask') return this._decideAsk(errand, form);
+        return this._decideBook(errand, form);
     }
 
     /** After a booking: small talk stays quiet; anything else reaches him. Watchers stay off meanwhile. */
@@ -1570,6 +1573,9 @@ Answer in JSON.`;
         const t = this._t(errand);
         const name = safeName(errand.contact_name);
         if (form.kind === 'question') return this._askNote(errand, t.asked(name, errand.id, form.summary), { taint: true });
+        // His step waits for these words ("decile gracias"): he hears the
+        // answer, his step is named, and the errand stays open for it.
+        if (errand.next_action?.owner) return this._askNote(errand, t.answered(name, errand.id, form.summary), { taint: true });
         const closed = this._close(errand.id, 'done', 'answered');
         if (closed) this._event(errand.id, 'closed', { state: 'done' });
         await this._notify(errand, t.answered(name, errand.id, form.summary), { taint: true });
@@ -1585,11 +1591,13 @@ Answer in JSON.`;
         }
         const gapUntil = (Date.parse(fresh.last_sent_at || 0) || 0) + LIMITS.minGapMs;
         const gapDue = Math.max(now, gapUntil);
-        const quietHold = this._quiet(gapDue);
-        const due = quietHold ? this._quietEnd(gapDue) : gapDue;
+        // A gap that ends just before 22:00 may run into quiet hours: the sweep runs a little later.
+        const quietHold = this._quiet(gapDue) || (gapDue > now && this._quiet(gapDue + 2 * SWEEP_MS));
+        const due = quietHold ? this._quietEnd(Math.max(gapDue, gapDue + 2 * SWEEP_MS)) : gapDue;
         // Waiting would lose the slot (a table tonight, or one right after
-        // 08:00; the sweep runs a little after): he decides now.
-        if (due > now && due + MIN_LEAD_MS + SWEEP_MS * 2 > zonedMs(args.date, args.time, this.timeZone())) {
+        // 08:00; the sweep runs a little after the step is due): he decides now.
+        const margin = quietHold ? 2 * SWEEP_MS : SWEEP_MS;
+        if (due > now && due + MIN_LEAD_MS + margin > zonedMs(args.date, args.time, this.timeZone())) {
             return this._askAccept(fresh, [{ date: args.date, time: args.time }], quietHold ? this._t(fresh).whyNight : this._t(fresh).whySoon);
         }
         if (due > now) {
@@ -1861,11 +1869,17 @@ Answer in JSON.`;
 
     /** `note: false`: he is waiting for this step's answer, which says it instead. */
     async _pause(errand, why, { note = true } = {}) {
+        const waiting = this.db.getErrand(errand.id)?.next_action;
         const dropped = this._withdraw(errand);
         const updated = this.db.updateErrand(errand.id, { state: 'paused', next_action: null, next_check_at: null });
         this._event(errand.id, 'paused', { why });
         const t = this._t(errand);
-        if (note) await this._notify(errand, t.paused(safeName(errand.contact_name), errand.id, why) + (dropped.own ? t.held(true) : ''));
+        const name = safeName(errand.contact_name);
+        // What did not go out: his step (named), or a slot it was about to accept.
+        const mine = waiting?.owner ? this._stepName(errand, waiting) : (dropped.own ? dropped.step : null);
+        const held = mine ? null : this._heldAccept(updated || errand);
+        const tail = mine ? t.heldStep(mine) : held ? t.heldAcceptNote(name, fmtSlot(held, this.timeZone(), this._lang(errand))) : (dropped.own || waiting?.owner) ? t.notSent : '';
+        if (note) await this._notify(errand, t.paused(name, errand.id, why) + tail);
         return updated;
     }
 
@@ -1878,15 +1892,16 @@ Answer in JSON.`;
         if (!closed) return null;
         this._event(errand.id, 'closed', { state: 'cancelled', why: 'owner wrote', ...(held ? { held } : {}) });
         this._handBack(items);
-        if (note) await this._notify(errand, this._takeoverLine(errand, held, { notSent: !held && (dropped.own || !!row.next_action?.owner) }));
+        const mine = row.next_action?.owner ? this._stepName(errand, row.next_action) : (dropped.own ? dropped.step : null);
+        if (note) await this._notify(errand, this._takeoverLine(errand, held, { notSent: !held && (dropped.own || !!row.next_action?.owner), step: mine }));
         return closed;
     }
 
     /** "You wrote to them yourself", a slot about to be accepted that is not on his calendar, or his step that did not go out. */
-    _takeoverLine(errand, held, { notSent = false } = {}) {
+    _takeoverLine(errand, held, { notSent = false, step = null } = {}) {
         const t = this._t(errand);
         const name = safeName(errand.contact_name);
-        return t.takeover(name, errand.id) + (held ? t.takeoverHeld(name, fmtSlot(held, this.timeZone(), this._lang(errand))) : notSent ? t.notSent : '');
+        return t.takeover(name, errand.id) + (held ? t.takeoverHeld(name, fmtSlot(held, this.timeZone(), this._lang(errand))) : step ? t.heldStep(step) : notSent ? t.notSent : '');
     }
 
     /**
@@ -2274,7 +2289,14 @@ Answer in JSON.`;
         const states = { waiting_contact: 'waiting for them', waiting_owner: 'waiting for the owner', paused: 'paused' };
         return this.db.listErrands().map(e => {
             const bits = [`#${e.id} ${e.goal} with ${safeName(e.contact_name)}: ${states[e.state] || e.state}`];
-            if (e.pending_approval_id) bits.push('a card waits for his yes');
+            // Each card still waiting on this errand, with exactly its step.
+            let cards = [];
+            try { cards = (typeof this.db.listPendingConfirmations === 'function' ? this.db.listPendingConfirmations() : []).filter(r => r.tool_name === 'answerErrand' && Number(r.args?.id) === e.id); } catch { cards = []; }
+            for (const c of cards) {
+                const a = c.args || {};
+                const step = a.action === 'say' ? `say "${clip(a.text, 80)}"` : `${a.action}${a.date ? ` ${a.date}` : ''}${a.time ? ` ${a.time}` : ''}`;
+                bits.push(`card ${c.id} waits for his yes: ${step}`);
+            }
             if (e.offer) bits.push(`on the table: ${fmtSlot(e.offer, tz)} (date ${e.offer.date}, time ${e.offer.time})`);
             const read = this.db.listErrandEvents(e.id, { newest: 30 }).filter(ev => ev.kind === 'read' && ev.detail?.slots?.length).pop();
             if (read && read.detail.slots.length > 1) bits.push(`all slots offered: ${read.detail.slots.map(s => `${s.date} ${s.time}`).join(', ')}`);

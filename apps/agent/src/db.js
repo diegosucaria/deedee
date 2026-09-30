@@ -4440,20 +4440,25 @@ class AgentDB {
   }
 
   /**
-   * Notes of these kinds delivered (or waiting) to any of these targets since
-   * `sinceIso`: { id, kind, created_at }. For chats whose notes the message
-   * history does not keep (Telegram).
+   * Deliveries to any of these chats (as the target, or as the fallback)
+   * sent or tried since `sinceIso`, of any kind: { id, kind, origin }. For
+   * chats whose notes the message history does not keep (Telegram). A row
+   * made earlier but sent after `sinceIso` counts.
    */
-  listOutboxSince(targets = [], sinceIso, { kinds = ['job_notification'] } = {}) {
+  listOutboxSince(targets = [], sinceIso) {
     const ids = [...new Set((targets || []).filter(Boolean).map(String))];
     const since = Date.parse(sinceIso);
-    if (ids.length === 0 || kinds.length === 0 || !Number.isFinite(since)) return [];
+    if (ids.length === 0 || !Number.isFinite(since)) return [];
+    const marks = ids.map(() => '?').join(', ');
     return this.db.prepare(`
-      SELECT id, kind, created_at FROM notification_outbox
-      WHERE target IN (${ids.map(() => '?').join(', ')}) AND kind IN (${kinds.map(() => '?').join(', ')})
-        AND status != 'dead'
-      ORDER BY created_at DESC LIMIT 50
-    `).all(...ids, ...kinds).filter(r => Date.parse(r.created_at) >= since);
+      SELECT id, kind, origin, created_at, sent_at, fallback_at FROM notification_outbox o
+      WHERE (target IN (${marks}) OR fallback_target IN (${marks})) AND status != 'dead'
+        -- A delivery the chat history keeps (a card, a question, a reply) is read there.
+        AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = o.id)
+      ORDER BY created_at DESC LIMIT 100
+    `).all(...ids, ...ids)
+      .filter(r => [r.created_at, r.sent_at, r.fallback_at].some(t => t && Date.parse(t) >= since))
+      .map(r => ({ id: r.id, kind: r.kind, origin: r.origin }));
   }
 
   getOutboxRow(id) {
