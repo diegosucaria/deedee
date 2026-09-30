@@ -288,8 +288,8 @@ reply to them (a run resumed after another card included), a job's note or
 a reminder (it may ask something; on Telegram, which keeps no copy of them,
 the delivery ledger shows what went there after the card), a question that
 lapsed, another card. When a new run of his own chat asks again for a step
-whose card waits, no second card is raised: the model is told the card's id
-and tells him to reply `/confirm <id>`. Known
+whose card already waits in that chat, no second card is raised: the model
+is told the card's id and tells him to reply `/confirm <id>`. Known
 limit: on Telegram, a picture or voice note a job sends directly leaves no
 trace to check, so it does not count. So after he asks for a draft and
 Deedee shows it, "dale, mandalo" answers the draft, never a job's card from

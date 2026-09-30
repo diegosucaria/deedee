@@ -760,6 +760,7 @@ class AgentDB {
         slot_owned INTEGER NOT NULL DEFAULT 0,
         time_owned INTEGER NOT NULL DEFAULT 0,
         auto_ok INTEGER NOT NULL DEFAULT 1,
+        auto_why TEXT,
         read_through INTEGER NOT NULL DEFAULT 0,
         answered_at TEXT,
         lang TEXT,
@@ -5507,7 +5508,7 @@ class AgentDB {
   updateErrand(id, patch = {}, { closed = false } = {}) {
     const allowed = new Set(['state', 'mode', 'slot', 'window_start', 'window_end', 'offer', 'agreed', 'event_id',
       'pending_approval_id', 'sent_count', 'auto_count', 'model_calls', 'last_sent_at', 'last_contact_at',
-      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'contact_ids', 'slot_owned', 'time_owned', 'grace_until', 'read_through', 'answered_at', 'auto_ok']);
+      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'contact_ids', 'slot_owned', 'time_owned', 'grace_until', 'read_through', 'answered_at', 'auto_ok', 'auto_why']);
     const jsonCols = new Set(['slot', 'offer', 'agreed', 'contact_ids', 'next_action']);
     const sets = [];
     const values = [];

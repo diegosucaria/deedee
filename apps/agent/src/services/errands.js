@@ -269,6 +269,8 @@ const TEXTS = {
         heldAcceptAsk: (n, s) => ` Estaba por aceptarle a ${n} el ${s}; no está en tu calendario. Decime si lo acepto.`,
         mediaAnswer: (n, id) => `${n} contestó con una foto o un archivo (pedido #${id}). Fijate en el chat; el pedido quedó cerrado.`,
         whyInvolved: 'ya me dijiste algo sobre este pedido, así que te pregunto antes',
+        whyStepWaits: 'tenés otro paso pendiente en este pedido',
+        whyHerNo: 'antes me dijo que no tenía lugar',
         whyVoice: 'también mandó un audio que no pude entender',
         understood: (sum) => `Lo que sí entendí: ${sentence(sum)}`,
         heldStep: (q) => ` Lo tuyo ("${q}") no salió.`,
@@ -363,6 +365,8 @@ const TEXTS = {
         heldAcceptAsk: (n, s) => ` I was about to accept ${s} with ${n}; it is not on your calendar. Tell me whether to accept it.`,
         mediaAnswer: (n, id) => `${n} answered with a photo or a file (errand #${id}). Please look at the chat; the errand is closed.`,
         whyInvolved: 'you already weighed in on this errand, so I ask first',
+        whyStepWaits: 'a step of yours is still pending on this errand',
+        whyHerNo: 'they had said they had no room',
         whyVoice: 'they also sent a voice note I could not understand',
         understood: (sum) => `What I did understand: ${sentence(sum)}`,
         heldStep: (q) => ` Your step ("${q}") did not go out.`,
@@ -1242,13 +1246,15 @@ class ErrandService {
         if (!errand) return false;
         const audio = (message.parts || []).filter(p => p?.inlineData?.mimeType?.startsWith('audio/'));
         const media = (message.parts || []).some(p => p?.inlineData && !String(p.inlineData.mimeType || '').startsWith('audio/'));
+        // A voice note whose audio never arrived ("[Voice Message]" alone) is unreadable, not small talk.
+        const lostVoice = audio.length === 0 && /^\[(?:Voice Message|Audio)/i.test(String(message.content || '').trim());
         const ts = Date.parse(message.timestamp) || this.clock();
         let buf = this.buffers.get(errand.id);
         if (!buf) {
             buf = { items: [], timer: null, startedAt: this.clock(), dueAt: 0, chatId: meta.chatId || null };
             this.buffers.set(errand.id, buf);
         }
-        buf.items.push({ ts, text: typeof message.content === 'string' ? message.content : '', audio, media, message });
+        buf.items.push({ ts, text: lostVoice ? '' : (typeof message.content === 'string' ? message.content : ''), audio, media, lostVoice, message });
         this._arm(errand.id, this.bufferMs);
         return true;
     }
@@ -1288,7 +1294,7 @@ class ErrandService {
             if (left > 0) this._flushing.set(id, left); else this._flushing.delete(id);
             for (const item of buf.items) {
                 let text = String(item.text || '').trim();
-                let unreadable = false;
+                let unreadable = !!item.lostVoice;
                 for (const part of item.audio || []) {
                     let transcript = null;
                     try { transcript = await this._withTimeout(this.agent.impersonationService?.transcribeAudio?.(part), this.transcribeMs); } catch { transcript = null; }
@@ -1398,7 +1404,7 @@ class ErrandService {
             if (closed) this._event(id, 'closed', { state: 'done', ...(mine ? { dropped: 'his step' } : {}) });
             const head = !form ? t.unreadAnswer(name, id) : unread.some(u => u.unreadable) ? t.voiceAnswer(name, id) : t.mediaAnswer(name, id);
             // What it did read of her answer (a caption, the words beside the voice note) still reaches him.
-            const read = form && form.kind === 'answer' && form.summary ? ` ${t.understood(form.summary)}` : '';
+            const read = form && form.summary && (['answer', 'offer', 'confirm', 'decline'].includes(form.kind) || form.tellOwner) ? ` ${t.understood(form.summary)}` : '';
             await this._notify(errand, head + read + (mine ? t.heldStep(mine) + t.sayIt : ''), { taint: !!read });
             return closed;
         }
@@ -1436,7 +1442,7 @@ class ErrandService {
         // first, so a card for the answer stays the newest thing he reads.
         const extra = form.tellOwner && errand.goal === 'book' && ['offer', 'confirm', 'decline'].includes(form.kind)
             ? { text: t.also(name, id, form.summary), taint: true }
-            : errand.goal === 'book' && unread.some(u => u.media) ? { text: t.media(name, id), taint: false } : null;
+            : unread.some(u => u.media) ? { text: t.media(name, id), taint: false } : null;
         if (extra) await this._notifyOnly(errand, extra.text, { taint: extra.taint });
         // A voice note it could not read came with the words it did read: it
         // may say something else, so nothing goes out on its own.
@@ -1627,7 +1633,8 @@ Answer in JSON.`;
         // Her "no tengo lugar" ends the plan from her side: a later "se me
         // liberó" asks him (he may have made other plans), never books by itself.
         if (form.kind === 'decline') {
-            this.db.updateErrand(errand.id, { auto_ok: 0 });
+            // Her earlier yes that waited for 08:00 no longer stands.
+            this.db.updateErrand(errand.id, { auto_ok: 0, auto_why: 'her_no', next_action: null, next_check_at: null });
             return this._askNote(this.db.getErrand(errand.id) || errand, t.noSlot(name, errand.id));
         }
         if (form.kind === 'question') return this._askNote(errand, t.asked(name, errand.id, form.summary), { taint: true });
@@ -1735,10 +1742,12 @@ Answer in JSON.`;
         if (errand.mode === 'window' && errand.window_start && errand.window_end) {
             const at = `${slot.date}T${slot.time}`;
             if (at < errand.window_start || at > errand.window_end) return plus(t.whyOutside(fmtWindow(errand, tz, lang)));
-            return cal || t.whyInvolved;
+            return cal || (errand.next_action?.owner || this._hisPendingCard(errand) ? t.whyStepWaits : errand.auto_why === 'her_no' ? t.whyHerNo : t.whyInvolved);
         }
-        // He already weighed in (a card, a note, words of his): that is why it asks.
-        if (!errand.auto_ok && (!errand.slot?.time || sameSlot(slot, errand.slot))) return cal || t.whyInvolved;
+        // A step of his still waits: that is why it asks.
+        if ((errand.next_action?.owner || this._hisPendingCard(errand)) && (!errand.slot?.time || sameSlot(slot, errand.slot))) return cal || t.whyStepWaits;
+        // Her "no tengo lugar", or words of his: that is why it asks.
+        if (!errand.auto_ok && (!errand.slot?.time || sameSlot(slot, errand.slot))) return cal || (errand.auto_why === 'her_no' ? t.whyHerNo : t.whyInvolved);
         if (!errand.slot?.time) return plus(t.whyNoTime);
         const asked = fmtSlot(errand.slot, tz, lang);
         if (!errand.slot_owned) return plus(t.whyPickedDay(asked));
@@ -1838,7 +1847,10 @@ Answer in JSON.`;
         // one that waited for her words) is named, not asked about.
         const lapsed = !waiting?.owner && !dropped.own ? this._hisPendingCard(errand) : null;
         const mine = waiting?.owner ? this._stepName(errand, waiting) : dropped.own ? dropped.step : lapsed ? this._stepName(errand, lapsed.args) : null;
-        const detail = t.cardDetail(name, offered, reason) + (mine ? t.heldStep(mine) : (dropped.own || waiting?.owner || lapsed) ? t.notSent : '');
+        // Her yes that waited for 08:00, dropped for this newer offer of hers.
+        const heldYes = !waiting?.owner && waiting?.action === 'accept' && validDate(waiting.date) && normTime(waiting.time) && !slots.some(x => sameSlot(x, { date: waiting.date, time: normTime(waiting.time) }))
+            ? t.heldAcceptNote(name, fmtSlot({ date: waiting.date, time: normTime(waiting.time) }, tz, lang)) : '';
+        const detail = t.cardDetail(name, offered, reason) + (mine ? t.heldStep(mine) : (dropped.own || waiting?.owner || lapsed) ? t.notSent : heldYes);
         const res = await approvals.askOwner({
             message: this._runMessage(errand),
             toolName: 'answerErrand',
@@ -2050,7 +2062,7 @@ Answer in JSON.`;
             if ((approved && approvalId && errand.pending_approval_id === approvalId) || (card && card.status !== 'pending')) this.db.updateErrand(errand.id, { pending_approval_id: null });
             // A step of his is a decision of his, whether or not it goes out: the
             // errand acts on nothing by itself until a slot he proposed goes out.
-            if (action !== 'cancel') this.db.updateErrand(errand.id, { auto_ok: 0 });
+            if (action !== 'cancel') this.db.updateErrand(errand.id, { auto_ok: 0, auto_why: 'his' });
             const out = await this._perform(this.db.getErrand(errand.id), { ...args, action }, { auto: false });
             // His step on a paused errand failed before anything went out: it stays paused.
             const after = this.db.getErrand(errand.id);
@@ -2194,14 +2206,19 @@ Answer in JSON.`;
         }
         // An ask errand she already answered ends with his follow-up: it no
         // longer holds her chat, and no "has not answered" note can follow.
+        // Her yes that waited for 08:00 (an automatic accept) is not dropped
+        // without a word: his line says it is not on his calendar and asks.
+        const heldYes = args.action === 'say' && errand.next_action && !errand.next_action.owner && errand.next_action.action === 'accept'
+            && validDate(errand.next_action.date) && normTime(errand.next_action.time)
+            ? { date: errand.next_action.date, time: normTime(errand.next_action.time) } : null;
         // propose or say: back to waiting for them. After a free-form "say"
         // the slot on the table is no longer known.
         const moved = args.action === 'propose'
             ? { slot, slot_owned: 1, time_owned: 1, auto_ok: 1, mode: 'ask', window_start: null, window_end: null, expires_at: new Date(this._endMs(Date.parse(errand.created_at), slot.date, zonedMs(slot.date, slot.time, tz))).toISOString() }
             // His own words: the errand does nothing by itself until a slot of his goes out.
             : { slot: null, slot_owned: 0, time_owned: 0, auto_ok: 0 };
-        this.db.updateErrand(errand.id, { state: 'waiting_contact', offer: null, next_action: null, next_check_at: null, ...moved });
-        const line = t.sentWait(name, said);
+        this.db.updateErrand(errand.id, { state: heldYes ? 'waiting_owner' : 'waiting_contact', offer: heldYes, next_action: null, next_check_at: null, ...moved });
+        const line = heldYes ? t.told(name, said) + t.heldAcceptAsk(name, fmtSlot(heldYes, tz, lang)) : t.sentWait(name, said);
         if (notify) await this._notify(errand, line);
         return { success: true, errandId: errand.id, info: line, ownerLine: line };
     }
@@ -2384,13 +2401,15 @@ Answer in JSON.`;
             return seen.some(s => Math.abs(s.ts - Number(m.timestamp)) < 10 * 60e3
                 && (isMedia ? (s.media || s.text.startsWith(content)) : (s.text === content || (content && s.text.startsWith(content)))));
         };
-        const missed = history.filter(m => m.role !== 'assistant' && Number(m.timestamp) > after && !known(m));
+        // "[Media: ...]" lines are WhatsApp bookkeeping (a reaction, a missed
+        // call), as _ownerWrote treats them: no message of hers.
+        const missed = history.filter(m => m.role !== 'assistant' && Number(m.timestamp) > after && !/^\[Media: /.test(norm(m.content)) && !known(m));
         if (missed.length === 0) return;
         for (const m of missed) {
             const content = String(m.content || '');
             this._event(errand.id, 'received', {
                 ts: Number(m.timestamp), text: clip(content, 1000), excerpt: clip(content, EXCERPT_CHARS), catchUp: true,
-                ...(/^\[Audio/.test(content) ? { unreadable: true } : {}), ...(/^\[(?:Image|Video|Media|Sticker)/.test(content) ? { media: true } : {})
+                ...(/^\[Audio/.test(content) ? { unreadable: true } : {}), ...(/^\[(?:Image|Video|Document)/.test(content) ? { media: true } : {})
             });
         }
         await this._process(errand.id, []);
@@ -2415,6 +2434,8 @@ Answer in JSON.`;
                 bits.push(`card ${c.id} waits for his yes: ${step}`);
             }
             if (e.offer) bits.push(`on the table: ${fmtSlot(e.offer, tz)} (date ${e.offer.date}, time ${e.offer.time})`);
+            const held = e.next_action && !e.next_action.owner && e.next_action.action === 'accept' ? e.next_action : null;
+            if (held) bits.push(`they confirmed ${held.date} ${held.time}; the thanks and the booking go out by themselves at ${e.next_check_at ? localParts(Date.parse(e.next_check_at), tz).time : 'the next check'}`);
             const read = this.db.listErrandEvents(e.id, { newest: 30 }).filter(ev => ev.kind === 'read' && ev.detail?.slots?.length).pop();
             if (read && read.detail.slots.length > 1) bits.push(`all slots offered: ${read.detail.slots.map(s => `${s.date} ${s.time}`).join(', ')}`);
             if (e.slot) bits.push(`asked for: ${fmtSlot(e.slot, tz)}`);
