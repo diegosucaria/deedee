@@ -72,12 +72,13 @@ States:
 |---|---|
 | `waiting_contact` | A message went out; waiting for the contact |
 | `waiting_owner` | A choice is his: a card or a question waits for him |
-| `paused` | A limit was hit or a message could not go out. It keeps the chat (no watcher books meanwhile); nothing happens until he says so |
+| `paused` | A limit was hit or a message could not go out. It keeps the chat (no watcher books meanwhile). If the contact writes, he hears it once; if he writes to them himself, it steps aside. His next step on it makes it live again |
 | `done`, `cancelled`, `expired`, `failed` | Closed |
 
 A `tell` errand closes as soon as its message goes out. When he writes in
 the chat himself, the errand closes (`cancelled`) and hands the contact's
-messages back to his usual rules, so his watcher sees them as before.
+messages back to his usual rules, so his watcher sees them as before. A
+message Deedee sent from his account (a job, a greeting) is not him writing.
 
 After a booking, the errand keeps the contact's messages until the slot, 12
 hours at most. Small talk stays quiet; anything else reaches him as a note.
@@ -114,7 +115,9 @@ When the owner gave no time, the voice asks for the time he usually books
 with that person, as the chat shows it. Code checks that time against his
 calendar and asks for another if he is busy. The slot it asked for is
 stored: a contact who confirms that slot is inside the owner's scope, but
-only when the day came from him.
+only when the day came from him. The errand records whether the day and
+the time came from him (`slot_owned`, `time_owned`), so a card never says
+"you asked for" a slot the draft picked.
 
 ## 5. Approvals: the built-in ones
 
@@ -129,21 +132,34 @@ Errands add no new kind of card. They use the approval service as it is.
   marked, and never shown back as his words. A draft (`send: false`) sends
   nothing, so it is not an outward action. A job, a watcher or a sub-agent
   that tries to start one is refused at the gate, with no card.
-- **Who may start one.** Only the owner, from his own chat or the web.
-  Jobs, watchers, sub-agents and contacts cannot. `startErrand` and
-  `answerErrand` count as "Message a contact" on his always-ask list.
+- **Who may start or answer one.** Only the owner, from his own chat or
+  the web. The gate refuses `startErrand` and `answerErrand` from a job, a
+  watcher, a sub-agent, a voice call or a contact's chat, with no card
+  (`source_refused`): a card that looked like his own question would send a
+  third party's words from his account. The errand's own run answers its
+  own steps. `startErrand` and `answerErrand` count as "Message a contact"
+  on his always-ask list.
+- **A bare yes and other cards.** A bare yes decides any card only while
+  the card is still the question he is answering: the last thing Deedee
+  said, or no new words of his to the model since it went out. After he
+  asks for a draft, "dale, mandalo" is about the draft, never a job's card
+  from the morning.
 - **His choices.** A slot other than the one he asked for (ask mode), a
   question from the contact, a refusal, an unclear answer or a voice note
-  Deedee cannot read. Deedee asks with a card for `answerErrand`. Its "What"
-  line says exactly what she will send and book. It reads as a question in
-  his language, without the tool name or the safety lines. "sí" runs it,
-  "no" sends nothing, and other words go to the model, which calls
+  Deedee cannot read. Deedee asks with a card for `answerErrand`. It reads
+  as a question in his language, without the tool name or the safety
+  lines, and says why it asks: his calendar is busy then (or could not be
+  read), the slot is outside his window or too soon, or the day or time was
+  one the draft picked. "sí" runs it, "no" sends nothing, "cancelar"
+  cancels the errand, and other words go to the model, which calls
   `answerErrand` with an explicit date and time. A bare yes decides an
   errand card only while the card is the last thing Deedee said to him
   (under any of his chat ids). When the gate itself holds an errand step
   (someone else's words in his chat, or his always-ask list), its card is a
-  plain question too, with the whole request, and the errand follows that
-  newer card.
+  plain question too: the exact text first, the person's People name, the
+  date in his words and the true reason. It retires every older card for
+  that errand, so a bare yes has one card to decide, and the errand follows
+  it.
 - **Steps inside his scope.** The contact confirms the slot he asked for,
   or, in window mode, offers a slot inside the window that is free on his
   calendar. The errand runs `answerErrand` through the same gate with an
@@ -205,9 +221,10 @@ Code enforces these, not the prompt.
 | Messages it sends on its own per errand | 4 (one message may be 2 short parts); then every step asks |
 | All messages per errand | 10; then it pauses |
 | Gap between its own messages | at least 1 minute |
-| Quiet hours | 22:00-08:00 local: nothing goes out on its own and no note that can wait is sent; a step waits until 08:00 |
+| Quiet hours | 22:00-08:00 local: nothing goes out on its own and no note that can wait is sent; a step waits until 08:00. A card or note about the contact's reply goes out at once: the slot may not wait |
 | No answer from the contact | the owner hears after 4 hours; Deedee never writes again on her own |
-| Life of an errand | until the slot's day, 7 days at most; a new day he proposes moves it |
+| Life of an errand | until the slot's day, 7 days at most; a new day he proposes moves it. An end in quiet hours moves to 21:55, and past its end an errand closes at once, so it raises no cards at night |
+| Voice notes | 60 seconds to transcribe, then unreadable |
 | Model calls per errand | 20; then it pauses and tells him |
 | Messages from the contact | 60 per errand; then it pauses |
 | Message length | 160 characters, 2 lines |
@@ -220,8 +237,12 @@ Messages the owner decides (a card he approves, his own words through
 Code, not the model, adds the event: the owner's primary calendar, no
 guests, so no card is needed (`isOwnCalendarEvent`). The title comes from
 `startErrand` (`eventTitle`, else "Turno - <name>"), with the location and
-length the owner gave. Before it adds one, it looks for an event with the
-same title that day and skips if one exists. The event id goes on the errand.
+length the owner gave, and the description carries `(errand #N)`. Before
+it adds one, it looks for the booking at that start: the same title, our
+note, or his watcher's event naming the person in full (whole words). A
+name inside another word ("Ana" in "semanal") never counts: an unrelated
+event taken for the booking would hide a clash or leave the slot off his
+calendar. The event id goes on the errand.
 
 ## 8. Tools
 
@@ -257,14 +278,20 @@ Cancel button. It updates live over the socket (`errands:update`).
 
 ## 11. Not in this version
 
-Groups, email and Slack, moving or cancelling an existing booking, several
+Groups, email and Slack, moving or cancelling an existing booking (he
+starts a new errand; the old event stays until he deletes it), several
 people in one errand, reminders to the contact, phone calls, voice calls,
-and starting an errand from a job or a watcher.
+and starting or answering an errand from a job or a watcher. After the
+12-hour watch, his watcher sees the chat again and may add an event of its
+own.
 
 ## 12. Review
 
-Two review rounds (security, the owner's real flows replayed message by
+Three review rounds (security, the owner's real flows replayed message by
 message, regressions, and a check that each fix held) found real faults.
 Each fix has a test named after the fault in
 `apps/agent/tests/errands.test.js` ("review round one", "review round
-two") and `apps/agent/tests/errands-wiring.test.js`.
+two", "review round two, his flows", "review round three") and
+`apps/agent/tests/errands-wiring.test.js`. Round three also changed the
+approval service for every card: a bare yes no longer approves a card he
+has moved on from (`docs/security.md`, Answers).

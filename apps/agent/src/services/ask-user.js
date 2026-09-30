@@ -240,7 +240,8 @@ class AskUserService {
         if (wait) {
             const answer = mapOptionAnswer(text, wait.options);
             this.agent.db.closePendingQuestion(wait.id, 'answered', answer);
-            this.agent.db.saveMessage(message);
+            // Marked as an answer: it never reached the model (approvals read this).
+            this.agent.db.saveMessage({ ...message, metadata: { ...(message.metadata || {}), answeredQuestion: wait.id } });
             wait.finish({ answer });
             return this._reply(message, 'Got it.', sendCallback);
         }
@@ -251,7 +252,7 @@ class AskUserService {
         if (closed) {
             this.recentlyClosed.delete(chatId);
             if (Date.now() - closed.at <= LATE_REPLY_WINDOW_MS && looksLikeLateAnswer(text, closed.options)) {
-                this.agent.db.saveMessage(message);
+                this.agent.db.saveMessage({ ...message, metadata: { ...(message.metadata || {}), answeredQuestion: closed.id || true } });
                 return this._reply(message, 'That question expired.', sendCallback);
             }
         }

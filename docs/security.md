@@ -274,11 +274,18 @@ counts when every word is on a short list and one says yes (`yes`, `si`,
 `gracias` or `dejalo`). "ok gracias" or "yes, send it tomorrow" go to the
 model. On a card that cancels something, a bare `cancel` or `cancelar` could
 mean either answer, so the owner is asked to reply yes or no. A reply
-counts only when all three hold: the card was delivered to this very chat
+counts only when all four hold: the card was delivered to this very chat
 (for a job, that is the owner channel), it is the only approval pending
-there, and no `askUser` question is open there. In every other case the
-word goes on to `askUser` and the model, so an "ok" typed to the model in
-another chat never fires a job's paused action. When a question is open,
+there, no `askUser` question is open there, and the card is still the
+question he is answering. That last one holds while the card is the last
+thing Deedee said there, or while he has not written to the model there
+since the card went out: after he asks for a draft and Deedee shows it,
+"dale, mandalo" answers the draft, never a job's card from the morning. A
+word that only answered a card or an `askUser` question is marked
+(`answeredCard`, `answeredQuestion`) and does not count as writing to the
+model. In every other case the word goes on to `askUser` and the model, so
+an "ok" typed to the model in another chat never fires a job's paused
+action. When a question is open,
 `askUser` reads the reply first. The bare `/confirm` and `/cancel` act only
 with exactly one approval pending in the chat they are typed in; with
 several, the reply lists the ids and an id (or a unique prefix of at least
@@ -385,27 +392,39 @@ An errand writes to one person from the owner's own WhatsApp
   under the `errand-send` rule, one of `OUTWARD_RULES`: in his own clean
   chat his request is his approval, and the first message goes out with no
   card; with someone else's words in the chat it asks once. The guardian
-  never decides these two tools: a card does. Only his own typed chat may
-  start one (`ownerTyped`): a job, a watcher, a sub-agent, a voice call or a
-  contact's chat is refused, even with a card. If he never wrote to that
+  never decides these two tools: a card does. If he never wrote to that
   person, a card for `startErrand` asks first. An errand never writes to his
   own lines or to Deedee's number or WhatsApp ID (a message from his account
   to hers would arrive as his word); with her number unknown, no errand
   starts. A request written in a tainted run is marked (`request_tainted`)
   and never shown back as his words. A draft (`send: false`) is not an
-  outward action. A job, a watcher or a sub-agent calling `startErrand` is
-  refused at the gate, with no card.
+  outward action.
+- **Only his own chat.** The gate refuses `startErrand` and `answerErrand`
+  from any run but his own typed chat (`Agent._ownerTyped`), with no card:
+  a job, a watcher, a sub-agent, a voice call or a contact's chat. An
+  errand's own run may answer its own steps. A card that looked like his own
+  question would send a third party's words from his account. The refusal
+  is stored as `source_refused`, and the Guardian page's dry run gives the
+  same answer.
 - **His choices** (another slot, a question, a refusal) come as a card for
   `answerErrand` through `ApprovalService.askOwner`: no rule and no guardian,
   the deny-list still applies. The card reads as a plain question in his
-  language (`origin_meta.card`). A bare yes decides an errand card only
-  while it is the last thing Deedee said in that chat (`_isNewestInChat`):
-  "dale" is his everyday word; the check covers every id his chat carries.
-  A card the gate raises for an errand step is a plain question with the
-  whole request, and the errand follows it. A card for an older offer cannot answer a
-  newer one: the errand withdraws it (`ApprovalService.withdraw`) and checks
-  the approval id when it runs. `accept` and `propose` need an explicit date
-  and time, so an approved card runs exactly what it showed.
+  language (`origin_meta.card`) and says why it asks: his calendar is busy
+  then, the slot is outside his window, or the day or time was one the
+  draft picked. A bare yes decides an errand card only while it is the last
+  thing Deedee said in that chat (`_isNewestInChat`): "dale" is his everyday
+  word; the check covers every id his chat carries. A card the gate raises
+  for an errand step is a plain question too (`ErrandService.gateCard`): the
+  exact text first, the person's People name, the date in his words, and
+  the true reason (someone else's words in the chat, his always-ask list).
+  It retires every older card for that errand, so a bare yes has one card
+  to decide, and the errand follows it (`origin_meta.ownerChat`); it never
+  follows a card another run raised. A card for an older offer cannot
+  answer a newer one: the errand withdraws its cards
+  (`ApprovalService.withdraw`) and checks the approval id when it runs.
+  `accept` and `propose` need an explicit date and time, so an approved
+  card runs exactly what it showed. "cancelar" on an errand's card cancels
+  the errand.
 - **Steps inside his scope** (the contact confirms the slot he asked for, or
   offers a free slot inside his window) run through `review()` with a
   `grant`. The errand service vouches for the step with a random one-time
@@ -420,7 +439,14 @@ An errand writes to one person from the owner's own WhatsApp
   that says what the contact said carries the `jobTaint` mark. A refused
   draft never goes back to the model.
 - **Races:** every step on one errand runs under its lock and reads the row
-  again before it sends or books; a closed errand is never written back.
+  again before it sends or books; a closed errand is never written back. A
+  voice note that takes more than 60 seconds to transcribe counts as
+  unreadable, so it never holds the lock.
+- **His own writing:** a message from his account that no part of Deedee
+  sent means he took the chat over. The interface keeps what Deedee sent
+  from his account (a job, a greeting, an errand; `ownerAccountSends`), so
+  those never count. It keeps them in memory: after a restart, a message
+  Deedee sent before it counts as his.
 
 ## Approval guardian
 

@@ -168,6 +168,12 @@ describe('step lines', () => {
         expect(eventLine(ev('owner', { card: 'c1', status: 'expired' }))).toBe('The card expired with no answer');
     });
 
+    test('a paused errand he answers, news while it is paused, and a step a note dropped', () => {
+        expect(eventLine(ev('resumed', { by: 'owner' }))).toBe('You answered, so it goes on');
+        expect(eventLine(ev('note', { pausedNews: true }))).toBe('Told you they wrote while it was paused');
+        expect(eventLine(ev('asked', { note: true, dropped: 'accept' }))).toBe('Asked you in your chat; accept did not go out');
+    });
+
     test('an unknown step, or a known step with an odd detail, is one short key: value line', () => {
         expect(eventLine(ev('rescheduled', { from: { date: '2026-10-08', time: '10:00' }, to: { date: '2026-10-09', time: '10:00' }, tries: 2, ok: true })))
             .toBe('rescheduled: from: Thu 08/10 10:00, to: Fri 09/10 10:00, tries: 2, ok: true');

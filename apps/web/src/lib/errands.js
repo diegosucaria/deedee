@@ -219,7 +219,7 @@ export function eventLine(event, opts = {}) {
             const best = slotText(d.offer);
             return `Asked you about ${best}${all && all !== best ? ` (they offered ${all})` : ''}`;
         }
-        if (d.note) return 'Asked you in your chat';
+        if (d.note) return d.dropped ? `Asked you in your chat; ${clip(d.dropped, 20)} did not go out` : 'Asked you in your chat';
         if (d.why) return `Asked you with a card: ${clip(d.why, 120)}`;
         return 'Asked you';
     }
@@ -233,6 +233,8 @@ export function eventLine(event, opts = {}) {
     }
     case 'paused':
         return d.why ? `Paused: ${clip(d.why, 160)}` : 'Paused';
+    case 'resumed':
+        return 'You answered, so it goes on';
     case 'refused': {
         if (d.dryRun) return d.text ? `Dry run, not sent: ${quote(d.text, 200)}` : 'Dry run, not sent';
         const problems = Array.isArray(d.problems) ? d.problems.filter((p) => typeof p === 'string') : [];
@@ -246,6 +248,7 @@ export function eventLine(event, opts = {}) {
     }
     case 'note':
         if (d.noReply) return 'Told you they have not answered yet';
+        if (d.pausedNews) return 'Told you they wrote while it was paused';
         return d.told ? 'Told you what else they wrote' : other();
     case 'owner':
         return own(CARD_STATUS, d.status) || (d.status ? `Card: ${clip(d.status, 20)}` : other());

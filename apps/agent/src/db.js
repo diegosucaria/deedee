@@ -758,6 +758,7 @@ class AgentDB {
         next_check_at TEXT,
         next_action TEXT,
         slot_owned INTEGER NOT NULL DEFAULT 0,
+        time_owned INTEGER NOT NULL DEFAULT 0,
         read_through INTEGER NOT NULL DEFAULT 0,
         lang TEXT,
         request_tainted INTEGER NOT NULL DEFAULT 0,
@@ -2869,6 +2870,30 @@ class AgentDB {
     let metadata = null;
     try { metadata = row.metadata ? JSON.parse(row.metadata) : null; } catch { metadata = null; }
     return { ...row, metadata };
+  }
+
+  /**
+   * The newest role-user row across these chat ids (one person's chat can
+   * carry several ids) that reached the model, or null. A word that only
+   * answered a card or a question (metadata answeredCard, answeredQuestion)
+   * is skipped. `excludeId`: the message being handled now.
+   */
+  getLatestUserMessage(chatIds = [], { excludeId = null } = {}) {
+    const ids = [...new Set((chatIds || []).filter(Boolean).map(String))];
+    if (ids.length === 0) return null;
+    const rows = this.db.prepare(`
+      SELECT id, chat_id, timestamp, metadata FROM messages
+      WHERE role = 'user' AND chat_id IN (${ids.map(() => '?').join(', ')}) AND id IS NOT ?
+      ORDER BY timestamp DESC, rowid DESC
+      LIMIT 20
+    `).all(...ids, excludeId === null || excludeId === undefined ? null : String(excludeId));
+    for (const row of rows) {
+      let meta = null;
+      try { meta = row.metadata ? JSON.parse(row.metadata) : null; } catch { meta = null; }
+      if (meta && (meta.answeredCard || meta.answeredQuestion)) continue;
+      return { id: row.id, chat_id: row.chat_id, timestamp: row.timestamp };
+    }
+    return null;
   }
 
   /** The newest role-user rows of one chat, newest first: { id, content }. */
@@ -5408,14 +5433,14 @@ class AgentDB {
     const info = this.db.prepare(`
       INSERT INTO errands (goal, mode, state, contact_jid, contact_ids, contact_name, person_id, request, slot,
         window_start, window_end, event_title, location, duration_min, origin_chat_id, origin_source,
-        expires_at, created_at, updated_at, slot_owned, request_tainted, lang)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        expires_at, created_at, updated_at, slot_owned, time_owned, request_tainted, lang)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(fields.goal, fields.mode || 'ask', fields.state || 'waiting_contact', fields.contactJid,
       JSON.stringify(fields.contactIds || []), fields.contactName || null, fields.personId || null, fields.request,
       json(fields.slot), fields.windowStart || null, fields.windowEnd || null, fields.eventTitle || null,
       fields.location || null, Number.isFinite(fields.durationMin) ? fields.durationMin : null,
       fields.originChatId || null, fields.originSource || null, fields.expiresAt, now, now,
-      fields.slotOwned ? 1 : 0, fields.requestTainted ? 1 : 0, fields.lang || null);
+      fields.slotOwned ? 1 : 0, fields.timeOwned ? 1 : 0, fields.requestTainted ? 1 : 0, fields.lang || null);
     return this.getErrand(info.lastInsertRowid);
   }
 
@@ -5438,7 +5463,7 @@ class AgentDB {
   updateErrand(id, patch = {}, { closed = false } = {}) {
     const allowed = new Set(['state', 'mode', 'slot', 'window_start', 'window_end', 'offer', 'agreed', 'event_id',
       'pending_approval_id', 'sent_count', 'auto_count', 'model_calls', 'last_sent_at', 'last_contact_at',
-      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'contact_ids', 'slot_owned', 'grace_until', 'read_through']);
+      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'contact_ids', 'slot_owned', 'time_owned', 'grace_until', 'read_through']);
     const jsonCols = new Set(['slot', 'offer', 'agreed', 'contact_ids', 'next_action']);
     const sets = [];
     const values = [];

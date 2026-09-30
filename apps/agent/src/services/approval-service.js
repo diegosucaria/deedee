@@ -36,10 +36,6 @@ const { TurnTaint, classifyToolResult } = require('../utils/untrusted-content');
 const { isTwoStepTool, isPreviewCall, stepKey, parseToolOutput } = require('../utils/two-step-tools');
 const { GuardianService, DRY_RUN_USAGE_TAG, SYSTEM_INSTRUCTION: GUARDIAN_SYSTEM_INSTRUCTION } = require('./guardian-service');
 
-/** Spanish or English, from the owner's own words (the same test errands use). */
-function langOf(text) {
-    return /[ñ¿¡áéíóú]|\b(?:el|la|los|las|que|para|con|por|turno|mañana|hoy|decile|pedile|preguntale|hola|si|no)\b/i.test(String(text || '')) ? 'es' : 'en';
-}
 // The shell's own check: the gate asks it before any rule, so it never
 // raises a card for a command no approval could make run.
 const { shellRefusal } = require('@deedee/mcp-servers/src/local/index');
@@ -93,6 +89,11 @@ const SAFETY_RULES = new Set(['malformed', 'shell-remote-exec', 'shell-system-da
 const OUTWARD_RULES = new Set(['email-send', 'first-contact', 'ha-critical', 'ha-bulk', 'errand-send']);
 // Errand steps are the owner's to decide (specs/050-errands.md): never the guardian's.
 const ERRAND_TOOLS = new Set(['startErrand', 'answerErrand']);
+// Any run but his own typed chat (and an errand's own run, for its steps) is refused, with no card.
+const ERRAND_REFUSED = Object.freeze({
+    startErrand: 'An errand starts only from the owner\'s own chat.',
+    answerErrand: 'Only the owner answers an errand, from his own chat.'
+});
 
 /**
  * Marks the run that resumes a chat after the owner approved a paused call
@@ -151,6 +152,8 @@ const APPROVE_FILLER = new Set(['please', 'pls', 'por', 'favor', 'porfa', 'go', 
 const DENY_CORE = new Set(['no', 'n', 'nope', 'not', 'deny', 'denied', 'reject', 'rechazar', 'rechazo', 'cancel', 'cancelar', '👎', '❌']);
 const DENY_FILLER = new Set(['please', 'por', 'favor', 'gracias', 'thanks', 'dejalo', 'déjalo', 'mejor', 'todavia', 'todavía',
     'not', 'yet', 'aun', 'aún', 'ahora']);
+// On an errand's card, a "no" with one of these cancels the whole errand.
+const CANCEL_ERRAND_RE = /(?<![\p{L}])(?:cancel\p{L}*|canc[eé]l\p{L}*|olvid\p{L}*)(?![\p{L}])/iu;
 // On a card that cancels something, these mean "cancel it", not "deny".
 const CANCEL_VERBS = new Set(['cancel', 'cancelar', 'cancelalo', 'cancélalo', 'cancelala', 'cancélala', 'cancelá', 'cancela']);
 const MAX_DECISION_WORDS = 5;
@@ -375,29 +378,32 @@ function sameArgs(a, b) {
 }
 
 /**
- * The "What" line of an errand card the gate raises (his always-ask list, a
- * run that read someone else's text): the whole request, never an
- * 80-character cut that could hide the end of it.
+ * A plain card for an errand step the gate holds, when no errand service is
+ * there to word it (services/errands.js gateCard does, in his language).
  */
-/** A plain card for an errand step the gate holds, in the owner's language. */
 function errandCard(toolName, args, lang) {
     const es = lang === 'es';
     const what = errandPreview(toolName, args);
     if (!what) return null;
     return {
         question: es ? '¿Lo hago?' : 'Go ahead?',
-        detail: `${what}. ${es ? 'Tu chat tiene palabras de otra persona (o lo pediste siempre), así que te pregunto antes.' : 'Your chat holds someone else\'s words (or you asked to approve these), so I ask first.'}`,
+        detail: what,
         lang: es ? 'es' : 'en',
         denied: es ? 'Listo, no lo hago.' : 'OK, I won\'t.'
     };
 }
 
+/**
+ * The "What" line of an errand step: the exact text first, then the
+ * request, so a long request never hides what goes out.
+ */
 function errandPreview(toolName, args) {
     const a = args && typeof args === 'object' ? args : {};
     const flat = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
     if (toolName === 'startErrand') {
         const when = a.date ? ` on ${flat(a.date)}${a.time ? ` ${flat(a.time)}` : ''}` : (a.windowStart ? ` between ${flat(a.windowStart)} and ${flat(a.windowEnd)}` : '');
-        return `Write to ${flat(a.contact)} as you (${flat(a.goal)}${when}): "${flat(a.request)}"${a.text ? `, with the text "${flat(a.text)}"` : ''}${a.send === false ? ' (draft only)' : ''}`;
+        const text = a.text ? `Send "${flat(a.text).replace(/\s*\[SPLIT\]\s*/g, ' / ')}" to ${flat(a.contact)} as you` : `Write to ${flat(a.contact)} as you`;
+        return `${text} (${flat(a.goal)}${when}), for: "${flat(a.request)}"${a.send === false ? ' (draft only)' : ''}`;
     }
     if (toolName === 'answerErrand') {
         return `Errand #${flat(a.id)}: ${flat(a.action)}${a.date ? ` ${flat(a.date)}` : ''}${a.time ? ` ${flat(a.time)}` : ''}${a.text ? `, saying "${flat(a.text)}"` : ''}`;
@@ -847,9 +853,17 @@ class ApprovalService {
         };
 
         if (run?.stopped) return this._breakerStop(base);
-        // Only his own chat starts an errand (executors/errands.js): a card here could never work.
-        if (toolName === 'startErrand' && kind !== 'chat') {
-            return { run: false, status: 'error', result: { error: 'An errand starts only from the owner\'s own chat.' } };
+        // Only his own chat starts or answers an errand (executors/errands.js);
+        // an errand's own run answers its own steps. A job, a watcher, a
+        // sub-agent or a contact's chat gets no card: a card that looks like
+        // his own question would send a third party's words from his account.
+        if (ERRAND_TOOLS.has(toolName)) {
+            const ownStep = toolName === 'answerErrand' && kind === 'errand' && Number(meta.errandId) === Number(args?.id);
+            if (!ownStep && !(await this._ownerTypedRun(message, kind))) {
+                const error = ERRAND_REFUSED[toolName];
+                const row = this._record({ ...base, outcome: 'source_refused', decidedBy: 'rule', reason: error });
+                return { run: false, status: 'error', result: { error }, decisionId: row?.id };
+            }
         }
 
         const guard = this.check(toolName, args, { taint, serverName });
@@ -990,18 +1004,36 @@ class ApprovalService {
             ...withHits, ...guardianFields, verdict: verdict ? 'escalate' : null,
             outcome: 'escalated', decidedBy: 'owner'
         });
-        const preview = isTwoStepTool(toolName, serverName)
+        // An errand step reads as a plain question in his language, with the
+        // true reason it asks (errands.js gateCard).
+        let card = null;
+        let preview = isTwoStepTool(toolName, serverName)
             ? (run?.previews?.get?.(stepKey(toolName, args)) || this.previewFor(toolName, args) || null)
-            : (ERRAND_TOOLS.has(toolName) ? errandPreview(toolName, args) : null);
-        const card = ERRAND_TOOLS.has(toolName)
-            ? errandCard(toolName, args, langOf(`${args?.request || ''} ${args?.text || ''} ${typeof message?.content === 'string' ? message.content : ''}`))
             : null;
+        let retire = same;
+        let extraMeta = null;
+        if (ERRAND_TOOLS.has(toolName)) {
+            const whyKey = hits.additions.length > 0 ? 'alwaysAsk'
+                : hits.floor.length > 0 ? 'floor'
+                    : kind !== 'errand' && (foreignText !== false || historyUntrusted !== false || !!taint?.tainted) ? 'foreign' : 'rules';
+            card = this._errandCard(toolName, args, whyKey, message);
+            preview = card ? `${card.question} ${card.detail}` : errandPreview(toolName, args);
+            if (kind === 'chat') extraMeta = { ownerChat: true };
+            // His new word on an errand (or the errand's own new step)
+            // replaces any older card for that errand: with two waiting, a
+            // bare yes would decide neither.
+            if (toolName === 'answerErrand') {
+                const older = this.db.listPendingConfirmations().filter(r => r.tool_name === 'answerErrand' && Number(r.args?.id) === Number(args?.id));
+                retire = [...same, ...older.filter(r => !same.some(x => x.id === r.id))];
+            }
+        }
         const paused = await this.request({
             message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null,
-            modelReason: why || null, guardianDecisionId: row?.id || null, ownerConsent: ownerAsked, preview, card
+            modelReason: why || null, guardianDecisionId: row?.id || null, ownerConsent: ownerAsked, preview, card,
+            extraMeta, replaces: retire.map(r => r.id)
         });
         // Only once this card exists: the older ones it replaces can go.
-        if (paused.paused) this._supersede(same.filter(r => r.id !== paused.id), 'a newer card asks for the same action');
+        if (paused.paused) this._supersede(retire.filter(r => r.id !== paused.id), 'a newer card asks for the same action');
         if (row?.id && !paused.paused && typeof this.db.updateGuardianDecision === 'function') {
             try { this.db.updateGuardianDecision(row.id, { outcome: 'escalated_failed', decidedBy: 'nobody' }); } catch (e) {
                 console.warn('[Guardian] decision update failed:', e.message);
@@ -1111,6 +1143,10 @@ class ApprovalService {
         if (taint && excerpt) taint.excerpt = String(excerpt).slice(0, 1000);
         const runKind = ['chat', 'job', 'watcher', 'subagent', 'system'].includes(kind) ? kind : (jobName ? 'job' : 'chat');
 
+        // The real gate refuses an errand step from any run but his own chat.
+        if (ERRAND_TOOLS.has(name) && runKind !== 'chat') {
+            return { outcome: 'source_refused', gated: true, ruleReason: ERRAND_REFUSED[name], message: ERRAND_REFUSED[name], mode: settings.mode, executed: false };
+        }
         const guard = this.check(name, safeArgs, { taint, serverName });
         if (guard.outcome === 'shell_refused') {
             return { outcome: 'shell_refused', gated: true, ruleReason: guard.reason, message: guard.reason, mode: settings.mode, executed: false };
@@ -1261,6 +1297,29 @@ class ApprovalService {
         return false;
     }
 
+    /** The owner typed this himself, in his own chat (Agent._ownerTyped). */
+    async _ownerTypedRun(message, kind) {
+        if (typeof this.agent?._ownerTyped === 'function') {
+            try { return !!(await this.agent._ownerTyped(message)); } catch { return false; }
+        }
+        return kind === 'chat';
+    }
+
+    /** The plain card for an errand step the gate holds, worded by the errand service. */
+    _errandCard(toolName, args, why, message) {
+        const errands = this.agent?.errands;
+        if (errands && typeof errands.gateCard === 'function') {
+            try {
+                const card = errands.gateCard(toolName, args, { why, message });
+                if (card) return card;
+            } catch (e) {
+                console.warn('[Approvals] errand card failed:', e.message);
+            }
+        }
+        const typed = `${typeof message?.content === 'string' ? message.content : ''} ${args?.request || ''} ${args?.text || ''}`;
+        return errandCard(toolName, args, /[ñ¿¡áéíóú]|\b(?:el|la|que|para|con|turno|hola|dale)\b/i.test(typed) ? 'es' : 'en');
+    }
+
     // --- asking ---
 
     /**
@@ -1316,7 +1375,7 @@ class ApprovalService {
      * Pause a tool call until the owner answers.
      * @returns {Promise<{ paused: boolean, id?: string, delivered?: boolean, result: object }>}
      */
-    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null, modelReason = null, guardianDecisionId = null, ownerConsent = false, preview = null, card = null }) {
+    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null, modelReason = null, guardianDecisionId = null, ownerConsent = false, preview = null, card = null, extraMeta = null, replaces = [] }) {
         const why = reason || 'This action needs the owner\'s approval.';
         // The model reads only our own rule text, never the guardian's words.
         const whyForModel = modelReason || why;
@@ -1350,6 +1409,8 @@ class ApprovalService {
         // The run that paused was the owner's own request: the run that
         // resumes after his approval keeps that (see _ownerConsent).
         if (ownerConsent === true) originMeta.ownerConsent = true;
+        // An errand card raised by his own typed chat: the errand may follow it.
+        if (extraMeta?.ownerChat === true) originMeta.ownerChat = true;
         // What the preview step said this call will do, for the card.
         if (typeof preview === 'string' && preview.trim()) originMeta.preview = truncate(preview.trim(), ERRAND_TOOLS.has(toolName) ? 640 : SUMMARY_CHARS);
         // A question in plain words (an errand's next step): the card shows
@@ -1384,10 +1445,12 @@ class ApprovalService {
             }
         }
 
-        let others = this.db.listPendingConfirmations({ replyChatId: route.replyChatId }).filter(r => r.id !== row.id);
+        // Cards this one replaces go right after it: they are not "others".
+        const gone = new Set([row.id, ...(Array.isArray(replaces) ? replaces : [])]);
+        let others = this.db.listPendingConfirmations({ replyChatId: route.replyChatId }).filter(r => !gone.has(r.id));
         // His WhatsApp chat can carry two ids; a bare yes counts cards under both, so the card does too.
         if (splitChannel(route.replyChannel).channel === 'whatsapp' && await this._isOwnerWaChat(route.replyChatId)) {
-            const seen = new Set([row.id, ...others.map(o => o.id)]);
+            const seen = new Set([...gone, ...others.map(o => o.id)]);
             for (const r of this.db.listPendingConfirmations()) {
                 if (seen.has(r.id) || splitChannel(r.reply_channel).channel !== 'whatsapp') continue;
                 if (await this._isOwnerWaChat(r.reply_chat_id)) others.push(r);
@@ -1622,17 +1685,24 @@ class ApprovalService {
 
         const pending = await this.pendingHere(message);
         if (pending.length !== 1) return null;
-        // An errand card asks about someone else's chat, and "dale" is an
-        // everyday word. A bare yes decides it only while the card is the
-        // last thing Deedee said here; otherwise the model reads the word in
-        // its context (he may be answering a later question).
-        if (pending[0].origin_meta?.errandId !== undefined && !(await this._isNewestInChat(pending[0], chatId))) return null;
+        // A bare yes may answer a later question of Deedee's (a draft: "dale,
+        // mandalo"), never a card it was not about. When the card is not the
+        // last thing Deedee said here, the model reads the word in its
+        // context: always for an errand's card (it asks about someone else's
+        // chat, and "dale" is an everyday word), and for any other card once
+        // he has written here since it went out.
+        if (!(await this._isNewestInChat(pending[0], chatId))) {
+            if (pending[0].origin_meta?.errandId !== undefined) return null;
+            if (await this._ownerWroteSince(pending[0], message)) return null;
+        }
         const decision = decisionWord(text, { toolName: pending[0].tool_name });
         if (!decision) return null;
         if (await this._questionOpen(message)) return null;
-        try { this.db.saveMessage(message); } catch { /* history is best effort */ }
+        // Marked as an answer to this card: it never reached the model, so it
+        // is no new question of his (see _ownerWroteSince).
+        try { this.db.saveMessage({ ...message, metadata: { ...(message.metadata || {}), answeredCard: pending[0].id } }); } catch { /* history is best effort */ }
         if (decision === 'ambiguous') {
-            return { handled: true, reply: await this._reply(message, 'Reply yes to cancel it, or no to keep it.', sendCallback) };
+            return { handled: true, reply: await this._reply(message, 'Reply yes to cancel it, or no to keep it.', sendCallback, { approvalId: pending[0].id }) };
         }
         return this.decide(pending[0].id, decision, { via: 'chat', message, sendCallback });
     }
@@ -1648,7 +1718,30 @@ class ApprovalService {
             let ownerIds = [];
             try { ownerIds = [...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { ownerIds = []; }
             const newest = this.db.getLatestAssistantMessage([row.reply_chat_id, chatId, ...ownerIds]);
-            return !!newest && newest.metadata?.approval?.id === row.id;
+            return !!newest && (newest.metadata?.approval?.id === row.id || newest.metadata?.aboutApproval === row.id);
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Has the owner written to the model in this chat since the card went
+     * out? A word that only answered a card or a question does not count.
+     * His WhatsApp chat can carry several ids, so all of them count there.
+     * The message being handled now does not count. Unknown counts as no:
+     * the rule of one card in this chat still holds.
+     */
+    async _ownerWroteSince(row, message) {
+        if (typeof this.db?.getLatestUserMessage !== 'function') return false;
+        try {
+            const chatId = message?.metadata?.chatId;
+            let ownerIds = [];
+            if (splitChannel(message?.source).channel === 'whatsapp') {
+                try { ownerIds = [...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { ownerIds = []; }
+            }
+            const latest = this.db.getLatestUserMessage([row.reply_chat_id, chatId, ...ownerIds], { excludeId: message?.id || null });
+            if (!latest) return false;
+            return Date.parse(latest.timestamp) > Date.parse(row.created_at);
         } catch {
             return false;
         }
@@ -1728,7 +1821,18 @@ class ApprovalService {
         this._broadcast({ id: row.id, status: decision, chatId: row.reply_chat_id, toolName: row.tool_name });
 
         if (decision === 'denied') {
-            const text = row.origin_meta?.card?.denied || `Denied: ${row.tool_name} will not run.`;
+            let text = row.origin_meta?.card?.denied || `Denied: ${row.tool_name} will not run.`;
+            // "cancelar" on an errand's card: he wants the errand gone, not
+            // only this step (the card's own "no" text would ask him to say so).
+            const errandId = row.tool_name === 'answerErrand' ? Number(row.args?.id) : NaN;
+            if (Number.isFinite(errandId) && CANCEL_ERRAND_RE.test(String(message?.content || '')) && typeof this.agent?.errands?.cancelFromCard === 'function') {
+                try {
+                    const line = await this.agent.errands.cancelFromCard(errandId);
+                    if (line) text = line;
+                } catch (e) {
+                    console.warn(`[Approvals] errand #${errandId} not cancelled: ${e.message}`);
+                }
+            }
             const reply = message ? await this._reply(message, text, sendCallback) : await this._deliverTo(this._resultTarget(row, null), text, row);
             return { handled: true, row, reply };
         }
@@ -1811,9 +1915,10 @@ class ApprovalService {
         return outgoing;
     }
 
-    async _reply(message, text, sendCallback) {
+    /** `approvalId`: the reply asks about that card, so the card still counts as Deedee's last question. */
+    async _reply(message, text, sendCallback, { approvalId = null } = {}) {
         const reply = createAssistantMessage(text);
-        reply.metadata = { chatId: message.metadata.chatId };
+        reply.metadata = { chatId: message.metadata.chatId, ...(approvalId ? { aboutApproval: approvalId } : {}) };
         reply.source = message.source;
         try { this.db.saveMessage(reply); } catch { /* best effort */ }
         if (sendCallback) {

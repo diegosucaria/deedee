@@ -49,22 +49,35 @@ It never writes the message itself.
    - the contact confirms the slot he asked for on his day, or (window
      mode) offers a slot inside his window, and his calendar is free then:
      Deedee answers on her own and books;
-   - any other slot: a card for `answerErrand`, "sí" accepts it;
+   - any other slot: a card for `answerErrand`, "sí" accepts it. The card
+     says why it asks: his calendar is busy then, the slot is outside his
+     window, or the day or time was one the draft picked, not he;
    - a question, a refusal, an unclear answer: a note asks him;
-   - small talk: nothing; news: a note.
+   - small talk: nothing; news: a note. A note that asks him says so when
+     a step that waited did not go out.
 5. **Booking.** Code adds the event to his primary calendar with no guests.
    It uses the `gws_personal` calendar tool (`ERRANDS_CALENDAR_ACCOUNT`
-   picks another), and skips an event that is already there.
+   picks another), and skips an event that is already there: one with the
+   errand's title or its note (`(errand #N)`) at that start, or his
+   watcher's event naming the person in full. A name inside another word
+   never counts.
 
 Notes and cards call an errand a "pedido" in Spanish. Notes that can wait
-never go out between 22:00 and 08:00. A paused errand keeps the chat, so his
-watcher does not book what the errand may still book.
+never go out between 22:00 and 08:00. A card or a note about the contact's
+reply goes out at once, at any hour: the slot may not wait.
+
+A paused errand keeps the chat, so his watcher does not book what the
+errand may still book. When the contact writes to a paused errand, he hears
+it once per pause; no model reads it. When he answers a paused errand, it
+goes on, and his step goes out.
 
 He answers an errand in his chat. The turn context of his own chat lists
 open errands, so "sí", "decile a las 11" or "cancelalo" reach
-`answerErrand`. If he writes to the person himself, the errand steps aside
-and his watchers see the chat again. Notes and cards come in his language
-(Spanish when his request is).
+`answerErrand`. "cancelar" on an errand's card cancels the errand. If he
+writes to the person himself, the errand steps aside and his watchers see
+the chat again; a paused errand notices this too. A message Deedee sent
+from his account (a greeting job) is not him writing. Notes and cards come
+in his language (Spanish when his request is).
 
 ## The voice
 
@@ -100,7 +113,8 @@ After the model writes, code:
 | Gap between its own messages | 1 minute |
 | Quiet hours | 22:00 to 08:00: a step waits until 08:00 |
 | No answer | he hears after 4 hours; Deedee never writes again on her own |
-| Life | until the slot's day, 7 days at most |
+| Life | until the slot's day, 7 days at most; an end in quiet hours moves to 21:55, and past its end an errand closes at once |
+| Voice notes | 60 seconds to transcribe, then it counts as unreadable |
 | Model calls | 20 per errand, then it pauses |
 | Contact messages | 60 per errand, then it pauses |
 
@@ -118,3 +132,5 @@ Errands use the built-in approval service (`docs/security.md`, Errands):
 his request in his own chat starts one with no card; his choices come as
 cards for `answerErrand`; steps inside the scope he set run through the gate
 with a one-time errand grant. The guardian does not decide errand steps.
+Only his own chat starts or answers an errand: a job, a watcher or a
+contact's chat is refused at the gate, with no card.

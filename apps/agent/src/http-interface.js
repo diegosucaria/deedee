@@ -4,6 +4,10 @@ const EventEmitter = require('events');
 // A send that the interfaces service never answers fails after this long,
 // so the delivery ledger can retry it (same id, so a repeat is deduped).
 const SEND_TIMEOUT_MS = 120e3;
+// What Deedee sent from the owner's own account, kept so an errand does not
+// take it for his own writing. In memory: a restart forgets it.
+const OWNER_SENDS_MAX = 500;
+const OWNER_SENDS_MS = 8 * 24 * 3600e3;
 
 class HttpInterface extends EventEmitter {
   /**
@@ -17,6 +21,26 @@ class HttpInterface extends EventEmitter {
     super();
     this.interfacesUrl = interfacesUrl;
     this.apiToken = apiToken || process.env.DEEDEE_API_TOKEN;
+    this._ownerSends = [];
+  }
+
+  /**
+   * Messages Deedee sent from the owner's own WhatsApp account (a job, a
+   * greeting, an errand) to any of these chats: { id, text, at }. His own
+   * typing is never here.
+   * @param {string[]} ids - chat ids or their digits
+   */
+  ownerAccountSends(ids = []) {
+    const wanted = new Set((ids || []).map(v => String(v ?? '').replace(/@.*$/, '').replace(/\D/g, '')).filter(d => d.length >= 6));
+    return this._ownerSends.filter(e => wanted.has(e.chat)).map(({ id, text, at }) => ({ id, text, at }));
+  }
+
+  _rememberOwnerSend(chatId, content, messageId) {
+    const chat = String(chatId ?? '').replace(/@.*$/, '').replace(/\D/g, '');
+    if (!chat || typeof content !== 'string') return;
+    const now = Date.now();
+    this._ownerSends = this._ownerSends.filter(e => now - e.at < OWNER_SENDS_MS).slice(-(OWNER_SENDS_MAX - 1));
+    this._ownerSends.push({ chat, text: content.trim(), id: messageId ? String(messageId) : null, at: now });
   }
 
   /**
@@ -87,6 +111,7 @@ class HttpInterface extends EventEmitter {
         // A frozen payload keeps no id, and the message still went out.
         try { message.sentMessageId = String(res.data.messageId); } catch { /* frozen or sealed */ }
       }
+      if (finalSource === 'whatsapp' && metadata.session === 'user') this._rememberOwnerSend(metadata.chatId, content, res?.data?.messageId);
       return true;
     } catch (error) {
       console.error('[HttpInterface] Send Error:', error.message);
