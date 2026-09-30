@@ -98,6 +98,15 @@ const READ_SCHEMA = Object.freeze({
     additionalProperties: false
 });
 
+// History lines that are something she sent only he can take in.
+const MEDIA_LINE = /^\[(?:Image|Video|Document|Media: (?:document|location|liveLocation|contact|contactsArray|pollCreation)\w*)/;
+
+/** A history line that is WhatsApp bookkeeping (a reaction, a missed call, an edit), no message. */
+function isBookkeeping(content) {
+    const c = String(content || '').trim();
+    return /^\[Media: /.test(c) && !MEDIA_LINE.test(c);
+}
+
 /** ERRANDS=0 turns the feature off. Read on every call. */
 function errandsEnabled() {
     return String(process.env.ERRANDS || '1') !== '0';
@@ -920,7 +929,7 @@ class ErrandService {
         return (history || []).some(m => {
             if (m.role !== 'assistant' || !(Number(m.timestamp) > since)) return false;
             const content = String(m.content || '').trim();
-            if (!content || /^\[Media: /.test(content)) return false;
+            if (!content || isBookkeeping(content)) return false;
             if (m.id && own.ids.has(String(m.id))) return false;
             // A failed send that arrived after all shows up within minutes;
             // the same words from him later are his.
@@ -1245,7 +1254,9 @@ class ErrandService {
         const errand = this._errandFor([contactString, senderLid, meta.phoneNumber, meta.chatId, meta.lid]);
         if (!errand) return false;
         const audio = (message.parts || []).filter(p => p?.inlineData?.mimeType?.startsWith('audio/'));
-        const media = (message.parts || []).some(p => p?.inlineData && !String(p.inlineData.mimeType || '').startsWith('audio/'));
+        // A photo or file, or one whose download failed ("[Image]" alone).
+        const media = (message.parts || []).some(p => p?.inlineData && !String(p.inlineData.mimeType || '').startsWith('audio/'))
+            || /^\[(?:Image|Video|Document)\b[^\]]*\]$/i.test(String(message.content || '').trim());
         // A voice note whose audio never arrived ("[Voice Message]" alone) is unreadable, not small talk.
         const lostVoice = audio.length === 0 && /^\[(?:Voice Message|Audio)/i.test(String(message.content || '').trim());
         const ts = Date.parse(message.timestamp) || this.clock();
@@ -1634,7 +1645,7 @@ Answer in JSON.`;
         // liberó" asks him (he may have made other plans), never books by itself.
         if (form.kind === 'decline') {
             // Her earlier yes that waited for 08:00 no longer stands.
-            this.db.updateErrand(errand.id, { auto_ok: 0, auto_why: 'her_no', next_action: null, next_check_at: null });
+            this.db.updateErrand(errand.id, { auto_ok: 0, auto_why: 'her_no', offer: null, ...(errand.next_action?.owner ? {} : { next_action: null, next_check_at: null }) });
             return this._askNote(this.db.getErrand(errand.id) || errand, t.noSlot(name, errand.id));
         }
         if (form.kind === 'question') return this._askNote(errand, t.asked(name, errand.id, form.summary), { taint: true });
@@ -1848,9 +1859,10 @@ Answer in JSON.`;
         const lapsed = !waiting?.owner && !dropped.own ? this._hisPendingCard(errand) : null;
         const mine = waiting?.owner ? this._stepName(errand, waiting) : dropped.own ? dropped.step : lapsed ? this._stepName(errand, lapsed.args) : null;
         // Her yes that waited for 08:00, dropped for this newer offer of hers.
-        const heldYes = !waiting?.owner && waiting?.action === 'accept' && validDate(waiting.date) && normTime(waiting.time) && !slots.some(x => sameSlot(x, { date: waiting.date, time: normTime(waiting.time) }))
-            ? t.heldAcceptNote(name, fmtSlot({ date: waiting.date, time: normTime(waiting.time) }, tz, lang)) : '';
-        const detail = t.cardDetail(name, offered, reason) + (mine ? t.heldStep(mine) : (dropped.own || waiting?.owner || lapsed) ? t.notSent : heldYes);
+        const yes = waiting && !waiting.owner && waiting.action === 'accept' ? waiting : waiting?.heldYes;
+        const heldYes = yes && validDate(yes.date) && normTime(yes.time) && !slots.some(x => sameSlot(x, { date: yes.date, time: normTime(yes.time) }))
+            ? t.heldAcceptNote(name, fmtSlot({ date: yes.date, time: normTime(yes.time) }, tz, lang)) : '';
+        const detail = t.cardDetail(name, offered, reason) + (mine ? t.heldStep(mine) : (dropped.own || waiting?.owner || lapsed) ? t.notSent : '') + heldYes;
         const res = await approvals.askOwner({
             message: this._runMessage(errand),
             toolName: 'answerErrand',
@@ -2208,9 +2220,9 @@ Answer in JSON.`;
         // longer holds her chat, and no "has not answered" note can follow.
         // Her yes that waited for 08:00 (an automatic accept) is not dropped
         // without a word: his line says it is not on his calendar and asks.
-        const heldYes = args.action === 'say' && errand.next_action && !errand.next_action.owner && errand.next_action.action === 'accept'
-            && validDate(errand.next_action.date) && normTime(errand.next_action.time)
-            ? { date: errand.next_action.date, time: normTime(errand.next_action.time) } : null;
+        const pendingYes = errand.next_action && !errand.next_action.owner && errand.next_action.action === 'accept' ? errand.next_action : args.heldYes;
+        const heldYes = args.action === 'say' && pendingYes && validDate(pendingYes.date) && normTime(pendingYes.time)
+            ? { date: pendingYes.date, time: normTime(pendingYes.time) } : null;
         // propose or say: back to waiting for them. After a free-form "say"
         // the slot on the table is no longer known.
         const moved = args.action === 'propose'
@@ -2233,8 +2245,12 @@ Answer in JSON.`;
         const name = safeName(errand.contact_name);
         const t = this._t(errand);
         const due = this.clock() + (auto ? LIMITS.minGapMs : 0);
+        // Her yes that waited for 08:00 rides along with his step, so it is not lost when his step runs.
+        const prev = errand.next_action;
+        const heldYes = !auto && prev && !prev.owner && prev.action === 'accept' && prev.date && prev.time
+            ? { date: prev.date, time: prev.time } : (!auto ? (prev?.heldYes || args.heldYes || null) : null);
         this.db.updateErrand(errand.id, {
-            next_action: auto ? { ...args, step } : { ...args, owner: true },
+            next_action: auto ? { ...args, step } : { ...args, owner: true, ...(heldYes ? { heldYes } : {}) },
             next_check_at: new Date(due).toISOString(),
             // His own step waits: nothing is accepted over it.
             ...(auto ? {} : { auto_ok: 0 })
@@ -2401,15 +2417,16 @@ Answer in JSON.`;
             return seen.some(s => Math.abs(s.ts - Number(m.timestamp)) < 10 * 60e3
                 && (isMedia ? (s.media || s.text.startsWith(content)) : (s.text === content || (content && s.text.startsWith(content)))));
         };
-        // "[Media: ...]" lines are WhatsApp bookkeeping (a reaction, a missed
-        // call), as _ownerWrote treats them: no message of hers.
-        const missed = history.filter(m => m.role !== 'assistant' && Number(m.timestamp) > after && !/^\[Media: /.test(norm(m.content)) && !known(m));
+        // Reactions, missed calls, poll votes and edits are WhatsApp
+        // bookkeeping, no message of hers; a file, a location, a contact card
+        // or a poll she sends is (MEDIA_LINE).
+        const missed = history.filter(m => m.role !== 'assistant' && Number(m.timestamp) > after && !isBookkeeping(m.content) && !known(m));
         if (missed.length === 0) return;
         for (const m of missed) {
             const content = String(m.content || '');
             this._event(errand.id, 'received', {
                 ts: Number(m.timestamp), text: clip(content, 1000), excerpt: clip(content, EXCERPT_CHARS), catchUp: true,
-                ...(/^\[Audio/.test(content) ? { unreadable: true } : {}), ...(/^\[(?:Image|Video|Document)/.test(content) ? { media: true } : {})
+                ...(/^\[Audio/.test(content) ? { unreadable: true } : {}), ...(MEDIA_LINE.test(content) ? { media: true } : {})
             });
         }
         await this._process(errand.id, []);
@@ -2435,7 +2452,7 @@ Answer in JSON.`;
             }
             if (e.offer) bits.push(`on the table: ${fmtSlot(e.offer, tz)} (date ${e.offer.date}, time ${e.offer.time})`);
             const held = e.next_action && !e.next_action.owner && e.next_action.action === 'accept' ? e.next_action : null;
-            if (held) bits.push(`they confirmed ${held.date} ${held.time}; the thanks and the booking go out by themselves at ${e.next_check_at ? localParts(Date.parse(e.next_check_at), tz).time : 'the next check'}`);
+            if (held) bits.push(`they agreed to ${held.date} ${held.time}; the reply and the booking go out by themselves at ${e.next_check_at ? localParts(Date.parse(e.next_check_at), tz).time : 'the next check'}`);
             const read = this.db.listErrandEvents(e.id, { newest: 30 }).filter(ev => ev.kind === 'read' && ev.detail?.slots?.length).pop();
             if (read && read.detail.slots.length > 1) bits.push(`all slots offered: ${read.detail.slots.map(s => `${s.date} ${s.time}`).join(', ')}`);
             if (e.slot) bits.push(`asked for: ${fmtSlot(e.slot, tz)}`);

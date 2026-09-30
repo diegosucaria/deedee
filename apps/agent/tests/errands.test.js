@@ -2540,6 +2540,7 @@ describe('errands', () => {
             clock = at('2026-10-06', '23:30');
             await contactAnswers(errand, 'uh al final no tengo lugar', { kind: 'decline', slots: [], summary: 'No room after all.', tellOwner: false });
             expect(db.getErrand(errand.id).next_action).toBeNull();
+            expect(db.getErrand(errand.id).offer).toBeNull();
             expect(notes().pop().content).not.toMatch(/Decime si lo acepto/);
         });
 
@@ -2557,7 +2558,46 @@ describe('errands', () => {
             const errand = await startBooking();
             clock = at('2026-10-06', '23:10');
             await contactAnswers(errand, 'dale, jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
-            expect(service.turnContextLines()[0]).toMatch(/they confirmed 2026-10-08 10:00; the thanks and the booking go out by themselves at 08:00/);
+            expect(service.turnContextLines()[0]).toMatch(/they agreed to 2026-10-08 10:00; the reply and the booking go out by themselves at 08:00/);
+        });
+
+        test('a file, a location or a contact card she sends is her answer, not bookkeeping', async () => {
+            drafts.push({ text: 'me pasás el presupuesto?', date: '', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale el presupuesto' });
+            clock += 60e3;
+            chat.push({ role: 'user', content: '[Media: documentMessage]', timestamp: clock, id: 'D1', fromMe: false });
+            clock += CATCHUP;
+            await service.sweep();
+            expect(db.getErrand(out.errandId).state).toBe('done');
+            expect(notes().pop().content).toMatch(/contestó con una foto o un archivo/);
+        });
+
+        test('her "no tengo lugar" names his step that waited for her words', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            service.bufferMs = 60e3;
+            service.claim(contactWrites('uh esta semana no tengo nada'), { contactString: CONTACT });
+            const res = await service.answer({ id: errand.id, action: 'propose', date: '2026-10-09', time: '11:00' }, { byOwner: true });
+            expect(res.deferred).toBe(true);
+            forms.push({ kind: 'decline', slots: [], summary: 'No room.', tellOwner: false });
+            await service.flush(errand.id);
+            expect(notes().pop().content).toMatch(/no tiene lugar .*Lo tuyo \("proponer el vie 09\/10 a las 11:00"\) no salió\./);
+        });
+
+        test('his thanks deferred over her held yes still keeps her yes in view when it goes out', async () => {
+            const errand = await startBooking();
+            clock = at('2026-10-06', '22:30');
+            await contactAnswers(errand, 'dale, jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            service.bufferMs = 60e3;
+            clock += 60e3;
+            service.claim(contactWrites('genial!'), { contactString: CONTACT });
+            const res = await service.answer({ id: errand.id, action: 'say', text: 'gracias!' }, { byOwner: true });
+            expect(res.deferred).toBe(true);
+            forms.push({ kind: 'other', slots: [], summary: 'Glad.', tellOwner: false });
+            drafts.push({ text: 'gracias!', date: '', time: '' });
+            await service.flush(errand.id);
+            expect(notes().pop().content).toMatch(/Estaba por aceptarle a Alice el jue 08\/10 a las 10:00; no está en tu calendario\. Decime si lo acepto\./);
+            expect(db.getErrand(errand.id).offer).toMatchObject({ date: '2026-10-08', time: '10:00' });
         });
 
         test('"y decile ..." or "y?" ("and tell her ...", "so?") is not a yes', async () => {

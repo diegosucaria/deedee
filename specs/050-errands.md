@@ -297,7 +297,7 @@ own.
 
 ## 12. Review
 
-Fourteen review rounds (security, the owner's real flows replayed message by
+Fifteen review rounds (security, the owner's real flows replayed message by
 message, regressions, and a check that each fix held) found real faults.
 Each fix has a test named after the fault in
 `apps/agent/tests/errands.test.js` ("review round one", "review round
