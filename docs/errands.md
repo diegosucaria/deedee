@@ -146,7 +146,7 @@ After the model writes, code:
 | All messages | 10 per errand |
 | Gap between its own messages | 1 minute |
 | Quiet hours | 22:00 to 08:00: a step waits until 08:00 |
-| No answer | he hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word; Deedee never writes again on her own |
+| No answer | he hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word (from 08:00 when that came at night); Deedee never writes again on her own |
 | Life | until the slot's day, 7 days at most; an end in quiet hours moves to 21:55 (a late slot keeps its evening); past its end an errand closes at once, and a note held by quiet hours goes out at 08:00. He hears at the start when the errand ends before the day |
 | Model calls | 20 per errand, 40 for his own steps and once he answers a paused errand |
 | Voice notes | 60 seconds to transcribe, then it counts as unreadable |

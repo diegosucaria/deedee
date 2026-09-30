@@ -235,21 +235,40 @@ function fmtSlots(slots, timeZone, lang = 'en') {
  */
 function inWindow(errand, slot) {
     if (!errand?.window_start || !errand?.window_end || !slot?.date || !slot?.time) return false;
-    const [d1, t1] = errand.window_start.split('T');
-    const [d2, t2] = errand.window_end.split('T');
-    if (slot.date < d1 || slot.date > d2) return false;
-    return t1 <= t2 ? (slot.time >= t1 && slot.time <= t2) : `${slot.date}T${slot.time}` >= errand.window_start && `${slot.date}T${slot.time}` <= errand.window_end;
+    const at = `${slot.date}T${slot.time}`;
+    if (at < errand.window_start || at > errand.window_end) return false;
+    const t1 = errand.window_start.slice(11);
+    const t2 = errand.window_end.slice(11);
+    // Within the range, the daily hours hold; hours that pass midnight
+    // ("de 20 a 24", "de 21 a 1") hold each night.
+    return t1 <= t2 ? (slot.time >= t1 && slot.time <= t2) : (slot.time >= t1 || slot.time <= t2);
 }
 
 /** "jue 08/10 de 09:00 a 12:00": his window, in his language. */
 function fmtWindow(errand, timeZone, lang = 'en') {
     const day = fmtSlot({ date: errand.window_start.slice(0, 10), time: null }, timeZone, lang);
-    const endDay = errand.window_end.slice(0, 10) !== errand.window_start.slice(0, 10)
-        ? `${fmtSlot({ date: errand.window_end.slice(0, 10), time: null }, timeZone, lang)} `
-        : '';
-    return lang === 'es'
-        ? `${day} de ${errand.window_start.slice(11)} a ${endDay}${errand.window_end.slice(11)}`
-        : `${day} from ${errand.window_start.slice(11)} to ${endDay}${errand.window_end.slice(11)}`;
+    const t1 = errand.window_start.slice(11);
+    const t2 = errand.window_end.slice(11);
+    const endDate = errand.window_end.slice(0, 10);
+    // Several days: the days, then the hours that hold on each ("jue 08/10 a vie 09/10, de 09:00 a 12:00").
+    const multi = endDate !== errand.window_start.slice(0, 10) && !(t1 > t2 && localDayAfter(errand.window_start.slice(0, 10)) === endDate);
+    if (multi) {
+        const last = fmtSlot({ date: t1 > t2 ? localDayBefore(endDate) : endDate, time: null }, timeZone, lang);
+        return lang === 'es' ? `${day} a ${last}, de ${t1} a ${t2}` : `${day} to ${last}, ${t1} to ${t2}`;
+    }
+    return lang === 'es' ? `${day} de ${t1} a ${t2}` : `${day} from ${t1} to ${t2}`;
+}
+
+function localDayAfter(date) {
+    const d = new Date(`${date}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+}
+
+function localDayBefore(date) {
+    const d = new Date(`${date}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().slice(0, 10);
 }
 
 function sameSlot(a, b) {
@@ -1117,7 +1136,11 @@ class ErrandService {
             const brief = {
                 request,
                 ...(requestTainted ? { requestTainted: true } : {}),
-                ...(goal === 'book' && slot ? { slotText: `${fmtSlot(slot, tz)}${range ? ` (any time from ${range.start} to ${range.end})` : ''}` } : {}),
+                ...(goal === 'book' && slot ? {
+                    slotText: windowStart && windowStart.slice(0, 10) !== windowEnd.slice(0, 10)
+                        ? `any day ${fmtWindow({ window_start: windowStart, window_end: windowEnd }, tz)}`
+                        : `${fmtSlot(slot, tz)}${range ? ` (any time from ${range.start} to ${range.end})` : ''}`
+                } : {}),
                 ...(goal === 'book' && !range && (!slot || !slot.time) ? { noTime: true } : {}),
                 busy,
                 ...(goal === 'tell' ? { words: request } : {})
@@ -1451,14 +1474,15 @@ class ErrandService {
             if (form.kind === 'later') {
                 // "Let me check": nothing goes out until the real answer comes.
                 if (!waiting) {
-                    // Her earlier answer no longer stands: the no-answer note counts again.
-                    this.db.updateErrand(id, { answered_at: null });
+                    // Her earlier answer (and a yes of hers that waited) no longer stands:
+                    // the no-answer note counts again.
+                    this.db.updateErrand(id, { answered_at: null, held_yes: null });
                     return null;
                 }
                 // "Me fijo": her earlier answer no longer stands (the no-answer
                 // note counts again), and a step of his that waited stops the
                 // errand from accepting anything by itself.
-                this.db.updateErrand(id, { next_action: null, next_check_at: null, state: 'waiting_contact', answered_at: null, ...(waiting.owner ? { auto_ok: 0 } : {}) });
+                this.db.updateErrand(id, { next_action: null, next_check_at: null, state: 'waiting_contact', answered_at: null, held_yes: null, ...(waiting.owner ? { auto_ok: 0 } : {}) });
                 this._event(id, 'decided', { dropped: true, why: 'later' });
                 return waiting.owner ? this._notifyOnly(errand, t.checking(name, id, this._stepName(errand, waiting))) : null;
             }
@@ -1882,7 +1906,7 @@ Answer in JSON.`;
         const lapsed = !waiting?.owner && !dropped.own ? this._hisPendingCard(errand) : null;
         const mine = waiting?.owner ? this._stepName(errand, waiting) : dropped.own ? dropped.step : lapsed ? this._stepName(errand, lapsed.args) : null;
         // Her yes that waited for 08:00, dropped for this newer offer of hers.
-        const yes = waiting && !waiting.owner && waiting.action === 'accept' ? waiting : waiting?.heldYes;
+        const yes = this._heldYes({ next_action: waiting, held_yes: this.db.getErrand(errand.id)?.held_yes });
         const heldYes = yes && validDate(yes.date) && normTime(yes.time) && !slots.some(x => sameSlot(x, { date: yes.date, time: normTime(yes.time) }))
             ? t.heldAcceptNote(name, fmtSlot({ date: yes.date, time: normTime(yes.time) }, tz, lang)) : '';
         const detail = t.cardDetail(name, offered, reason) + (mine ? t.heldStep(mine) : (dropped.own || waiting?.owner || lapsed) ? t.notSent : '') + heldYes;
@@ -2236,7 +2260,9 @@ Answer in JSON.`;
         const out = await this._send(current, d.parts, { auto });
         const said = clip(d.parts.join(' '), 120);
         if (!out.ok) {
-            const yes = this._heldYes(current) || (args.heldYes && validDate(args.heldYes.date) && normTime(args.heldYes.time) ? { date: args.heldYes.date, time: normTime(args.heldYes.time) } : null);
+            // The slot this very step accepted is the yes that did not go out.
+            const yes = (args.action === 'accept' && slot) ? slot
+                : (this._heldYes(current) || (args.heldYes && validDate(args.heldYes.date) && normTime(args.heldYes.time) ? { date: args.heldYes.date, time: normTime(args.heldYes.time) } : null));
             if (yes) this.db.updateErrand(current.id, { held_yes: yes });
             await this._pause(current, t.whyRefused, { note: !live });
             return { success: false, error: `WhatsApp did not take the message to ${name}. Errand #${errand.id} is paused. Do not retry it before checking the chat.`, ownerLine: t.paused(name, errand.id, t.whyRefused) + (yes ? t.heldAcceptNote(name, fmtSlot(yes, tz, lang)) : '') };
@@ -2363,7 +2389,7 @@ Answer in JSON.`;
             const card = this.db.getPendingConfirmation(errand.pending_approval_id);
             const status = card?.status || 'missing';
             // His "no" is a decision of his: the errand acts on nothing by itself after it.
-            if (status === 'denied') this.db.updateErrand(errand.id, { auto_ok: 0 });
+            if (status === 'denied') this.db.updateErrand(errand.id, { auto_ok: 0, auto_why: 'his', held_yes: null });
             if (status === 'denied' || status === 'expired' || status === 'missing') {
                 // A newer card for this errand took its place: his word through
                 // the gate in his own chat, or the errand's own. Follow it. A
@@ -2414,14 +2440,16 @@ Answer in JSON.`;
         // her own. "Me fijo y te aviso" or small talk is no answer: the wait
         // counts from their last word.
         const lastSent = Date.parse(errand.last_sent_at || 0) || 0;
-        const lastWord = Math.max(lastSent, Date.parse(errand.last_contact_at || 0) || 0);
+        const lastWordAt = Math.max(lastSent, Date.parse(errand.last_contact_at || 0) || 0);
+        // A message at night: the four hours count from the morning, when she can answer.
+        const lastWord = lastWordAt && this._quiet(lastWordAt) ? this._quietEnd(lastWordAt) : lastWordAt;
         const answered = (Date.parse(errand.answered_at || 0) || 0) > lastSent;
         if (errand.state === 'waiting_contact' && !errand.no_reply_noted && errand.last_sent_at && !answered
             && now - lastWord >= LIMITS.noReplyMs && !quiet) {
             if (await this._tookOver(errand)) return;
             this.db.updateErrand(errand.id, { no_reply_noted: 1 });
             this._event(errand.id, 'note', { noReply: true });
-            await this._notify(errand, lastWord > lastSent ? t.noAnswerYet(name, errand.id) : t.noReply(name, errand.id));
+            await this._notify(errand, lastWordAt > lastSent ? t.noAnswerYet(name, errand.id) : t.noReply(name, errand.id));
             return;
         }
         // A reply that was stored but not read (a failed history read, a restart mid-read).
@@ -2462,7 +2490,8 @@ Answer in JSON.`;
             .filter(e => e.kind === 'received' && e.detail)
             .map(e => ({ ts: Number(e.detail.ts) || 0, text: norm(e.detail.text), media: !!(e.detail.media || e.detail.unreadable || /^\[voice note\]/.test(norm(e.detail.text))) }));
         const known = (m) => {
-            const content = norm(m.content);
+            // The stored copy is cut to 1000 characters: compare the same cut.
+            const content = norm(clip(m.content, 1000));
             // Files, pins and contact cards never come through the hook: only
             // the catch-up's own stored copy (same line, same time) knows one.
             if (/^\[(?:Media: |Video)/.test(content)) return seen.some(s => s.ts === Number(m.timestamp) && s.text === content);
@@ -2511,7 +2540,12 @@ Answer in JSON.`;
             const read = this.db.listErrandEvents(e.id, { newest: 30 }).filter(ev => ev.kind === 'read' && ev.detail?.slots?.length).pop();
             if (read && read.detail.slots.length > 1) bits.push(`all slots offered: ${read.detail.slots.map(s => `${s.date} ${s.time}`).join(', ')}`);
             if (e.slot) bits.push(`asked for: ${fmtSlot(e.slot, tz)}`);
-            if (e.window_start) bits.push(`window: ${e.window_start.replace('T', ' ')} to ${e.window_end.replace('T', ' ')}`);
+            if (e.window_start) {
+                const multi = e.window_start.slice(0, 10) !== e.window_end.slice(0, 10);
+                bits.push(multi
+                    ? `window: ${e.window_start.slice(0, 10)} to ${e.window_end.slice(0, 10)}, ${e.window_start.slice(11)} to ${e.window_end.slice(11)} each day`
+                    : `window: ${e.window_start.replace('T', ' ')} to ${e.window_end.slice(11)}`);
+            }
             bits.push(e.request_tainted ? 'request: set from a card' : `his request: "${clip(e.request, 120)}"`);
             return bits.join('; ');
         });
@@ -2520,7 +2554,7 @@ Answer in JSON.`;
     /** He said no to a card of this errand: from now on it acts on nothing by itself. */
     ownerSaidNo(id) {
         const e = this.db.getErrand(id);
-        if (e && !e.closed_at) this.db.updateErrand(e.id, { auto_ok: 0 });
+        if (e && !e.closed_at) this.db.updateErrand(e.id, { auto_ok: 0, auto_why: 'his', held_yes: null });
     }
 
     /** True when the errand exists and is closed (the gate refuses its steps). */
