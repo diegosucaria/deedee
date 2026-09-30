@@ -379,6 +379,7 @@ const TEXTS = {
         whyPickedTime: (s) => `la hora la elegí yo: le pedí el ${s}`,
         whyPickedDay: (s) => `el día y la hora los elegí yo: le pedí el ${s}`,
         whyOutside: (w) => `está fuera de tu rango (${w})`,
+        whyInside: (w) => `está dentro de tu rango (${w})`,
         whyBusy: 'tenés algo en el calendario a esa hora',
         whyCalendar: 'no pude revisar tu calendario',
         whySoon: 'empieza muy pronto',
@@ -482,6 +483,7 @@ const TEXTS = {
         whyPickedTime: (s) => `I picked the time: I asked for ${s}`,
         whyPickedDay: (s) => `I picked the day and time: I asked for ${s}`,
         whyOutside: (w) => `outside your window (${w})`,
+        whyInside: (w) => `inside your window (${w})`,
         whyBusy: 'your calendar is busy then',
         whyCalendar: 'I could not check your calendar',
         whySoon: 'it starts very soon',
@@ -1773,10 +1775,9 @@ Answer in JSON.`;
         // (auto_ok).
         if (!errand.auto_ok) return false;
         if (zonedMs(slot.date, slot.time, this.timeZone()) < this.clock() + MIN_LEAD_MS) return false;
-        if (errand.mode === 'window' && errand.window_start && errand.window_end) {
-            if (!inWindow(errand, slot)) return false;
-            return this._isFree(errand.duration_min, slot, { errand });
-        }
+        // A range ("jueves o viernes de 9 a 12") never books by itself: each
+        // offer comes to him as a card. Only the exact slot he asked for does.
+        if (errand.mode === 'window') return false;
         if (!errand.slot_owned || !sameSlot(slot, errand.slot)) return false;
         return this._isFree(errand.duration_min, slot, { errand });
     }
@@ -1927,7 +1928,10 @@ Answer in JSON.`;
         const plus = (base) => (cal ? t.whyAnd(base, cal) : base);
         if (errand.mode === 'window' && errand.window_start && errand.window_end) {
             if (!inWindow(errand, slot)) return plus(t.whyOutside(fmtWindow(errand, tz, lang)));
-            return cal || (errand.next_action?.owner || this._hisPendingCard(errand) ? t.whyStepWaits : errand.auto_why === 'her_no' ? t.whyHerNo : t.whyInvolved);
+            if (errand.next_action?.owner || this._hisPendingCard(errand)) return cal || t.whyStepWaits;
+            if (!errand.auto_ok && errand.auto_why === 'her_no') return cal || t.whyHerNo;
+            // Inside his range: a range always asks him.
+            return plus(t.whyInside(fmtWindow(errand, tz, lang)));
         }
         // A step of his still waits: that is why it asks.
         if ((errand.next_action?.owner || this._hisPendingCard(errand)) && (!errand.slot?.time || sameSlot(slot, errand.slot))) return cal || t.whyStepWaits;

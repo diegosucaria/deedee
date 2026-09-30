@@ -313,14 +313,20 @@ describe('errands', () => {
             expect(done.event_id).toBe('EXIST');
         });
 
-        test('window mode accepts a free slot inside the window on its own', async () => {
+        test('a range never books on its own: an offer inside it comes as a card that says so, and "sí" books it', async () => {
             drafts.push({ text: 'Buenas! hay lugar el jueves a la mañana?', date: '2026-10-08', time: '' });
             const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves a la mañana', windowStart: '2026-10-08T09:00', windowEnd: '2026-10-08T12:00' });
             expect(out.success).toBe(true);
             const errand = db.getErrand(out.errandId);
             expect(errand.mode).toBe('window');
             clock += 5 * 60e3;
-            const done = await contactAnswers(errand, 'jueves 11', { kind: 'offer', slots: [{ date: '2026-10-08', time: '11:00' }], summary: 'Offers Thursday 11.' });
+            const asked = await contactAnswers(errand, 'jueves 11', { kind: 'offer', slots: [{ date: '2026-10-08', time: '11:00' }], summary: 'Offers Thursday 11.' });
+            expect(asked.state).toBe('waiting_owner');
+            expect(sends).toHaveLength(1);
+            const card = pendingCards()[0];
+            expect(card.origin_meta.card.detail).toMatch(/está dentro de tu rango \(jue 08\/10 de 09:00 a 12:00\)/);
+            await approvals.decide(card.id, 'approved', { via: 'test' });
+            const done = db.getErrand(errand.id);
             expect(done.state).toBe('done');
             expect(done.agreed).toEqual({ date: '2026-10-08', time: '11:00' });
             expect(sends).toHaveLength(2);
@@ -1112,10 +1118,10 @@ describe('errands', () => {
         });
 
         test('a slot too close to wait out quiet hours is never accepted on its own: it comes to him at once', async () => {
-            drafts.push({ text: 'Buenas! hay lugar mañana temprano?', date: '2026-10-01', time: '' });
-            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno mañana temprano', windowStart: '2026-10-01T07:00', windowEnd: '2026-10-01T09:00' });
+            drafts.push({ text: 'Buenas! hay lugar mañana a las 8:05?', date: '2026-10-01', time: '08:05' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno mañana 8:05', date: '2026-10-01', time: '08:05' });
             clock = at('2026-09-30', '23:00');
-            await contactAnswers(db.getErrand(out.errandId), 'mañana 8:05', { kind: 'offer', slots: [{ date: '2026-10-01', time: '08:05' }], summary: 'Offers 8:05.', tellOwner: false });
+            await contactAnswers(db.getErrand(out.errandId), 'dale mañana 8:05', { kind: 'confirm', slots: [{ date: '2026-10-01', time: '08:05' }], summary: 'Confirms 8:05.', tellOwner: false });
             expect(db.getErrand(out.errandId).next_action).toBeNull();
             expect(deliver.mock.calls.filter(c => c[0] === 'approval').pop()[3].content).toMatch(/entre las 22 y las 8 no contesto por mi cuenta/);
             clock = at('2026-10-01', '08:00');
@@ -2019,10 +2025,10 @@ describe('errands', () => {
         });
 
         test('a slot right after 08:00, or one held only by the gap, comes to him with the true reason', async () => {
-            drafts.push({ text: 'Buenas! hay lugar mañana temprano?', date: '2026-10-01', time: '' });
-            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno mañana temprano', windowStart: '2026-10-01T07:00', windowEnd: '2026-10-01T09:00' });
+            drafts.push({ text: 'Buenas! hay lugar mañana a las 8:15?', date: '2026-10-01', time: '08:15' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno mañana 8:15', date: '2026-10-01', time: '08:15' });
             clock = at('2026-09-30', '23:00');
-            await contactAnswers(db.getErrand(out.errandId), 'mañana 8:15', offer('08:15', '2026-10-01'));
+            await contactAnswers(db.getErrand(out.errandId), 'dale mañana 8:15', { kind: 'confirm', slots: [{ date: '2026-10-01', time: '08:15' }], summary: 'Confirms 8:15.', tellOwner: false });
             expect(lastCard()).toMatch(/entre las 22 y las 8 no contesto por mi cuenta/);
         });
 
@@ -2339,8 +2345,8 @@ describe('errands', () => {
             await contactAnswers(db.getErrand(out.errandId), 'a las 10 tengo', offer('10:00'));
             expect(sends).toHaveLength(2);
             expect(inserted).toHaveLength(0);
-            // The card says why it asks: he already weighed in.
-            expect(lastCard()).toMatch(/ya me dijiste algo sobre este pedido, así que te pregunto antes/);
+            // The card says why it asks: a range always asks.
+            expect(lastCard()).toMatch(/está dentro de tu rango/);
         });
 
         test('his proposed slot in window mode becomes his slot, so her yes to it books', async () => {
@@ -2809,12 +2815,12 @@ describe('errands', () => {
             expect(prompt).toContain('any day Thu 08/10 to Fri 09/10, 09:00 to 12:00');
         });
 
-        test('"Thursday, any time" (the same hour at both ends) takes any time that day', async () => {
+        test('"Thursday, any time" (00:00 to 00:00) takes any time that day: her 10:00 is inside', async () => {
             drafts.push({ text: 'Buenas! hay lugar el jueves?', date: '2026-10-08', time: '' });
             const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves a cualquier hora', windowStart: '2026-10-08T00:00', windowEnd: '2026-10-09T00:00' });
             clock += 5 * 60e3;
-            const done = await contactAnswers(db.getErrand(out.errandId), 'jueves 10?', offer('10:00'));
-            expect(done.state).toBe('done');
+            await contactAnswers(db.getErrand(out.errandId), 'jueves 10?', offer('10:00'));
+            expect(lastCard()).toMatch(/está dentro de tu rango \(jue 08\/10, a cualquier hora\)/);
         });
 
         test('her "me fijo" right after her yes is told, so no later note surprises him', async () => {

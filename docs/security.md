@@ -441,8 +441,8 @@ An errand writes to one person from the owner's own WhatsApp
   `accept` and `propose` need an explicit date and time, so an approved
   card runs exactly what it showed. "cancelar" on an errand's card cancels
   the errand; "/cancel <id>" answers only the card.
-- **Steps inside his scope** (the contact confirms the slot he asked for, or
-  offers a free slot inside his window) run through `review()` with a
+- **Steps inside his scope** (the contact confirms the slot he asked for;
+  an offer inside a range always asks him) run through `review()` with a
   `grant`. The errand service vouches for the step with a random one-time
   token the model never sees (`grantCovers`), bound to the errand, the
   action and the slot. The step then runs like his own word: stored as

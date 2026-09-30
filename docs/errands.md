@@ -47,17 +47,18 @@ It never writes the message itself.
    real slots at least 15 minutes ahead. An offer sooner than that ("venite
    ya") reaches him as too soon to accept.
 4. **Deciding.** Code decides:
-   - the contact confirms the slot he asked for on his day, or (window
-     mode) offers a slot inside his window, and his calendar is free then:
-     Deedee answers on her own and books. Only until he decides otherwise:
+   - the contact confirms the slot he asked for on his day, and his
+     calendar is free then: Deedee answers on her own and books. A range
+     (window mode) never books on its own: every offer comes as a card that
+     says whether it is inside his range. Only until he decides otherwise:
      after his "no" to a card, any step of his (even one that failed to go
      out), a step of his on hold, a pause, or her own "no tengo lugar", the errand acts on nothing
      by itself (`auto_ok`) until a slot he proposed goes out. A card or a note
      he has not answered yet does not change this: her later yes to his own
      slot still books;
    - any other slot: a card for `answerErrand`, "sí" accepts it. The card
-     says why it asks: his calendar is busy then, the slot is outside his
-     window, or the day or time was one the draft picked, not he;
+     says why it asks: his calendar is busy then, the slot is inside or
+     outside his range, or the day or time was one the draft picked, not he;
    - a question, a refusal, an unclear answer: a note asks him;
    - small talk: nothing; news: a note. A note that asks him says so when
      a step that waited, or one he asked for, did not go out.

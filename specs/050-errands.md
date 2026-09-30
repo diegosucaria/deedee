@@ -26,7 +26,8 @@ Two modes, for `book` only:
 - `ask` (default): Deedee accepts, on her own, only the slot the owner asked
   for. Any other slot is his choice.
 - `window`: the owner gives a window ("any free slot Thursday 9 to 12").
-  Deedee accepts an offer inside it on her own when his calendar is free.
+  Every offer comes to him as a card that says whether it is inside the
+  window; a window never books on its own.
   A window over several days means those hours on each day.
 
 `send: false` only drafts the first message and shows it. Nothing goes out.
@@ -166,8 +167,9 @@ Errands add no new kind of card. They use the approval service as it is.
   that errand, so a bare yes has one card to decide, and the errand follows
   it.
 - **Steps inside his scope.** The contact confirms the slot he asked for,
-  or, in window mode, offers a slot inside the window that is free on his
-  calendar, and he has not decided otherwise since the slot was set
+  free on his calendar (a range, window mode, never books on its own: each
+  offer is a card; decided after round twenty-two, since every late high
+  fault was in ranges), and he has not decided otherwise since the slot was set
   (`auto_ok`: his "no" to a card, any step of his (even one that failed),
   a step of his on hold, a pause, or her "no tengo lugar" turn it off; a slot he proposed that goes out turns it
   on, and makes a window errand a slot errand). A card or note he has not
