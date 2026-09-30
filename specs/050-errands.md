@@ -146,7 +146,8 @@ Errands add no new kind of card. They use the approval service as it is.
   "dale, mandalo" is about the draft, never a job's card from the morning.
   A card that lands after the draft is the newest question, and a bare yes
   answers it. When his word reaches no card, the model hears which card
-  waits and tells him to reply `/confirm <id>`.
+  waits and tells him to reply `/confirm <id>`; asking for the same step
+  again raises no second card, and the model gets the id to give him.
 - **His choices.** A slot other than the one he asked for (ask mode), a
   question from the contact, a refusal, an unclear answer or a voice note
   Deedee cannot read. Deedee asks with a card for `answerErrand`. It reads
@@ -292,7 +293,7 @@ own.
 
 ## 12. Review
 
-Eight review rounds (security, the owner's real flows replayed message by
+Nine review rounds (security, the owner's real flows replayed message by
 message, regressions, and a check that each fix held) found real faults.
 Each fix has a test named after the fault in
 `apps/agent/tests/errands.test.js` ("review round one", "review round

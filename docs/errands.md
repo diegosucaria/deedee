@@ -76,9 +76,9 @@ A voice note it cannot read never lets the errand answer on its own, even
 when other messages in the same burst say yes: the step comes to him as a
 card or a note. News or a photo in the same burst as an answer reaches him
 in a note of its own. While a step he asked for waits for the contact's
-new words to be read, the errand accepts nothing on its own; a card, note or
-pause that drops his step names it. An `ask` errand ends on her answer, so
-it no longer holds her chat; a step of his that waited is named, and his own
+new words to be read, or waits on a card of his, the errand accepts nothing
+on its own; a card, note or pause that drops his step names it. An `ask` errand ends on her answer (or,
+when the answer needs him, with his follow-up), so it no longer holds her chat; a step of his that waited is named, and his own
 words can still go to her with `sendMessage`. A step on a closed errand gets
 no card. News or a photo goes out before the card it came with, so the card
 stays the newest question.

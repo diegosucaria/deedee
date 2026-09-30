@@ -535,8 +535,6 @@ class ApprovalService {
         this._recentPreviews = new Map();
         // chat id -> the card his bare yes or no just did not reach (undecidedCard).
         this._undecided = new Map();
-        // card id -> the run that last showed it again (_showAgain), so one run shows it once.
-        this._shownBy = new Map();
     }
 
     /** Remember what a two-step check step said it would do. */
@@ -870,16 +868,16 @@ class ApprovalService {
         // an errand's own run answers its own steps. A job, a watcher, a
         // sub-agent or a contact's chat gets no card: a card that looks like
         // his own question would send a third party's words from his account.
-        // A closed errand takes no step: no card that could never run.
-        if (toolName === 'answerErrand' && args?.action !== 'cancel' && typeof this.agent.errands?.isClosed === 'function' && this.agent.errands.isClosed(args?.id)) {
-            return { run: false, status: 'error', result: { error: `Errand #${args?.id} is closed. To pass on his exact words to that person now, use sendMessage with session 'user'.` } };
-        }
         if (ERRAND_TOOLS.has(toolName)) {
             const ownStep = toolName === 'answerErrand' && kind === 'errand' && Number(meta.errandId) === Number(args?.id);
             if (!ownStep && !(await this._ownerTypedRun(message, kind))) {
                 const error = ERRAND_REFUSED[toolName];
                 const row = this._record({ ...base, outcome: 'source_refused', decidedBy: 'rule', reason: error });
                 return { run: false, status: 'error', result: { error }, decisionId: row?.id };
+            }
+            // A closed errand takes no step: no card that could never run.
+            if (toolName === 'answerErrand' && args?.action !== 'cancel' && typeof this.agent.errands?.isClosed === 'function' && this.agent.errands.isClosed(args?.id)) {
+                return { run: false, status: 'error', result: { error: `Errand #${args?.id} is closed. To pass on his exact words to that person now, use sendMessage with session 'user'.` } };
             }
         }
 
@@ -962,15 +960,16 @@ class ApprovalService {
                 // He asked for it again in his own chat (a new run): the card shows
                 // again as the newest message, and this run's own reply after it
                 // does not count, so his next bare yes can decide it.
-                if (kind === 'chat' && run?.id && run.id !== existing.origin_meta?.cardRunId && this._shownBy.get(existing.id) !== run.id
-                    && (await this._ownerTypedRun(message, kind))) {
-                    this._shownBy.set(existing.id, run.id);
-                    await this._showAgain(existing, message, run.id);
-                }
                 const row = this._record({
                     ...withHits, outcome: 'escalated_duplicate', decidedBy: 'owner', approvalId: existing.id,
                     reason: 'A card for this action already waits for him.'
                 });
+                // He asked for it again in his own chat, but other messages came
+                // after the card, so a bare yes no longer reaches it: the model
+                // tells him the one answer that does.
+                if (kind === 'chat' && !continuationOf(message) && (await this._stillAsking(existing, message)) === false && (await this._ownerTypedRun(message, kind))) {
+                    return { run: false, status: 'paused', decisionId: row?.id, approvalId: existing.id, result: { info: `This exact step already waits on card ${existing.id}, and other messages came after it, so his short yes does not reach it. Do not call it again. Tell him, in his language, to reply /confirm ${existing.id} to do it, or /cancel ${existing.id} to drop it.` } };
+                }
                 // Our own rule text, never the stored card reason: that one can
                 // carry the guardian's words, which quote what a third party wrote.
                 return { run: false, status: 'paused', decisionId: row?.id, approvalId: existing.id, result: { info: pausedInfo(toolName, why || 'This action needs the owner\'s approval.', where, true) } };
@@ -1327,41 +1326,6 @@ class ApprovalService {
     }
 
     /**
-     * Post a waiting card again, unchanged, where it waits: other messages
-     * came after it, and he asked for the same step again.
-     */
-    async _showAgain(row, message, runId = null) {
-        try {
-            let others = this.db.listPendingConfirmations({ replyChatId: row.reply_chat_id }).filter(r => r.id !== row.id);
-            if (splitChannel(row.reply_channel).channel === 'whatsapp' && await this._isOwnerWaChat(row.reply_chat_id)) {
-                const seen = new Set([row.id, ...others.map(o => o.id)]);
-                for (const r of this.db.listPendingConfirmations()) {
-                    if (seen.has(r.id) || splitChannel(r.reply_channel).channel !== 'whatsapp') continue;
-                    if (await this._isOwnerWaChat(r.reply_chat_id)) others.push(r);
-                }
-            }
-            const outgoing = createAssistantMessage(this.buildCard(row, { others, origin: describeOrigin(message) }));
-            outgoing.source = row.reply_channel;
-            outgoing.metadata = {
-                chatId: row.reply_chat_id,
-                approval: { id: row.id, status: 'pending', toolName: row.tool_name, summary: row.summary, expiresAt: row.expires_at, mode: row.mode },
-                // The run that showed it again: its own reply after it does not count (_stillAsking).
-                ...(runId ? { shownRunId: String(runId) } : {})
-            };
-            if (row.mode === 'deferred') {
-                outgoing.metadata.session = 'assistant';
-                outgoing.isNotification = true;
-            }
-            try { this.db.saveMessage(outgoing); } catch (e) { console.warn('[Approvals] saveMessage failed:', e.message); }
-            await this._delivery().deliver('approval', row.reply_channel, row.reply_chat_id, outgoing, {
-                id: outgoing.id, origin: `approval:${row.id}`, expiresAt: row.expires_at, dedupe: false
-            });
-        } catch (e) {
-            console.warn(`[Approvals] could not show ${row.id} again: ${e.message}`);
-        }
-    }
-
-    /**
      * The owner typed this himself, in his own chat (Agent._ownerTyped): a
      * chat run, not a job's, and not a voice call (what he said never
      * reaches us as text).
@@ -1399,7 +1363,7 @@ class ApprovalService {
      * @param {{ message: object, toolName: string, args: object, reason: string, preview?: string|null }} p
      * @returns {Promise<{ paused: boolean, id?: string, result: object }>}
      */
-    async askOwner({ message, toolName, args, reason, preview = null, card = null, runId = null }) {
+    async askOwner({ message, toolName, args, reason, preview = null, card = null, runId = null, replaces = [] }) {
         const deny = this.rules.denyCheck(toolName, args, this.settings().deny);
         if (deny.denied) {
             return { paused: false, result: { error: `Blocked by the owner's deny-list (pattern "${deny.pattern}"). Nothing was sent.` } };
@@ -1413,7 +1377,7 @@ class ApprovalService {
         });
         return this.request({
             message, toolName, args, reason, taintSources: taintSources.length ? taintSources : null,
-            guardianDecisionId: row?.id || null, preview, card, ...(runId ? { extraMeta: { cardRunId: String(runId) } } : {})
+            guardianDecisionId: row?.id || null, preview, card, ...(runId ? { extraMeta: { cardRunId: String(runId) } } : {}), replaces
         });
     }
 
@@ -1802,26 +1766,17 @@ class ApprovalService {
                 try { ownerIds = [...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { ownerIds = []; }
             }
             const { rows, more } = this.db.listChatMessagesSince([row.reply_chat_id, chatId, ...ownerIds], row.created_at, { excludeId: message?.id || null });
-            const showing = (m) => m.role === 'assistant' && m.metadata?.approval?.id === row.id && m.metadata.approval.status === 'pending';
-            // Too many rows since the card, unless its latest showing is among the newest ones read.
-            if (more && !rows.some(showing)) return false;
+            if (more) return false;
             // A Telegram chat keeps no copy of a job's note or a reminder; the
             // delivery ledger does. Anything it took there after the card, but
             // the card's own delivery, counts.
-            const shownAt = [...rows].reverse().find(showing)?.timestamp || row.created_at;
             if (splitChannel(row.reply_channel).channel !== 'whatsapp' && typeof this.db.listOutboxSince === 'function'
-                && this.db.listOutboxSince([row.reply_chat_id, chatId], shownAt).some(d => d.origin !== `approval:${row.id}`)) return false;
+                && this.db.listOutboxSince([row.reply_chat_id, chatId], row.created_at).some(d => d.origin !== `approval:${row.id}`)) return false;
             const runId = row.origin_meta?.cardRunId || null;
-            // The card may have been shown again (_showAgain): count from its latest showing.
-            let from = 0;
-            rows.forEach((m, i) => { if (showing(m)) from = i; });
-            // The run that showed it again: its own words after it do not count.
-            const shownRun = rows[from]?.metadata?.shownRunId || null;
-            for (const m of rows.slice(from)) {
+            for (const m of rows) {
                 const meta = m.metadata || {};
                 if (m.role === 'user') {
                     if (meta.answeredCard || meta.answeredQuestion) continue;
-                    // His words that asked for the card again came before it was shown again.
                     return false;
                 }
                 if (meta.approval?.id === row.id || meta.aboutApproval === row.id) continue;
@@ -1831,7 +1786,6 @@ class ApprovalService {
                 // "Still working..." from the run that raised the card.
                 if (meta.progress && (!meta.turnRunId || meta.turnRunId === runId)) continue;
                 if (runId && meta.turnRunId === runId) continue;
-                if (shownRun && meta.turnRunId === shownRun) continue;
                 if (meta.question?.id && typeof this.db.getQuestionStatus === 'function' && this.db.getQuestionStatus(meta.question.id) === 'answered') continue;
                 return false;
             }

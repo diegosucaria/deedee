@@ -1164,6 +1164,10 @@ class ErrandService {
         }
         const es = lang === 'es';
         const shown = clip(text.replace(/\s*\[SPLIT\]\s*/g, ' / '), 160);
+        // He asked again for the same person: the new card replaces the old one,
+        // so a bare yes has one card to decide.
+        const same = (typeof this.db.listPendingConfirmations === 'function' ? this.db.listPendingConfirmations() : [])
+            .filter(r => r.tool_name === 'startErrand' && digitsOf(r.args?.contact) && digitsOf(r.args?.contact) === digitsOf(args.contact));
         const res = await approvals.askOwner({
             message: originMessage,
             toolName: 'startErrand',
@@ -1176,8 +1180,14 @@ class ErrandService {
                 lang,
                 denied: es ? 'Listo, no le escribo.' : 'OK, I won\'t write to them.'
             },
-            runId
+            runId,
+            replaces: same.map(r => r.id)
         });
+        if (res?.id) {
+            for (const r of same) {
+                try { approvals.withdraw?.(r.id, 'a newer card asks the same', { quiet: true }); } catch { /* the newer card still stands */ }
+            }
+        }
         return res.result || { info: 'Waiting for the owner.' };
     }
 
@@ -1555,8 +1565,9 @@ Answer in JSON.`;
         // "dale, te espero" with no time confirms what the errand last asked for, if that named a time.
         if (form.kind === 'confirm' && slots.length === 0 && errand.slot?.time && this._lastSentNamed(errand, errand.slot)) slots = [errand.slot];
         if ((form.kind === 'offer' || form.kind === 'confirm') && slots.length > 0) {
-            // His own step waits for these words: the errand does not answer over it.
-            const hisStepWaits = !!errand.next_action?.owner;
+            // His own step waits (for these words, or on his card at the gate):
+            // the errand does not answer over it.
+            const hisStepWaits = !!errand.next_action?.owner || !!this._hisPendingCard(errand);
             for (const s of slots) {
                 if (!hisStepWaits && await this._inScope(errand, s)) {
                     const step = form.kind === 'confirm' && sameSlot(s, errand.slot) ? 'thanks' : 'accept';
@@ -1794,6 +1805,16 @@ Answer in JSON.`;
             : errand.window_start ? zonedMs(errand.window_start.slice(0, 10), errand.window_start.slice(11), tz) : null;
         if (target === null) return slots[0];
         return [...slots].sort((a, b) => Math.abs(zonedMs(a.date, a.time, tz) - target) - Math.abs(zonedMs(b.date, b.time, tz) - target))[0];
+    }
+
+    /** A card of his own (his word at the gate) still waiting on this errand, or null. */
+    _hisPendingCard(errand) {
+        try {
+            const rows = typeof this.db.listPendingConfirmations === 'function' ? this.db.listPendingConfirmations() : [];
+            return rows.find(r => r.tool_name === 'answerErrand' && Number(r.args?.id) === Number(errand.id) && r.origin_meta?.ownerChat === true) || null;
+        } catch {
+            return null;
+        }
     }
 
     /** His step, in his words: what he asked to say, or the slot he asked to accept or propose. */
@@ -2090,6 +2111,15 @@ Answer in JSON.`;
             if (notify) await this._notify(errand, line);
             return { success: true, errandId: errand.id, info: line, ownerLine: line };
         }
+        // An ask errand she already answered ends with his follow-up: it no
+        // longer holds her chat, and no "has not answered" note can follow.
+        if (args.action === 'say' && errand.goal === 'ask' && errand.last_contact_at) {
+            const closed = this._close(errand.id, 'done', 'answered');
+            if (closed) this._event(errand.id, 'closed', { state: 'done' });
+            const line = t.told(name, said);
+            if (notify) await this._notify(errand, line);
+            return { success: true, errandId: errand.id, info: line, ownerLine: line };
+        }
         // propose or say: back to waiting for them. After a free-form "say"
         // the slot on the table is no longer known.
         const moved = args.action === 'propose'
@@ -2216,7 +2246,8 @@ Answer in JSON.`;
             this.db.updateErrand(errand.id, { next_action: null, next_check_at: null });
             const { step, ...args } = action;
             const fresh = this.db.getErrand(errand.id);
-            if (!(await this._inScope(fresh, { date: args.date, time: args.time }))) return this._askAccept(fresh, [{ date: args.date, time: args.time }]);
+            // He asked for something else meanwhile (his card waits): he decides; the card names his step.
+            if (this._hisPendingCard(fresh) || !(await this._inScope(fresh, { date: args.date, time: args.time }))) return this._askAccept(fresh, [{ date: args.date, time: args.time }]);
             return this._runAuto(fresh, args, step || null);
         }
         // No answer for hours: tell him once. Deedee never writes again on
@@ -2301,7 +2332,7 @@ Answer in JSON.`;
             for (const c of cards) {
                 const a = c.args || {};
                 // His words in full: a cut text would make a different call, and a new card.
-                const step = a.action === 'say' ? `say ${JSON.stringify(String(a.text || ''))}` : `${a.action}${a.date ? ` ${a.date}` : ''}${a.time ? ` ${a.time}` : ''}`;
+                const step = a.action === 'say' ? `say ${JSON.stringify(String(a.text || '').slice(0, 600))}` : `${a.action}${a.date ? ` ${a.date}` : ''}${a.time ? ` ${a.time}` : ''}`;
                 bits.push(`card ${c.id} waits for his yes: ${step}`);
             }
             if (e.offer) bits.push(`on the table: ${fmtSlot(e.offer, tz)} (date ${e.offer.date}, time ${e.offer.time})`);

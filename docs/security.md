@@ -287,10 +287,9 @@ Anything else may be what his word answers: his words to the model and the
 reply to them (a run resumed after another card included), a job's note or
 a reminder (it may ask something; on Telegram, which keeps no copy of them,
 the delivery ledger shows what went there after the card), a question that
-lapsed, another card. A card counts from its latest showing: when a new run
-of his own typed chat asks for a step whose card already waits, the card is
-posted again (`_showAgain`, once per run), that run's own reply after it
-does not count (`shownRunId`), and his next bare yes decides it. Known
+lapsed, another card. When his own chat asks again for a step whose card
+waits but no longer reads as the question, no second card is raised: the
+model is told the card's id and tells him to reply `/confirm <id>`. Known
 limit: on Telegram, a picture or voice note a job sends directly leaves no
 trace to check, so it does not count. So after he asks for a draft and
 Deedee shows it, "dale, mandalo" answers the draft, never a job's card from
