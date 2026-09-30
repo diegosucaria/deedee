@@ -267,7 +267,8 @@ class ConfirmationManager {
                 // (services/errands.js). His word in his own clean chat
                 // covers it (OUTWARD_RULES); anywhere else it asks.
                 id: 'errand-send',
-                condition: (name, args) => name === 'startErrand' || (name === 'answerErrand' && asString(args.action) !== 'cancel'),
+                condition: (name, args) => (name === 'startErrand' && args.send !== false)
+                    || (name === 'answerErrand' && asString(args.action) !== 'cancel'),
                 message: 'An errand writes to someone from the owner\'s own WhatsApp.'
             },
             {

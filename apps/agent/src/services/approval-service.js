@@ -35,6 +35,11 @@ const { isLiveSource } = require('./ask-user');
 const { TurnTaint, classifyToolResult } = require('../utils/untrusted-content');
 const { isTwoStepTool, isPreviewCall, stepKey, parseToolOutput } = require('../utils/two-step-tools');
 const { GuardianService, DRY_RUN_USAGE_TAG, SYSTEM_INSTRUCTION: GUARDIAN_SYSTEM_INSTRUCTION } = require('./guardian-service');
+
+/** Spanish or English, from the owner's own words (the same test errands use). */
+function langOf(text) {
+    return /[ñ¿¡áéíóú]|\b(?:el|la|los|las|que|para|con|por|turno|mañana|hoy|decile|pedile|preguntale|hola|si|no)\b/i.test(String(text || '')) ? 'es' : 'en';
+}
 // The shell's own check: the gate asks it before any rule, so it never
 // raises a card for a command no approval could make run.
 const { shellRefusal } = require('@deedee/mcp-servers/src/local/index');
@@ -369,6 +374,37 @@ function sameArgs(a, b) {
     try { return stableJson(a ?? {}) === stableJson(b ?? {}); } catch { return false; }
 }
 
+/**
+ * The "What" line of an errand card the gate raises (his always-ask list, a
+ * run that read someone else's text): the whole request, never an
+ * 80-character cut that could hide the end of it.
+ */
+/** A plain card for an errand step the gate holds, in the owner's language. */
+function errandCard(toolName, args, lang) {
+    const es = lang === 'es';
+    const what = errandPreview(toolName, args);
+    if (!what) return null;
+    return {
+        question: es ? '¿Lo hago?' : 'Go ahead?',
+        detail: `${what}. ${es ? 'Tu chat tiene palabras de otra persona (o lo pediste siempre), así que te pregunto antes.' : 'Your chat holds someone else\'s words (or you asked to approve these), so I ask first.'}`,
+        lang: es ? 'es' : 'en',
+        denied: es ? 'Listo, no lo hago.' : 'OK, I won\'t.'
+    };
+}
+
+function errandPreview(toolName, args) {
+    const a = args && typeof args === 'object' ? args : {};
+    const flat = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
+    if (toolName === 'startErrand') {
+        const when = a.date ? ` on ${flat(a.date)}${a.time ? ` ${flat(a.time)}` : ''}` : (a.windowStart ? ` between ${flat(a.windowStart)} and ${flat(a.windowEnd)}` : '');
+        return `Write to ${flat(a.contact)} as you (${flat(a.goal)}${when}): "${flat(a.request)}"${a.text ? `, with the text "${flat(a.text)}"` : ''}${a.send === false ? ' (draft only)' : ''}`;
+    }
+    if (toolName === 'answerErrand') {
+        return `Errand #${flat(a.id)}: ${flat(a.action)}${a.date ? ` ${flat(a.date)}` : ''}${a.time ? ` ${flat(a.time)}` : ''}${a.text ? `, saying "${flat(a.text)}"` : ''}`;
+    }
+    return null;
+}
+
 /** What the model reads when a call waits for the owner. No id: nothing for it to repeat. */
 function pausedInfo(toolName, why, where, delivered) {
     return `Action PAUSED: '${toolName}' waits for the owner's approval. ${why || ''} ` +
@@ -672,8 +708,11 @@ class ApprovalService {
                 this._broadcast({ id: r.id, status: 'expired', chatId: r.reply_chat_id, toolName: r.tool_name });
                 // The card sits in a chat he reads: say it is settled, or it keeps
                 // asking for an answer that would do nothing.
+                // An errand card needs no line: the errand's newer card or note says what changed.
+                if (done.origin_meta?.errandId !== undefined || done.origin_meta?.card) continue;
                 const target = { channel: done.reply_channel || 'whatsapp', chatId: done.reply_chat_id };
-                this._deliverTo(target, `No longer needed: ${done.tool_name} already ran.`, done)
+                const line = why === 'the same action ran' ? `No longer needed: ${done.tool_name} already ran.` : `No longer needed (${done.id}): ${why}.`;
+                this._deliverTo(target, line, done)
                     .catch(e => console.warn(`[Approvals] could not close the card ${r.id}: ${e.message}`));
             } catch (e) {
                 console.warn(`[Approvals] could not supersede ${r.id}: ${e.message}`);
@@ -808,6 +847,10 @@ class ApprovalService {
         };
 
         if (run?.stopped) return this._breakerStop(base);
+        // Only his own chat starts an errand (executors/errands.js): a card here could never work.
+        if (toolName === 'startErrand' && kind !== 'chat') {
+            return { run: false, status: 'error', result: { error: 'An errand starts only from the owner\'s own chat.' } };
+        }
 
         const guard = this.check(toolName, args, { taint, serverName });
         if (guard.outcome === 'shell_refused') {
@@ -949,10 +992,13 @@ class ApprovalService {
         });
         const preview = isTwoStepTool(toolName, serverName)
             ? (run?.previews?.get?.(stepKey(toolName, args)) || this.previewFor(toolName, args) || null)
+            : (ERRAND_TOOLS.has(toolName) ? errandPreview(toolName, args) : null);
+        const card = ERRAND_TOOLS.has(toolName)
+            ? errandCard(toolName, args, langOf(`${args?.request || ''} ${args?.text || ''} ${typeof message?.content === 'string' ? message.content : ''}`))
             : null;
         const paused = await this.request({
             message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null,
-            modelReason: why || null, guardianDecisionId: row?.id || null, ownerConsent: ownerAsked, preview
+            modelReason: why || null, guardianDecisionId: row?.id || null, ownerConsent: ownerAsked, preview, card
         });
         // Only once this card exists: the older ones it replaces can go.
         if (paused.paused) this._supersede(same.filter(r => r.id !== paused.id), 'a newer card asks for the same action');
@@ -1085,7 +1131,8 @@ class ApprovalService {
         };
         if (cover === 'run') return { outcome: 'owner_instructed', ...base, guardian: null, executed: false };
         if (cover === 'ask') return { outcome: 'escalated', ...base, guardian: null, executed: false };
-        const verdict = this.guardian && !guard.preview ? await this.guardian.judge({
+        // Errand steps are the owner's to decide: the real gate never asks the guardian.
+        const verdict = this.guardian && !guard.preview && !ERRAND_TOOLS.has(name) ? await this.guardian.judge({
             toolName: name, args: safeArgs, sourceKind: runKind, ownerMessage: ownerMessage ? String(ownerMessage) : null,
             jobName: jobName ? String(jobName) : null, ruleReason: guard.message || null, taintSources: sources,
             excerpt: taint ? taint.excerpt : (excerpt ? String(excerpt) : null), floor: hits.floor, alwaysAsk: hits.additions,
@@ -1304,7 +1351,7 @@ class ApprovalService {
         // resumes after his approval keeps that (see _ownerConsent).
         if (ownerConsent === true) originMeta.ownerConsent = true;
         // What the preview step said this call will do, for the card.
-        if (typeof preview === 'string' && preview.trim()) originMeta.preview = truncate(preview.trim(), SUMMARY_CHARS);
+        if (typeof preview === 'string' && preview.trim()) originMeta.preview = truncate(preview.trim(), ERRAND_TOOLS.has(toolName) ? 640 : SUMMARY_CHARS);
         // A question in plain words (an errand's next step): the card shows
         // it instead of the tool, the arguments and the safety lines.
         if (card && typeof card === 'object' && typeof card.question === 'string') {
@@ -1337,7 +1384,15 @@ class ApprovalService {
             }
         }
 
-        const others = this.db.listPendingConfirmations({ replyChatId: route.replyChatId }).filter(r => r.id !== row.id);
+        let others = this.db.listPendingConfirmations({ replyChatId: route.replyChatId }).filter(r => r.id !== row.id);
+        // His WhatsApp chat can carry two ids; a bare yes counts cards under both, so the card does too.
+        if (splitChannel(route.replyChannel).channel === 'whatsapp' && await this._isOwnerWaChat(route.replyChatId)) {
+            const seen = new Set([row.id, ...others.map(o => o.id)]);
+            for (const r of this.db.listPendingConfirmations()) {
+                if (seen.has(r.id) || splitChannel(r.reply_channel).channel !== 'whatsapp') continue;
+                if (await this._isOwnerWaChat(r.reply_chat_id)) others.push(r);
+            }
+        }
         const outgoing = createAssistantMessage(this.buildCard(row, { others, origin: describeOrigin(message), ttlMs }));
         outgoing.source = route.replyChannel;
         outgoing.metadata = {
@@ -1571,7 +1626,7 @@ class ApprovalService {
         // everyday word. A bare yes decides it only while the card is the
         // last thing Deedee said here; otherwise the model reads the word in
         // its context (he may be answering a later question).
-        if (pending[0].origin_meta?.errandId !== undefined && !this._isNewestInChat(pending[0], chatId)) return null;
+        if (pending[0].origin_meta?.errandId !== undefined && !(await this._isNewestInChat(pending[0], chatId))) return null;
         const decision = decisionWord(text, { toolName: pending[0].tool_name });
         if (!decision) return null;
         if (await this._questionOpen(message)) return null;
@@ -1582,16 +1637,18 @@ class ApprovalService {
         return this.decide(pending[0].id, decision, { via: 'chat', message, sendCallback });
     }
 
-    /** Is this card the newest message Deedee wrote in the chat? Unknown counts as no. */
-    _isNewestInChat(row, chatId) {
-        if (typeof this.db?.getRecentMessageOrigins !== 'function') return false;
+    /**
+     * Is this card the newest message Deedee wrote to him? His WhatsApp chat
+     * can carry several ids (his number, his WhatsApp ID), so all of them
+     * count. Unknown counts as no.
+     */
+    async _isNewestInChat(row, chatId) {
+        if (typeof this.db?.getLatestAssistantMessage !== 'function') return false;
         try {
-            const rows = this.db.getRecentMessageOrigins(String(chatId), 20);
-            const newest = rows.find(r => r.role === 'assistant');
-            if (!newest) return false;
-            let meta = newest.metadata;
-            if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = null; } }
-            return meta?.approval?.id === row.id;
+            let ownerIds = [];
+            try { ownerIds = [...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { ownerIds = []; }
+            const newest = this.db.getLatestAssistantMessage([row.reply_chat_id, chatId, ...ownerIds]);
+            return !!newest && newest.metadata?.approval?.id === row.id;
         } catch {
             return false;
         }
@@ -1825,5 +1882,5 @@ module.exports = {
     ApprovalService, normalizeApprovalSettings, decisionWord, normalizeWord, summarizeArgs, summarizeResult,
     splitPatterns, envDenyPatterns, isUnattendedRun, DEFAULTS, APPROVE_WORDS, DENY_WORDS, SWEEP_MS,
     sourceKind, describeTarget, redactTarget, BREAKER_DENIALS, callFailed, failedStatus,
-    APPROVAL_CONTINUATION, continuationOf, consentCover, approvedResultText, SAFETY_RULES, OUTWARD_RULES
+    APPROVAL_CONTINUATION, continuationOf, consentCover, approvedResultText, SAFETY_RULES, OUTWARD_RULES, errandPreview, errandCard
 };

@@ -759,6 +759,7 @@ class AgentDB {
         next_action TEXT,
         slot_owned INTEGER NOT NULL DEFAULT 0,
         read_through INTEGER NOT NULL DEFAULT 0,
+        lang TEXT,
         request_tainted INTEGER NOT NULL DEFAULT 0,
         grace_until TEXT,
         origin_chat_id TEXT,
@@ -2852,6 +2853,22 @@ class AgentDB {
       ORDER BY timestamp DESC, rowid DESC
       LIMIT ?
     `).all(chatId, Math.max(1, Math.min(200, Number(limit) || 100)));
+  }
+
+  /** The newest assistant row across these chat ids (one person's chat can carry several ids), or null. */
+  getLatestAssistantMessage(chatIds = []) {
+    const ids = [...new Set((chatIds || []).filter(Boolean).map(String))];
+    if (ids.length === 0) return null;
+    const row = this.db.prepare(`
+      SELECT id, chat_id, timestamp, metadata FROM messages
+      WHERE role = 'assistant' AND chat_id IN (${ids.map(() => '?').join(', ')})
+      ORDER BY timestamp DESC, rowid DESC
+      LIMIT 1
+    `).get(...ids);
+    if (!row) return null;
+    let metadata = null;
+    try { metadata = row.metadata ? JSON.parse(row.metadata) : null; } catch { metadata = null; }
+    return { ...row, metadata };
   }
 
   /** The newest role-user rows of one chat, newest first: { id, content }. */
@@ -5391,14 +5408,14 @@ class AgentDB {
     const info = this.db.prepare(`
       INSERT INTO errands (goal, mode, state, contact_jid, contact_ids, contact_name, person_id, request, slot,
         window_start, window_end, event_title, location, duration_min, origin_chat_id, origin_source,
-        expires_at, created_at, updated_at, slot_owned, request_tainted)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        expires_at, created_at, updated_at, slot_owned, request_tainted, lang)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(fields.goal, fields.mode || 'ask', fields.state || 'waiting_contact', fields.contactJid,
       JSON.stringify(fields.contactIds || []), fields.contactName || null, fields.personId || null, fields.request,
       json(fields.slot), fields.windowStart || null, fields.windowEnd || null, fields.eventTitle || null,
       fields.location || null, Number.isFinite(fields.durationMin) ? fields.durationMin : null,
       fields.originChatId || null, fields.originSource || null, fields.expiresAt, now, now,
-      fields.slotOwned ? 1 : 0, fields.requestTainted ? 1 : 0);
+      fields.slotOwned ? 1 : 0, fields.requestTainted ? 1 : 0, fields.lang || null);
     return this.getErrand(info.lastInsertRowid);
   }
 
@@ -5444,8 +5461,8 @@ class AgentDB {
    * Close an open errand. Only the first caller wins: the update is guarded
    * on closed_at, so a sweep and an owner's cancel cannot both close it.
    */
-  closeErrand(id, state, reason = null) {
-    const now = new Date().toISOString();
+  closeErrand(id, state, reason = null, { now: at = null } = {}) {
+    const now = at || new Date().toISOString();
     const res = this.db.prepare(`
       UPDATE errands SET state = ?, closed_at = ?, close_reason = ?, pending_approval_id = NULL, next_action = NULL, next_check_at = NULL, updated_at = ?
       WHERE id = ? AND closed_at IS NULL

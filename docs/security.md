@@ -389,15 +389,20 @@ An errand writes to one person from the owner's own WhatsApp
   start one (`ownerTyped`): a job, a watcher, a sub-agent, a voice call or a
   contact's chat is refused, even with a card. If he never wrote to that
   person, a card for `startErrand` asks first. An errand never writes to his
-  own lines or to Deedee's number (a message from his account to hers would
-  arrive as his word). A request written in a tainted run is marked
-  (`request_tainted`) and never shown back as his words.
+  own lines or to Deedee's number or WhatsApp ID (a message from his account
+  to hers would arrive as his word); with her number unknown, no errand
+  starts. A request written in a tainted run is marked (`request_tainted`)
+  and never shown back as his words. A draft (`send: false`) is not an
+  outward action. A job, a watcher or a sub-agent calling `startErrand` is
+  refused at the gate, with no card.
 - **His choices** (another slot, a question, a refusal) come as a card for
   `answerErrand` through `ApprovalService.askOwner`: no rule and no guardian,
   the deny-list still applies. The card reads as a plain question in his
   language (`origin_meta.card`). A bare yes decides an errand card only
   while it is the last thing Deedee said in that chat (`_isNewestInChat`):
-  "dale" is his everyday word. A card for an older offer cannot answer a
+  "dale" is his everyday word; the check covers every id his chat carries.
+  A card the gate raises for an errand step is a plain question with the
+  whole request, and the errand follows it. A card for an older offer cannot answer a
   newer one: the errand withdraws it (`ApprovalService.withdraw`) and checks
   the approval id when it runs. `accept` and `propose` need an explicit date
   and time, so an approved card runs exactly what it showed.

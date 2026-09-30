@@ -44,6 +44,14 @@ describe('errands in shared places', () => {
         expect(OUTWARD_RULES.has('errand-send')).toBe(true);
     });
 
+    test('every tool the errand rules name exists', () => {
+        const { toolDefinitions } = require('../src/tools-definition');
+        const names = new Set(toolDefinitions.flatMap(d => d.functionDeclarations || []).map(t => t.name));
+        const named = [...ERRAND_RULES.matchAll(/'([a-z]+[A-Z][a-zA-Z]+)'/g)].map(m => m[1]);
+        expect(named.length).toBeGreaterThan(3);
+        for (const name of named) expect(names.has(name)).toBe(true);
+    });
+
     test('the guardian history knows errand runs', () => {
         expect(SOURCE_KINDS).toContain('errand');
     });

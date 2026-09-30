@@ -1416,6 +1416,8 @@ class WhatsAppService {
         if (me) {
             formattedMe = {
                 id: me.id.split(':')[0].split('@')[0],
+                // The account's WhatsApp ID: an errand must never write to it either.
+                ...(me.lid ? { lid: String(me.lid).split(':')[0].split('@')[0] } : {}),
                 name: me.name
             };
         }

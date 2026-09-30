@@ -72,7 +72,7 @@ States:
 |---|---|
 | `waiting_contact` | A message went out; waiting for the contact |
 | `waiting_owner` | A choice is his: a card or a question waits for him |
-| `paused` | A limit was hit or a message could not go out. Nothing happens until he says so |
+| `paused` | A limit was hit or a message could not go out. It keeps the chat (no watcher books meanwhile); nothing happens until he says so |
 | `done`, `cancelled`, `expired`, `failed` | Closed |
 
 A `tell` errand closes as soon as its message goes out. When he writes in
@@ -126,7 +126,9 @@ Errands add no new kind of card. They use the approval service as it is.
   approval: it runs, and the first message goes out with no card. Otherwise
   it asks once. The first message to someone he has never written to also
   asks first. A request written in a run that read someone else's text is
-  marked, and never shown back as his words.
+  marked, and never shown back as his words. A draft (`send: false`) sends
+  nothing, so it is not an outward action. A job, a watcher or a sub-agent
+  that tries to start one is refused at the gate, with no card.
 - **Who may start one.** Only the owner, from his own chat or the web.
   Jobs, watchers, sub-agents and contacts cannot. `startErrand` and
   `answerErrand` count as "Message a contact" on his always-ask list.
@@ -137,8 +139,11 @@ Errands add no new kind of card. They use the approval service as it is.
   his language, without the tool name or the safety lines. "sí" runs it,
   "no" sends nothing, and other words go to the model, which calls
   `answerErrand` with an explicit date and time. A bare yes decides an
-  errand card only while the card is the last thing Deedee said in that
-  chat.
+  errand card only while the card is the last thing Deedee said to him
+  (under any of his chat ids). When the gate itself holds an errand step
+  (someone else's words in his chat, or his always-ask list), its card is a
+  plain question too, with the whole request, and the errand follows that
+  newer card.
 - **Steps inside his scope.** The contact confirms the slot he asked for,
   or, in window mode, offers a slot inside the window that is free on his
   calendar. The errand runs `answerErrand` through the same gate with an
@@ -156,9 +161,11 @@ Code enforces these, not the prompt.
 1. **Scope is fixed at the start:** one contact, one goal, a slot or a
    window, an end date. Only the owner changes it. The model never picks
    the recipient of an errand message: code takes it from the errand row.
-   An errand never writes to the owner's own lines or to Deedee's number: a
-   message from his account to hers would arrive as his own word. The
-   resolver's guess by the last digits counts only for the same line.
+   An errand never writes to the owner's own lines or to Deedee's number or
+   WhatsApp ID: a message from his account to hers would arrive as his own
+   word. When her number cannot be known (her session is down), no errand
+   starts. The resolver's guess by the last digits counts only for the
+   same line.
 2. **The contact's text is data.** A model with no tools reads it and fills
    a fixed JSON form (`offer`, `confirm`, `decline`, `question`, `answer`,
    `other`, with slots). Code checks the form: real dates, in the future,
@@ -198,9 +205,9 @@ Code enforces these, not the prompt.
 | Messages it sends on its own per errand | 4 (one message may be 2 short parts); then every step asks |
 | All messages per errand | 10; then it pauses |
 | Gap between its own messages | at least 1 minute |
-| Quiet hours | 22:00-08:00 local: nothing goes out on its own; a step waits until 08:00 |
+| Quiet hours | 22:00-08:00 local: nothing goes out on its own and no note that can wait is sent; a step waits until 08:00 |
 | No answer from the contact | the owner hears after 4 hours; Deedee never writes again on her own |
-| Life of an errand | until the booked slot, 7 days at most |
+| Life of an errand | until the slot's day, 7 days at most; a new day he proposes moves it |
 | Model calls per errand | 20; then it pauses and tells him |
 | Messages from the contact | 60 per errand; then it pauses |
 | Message length | 160 characters, 2 lines |
@@ -256,7 +263,8 @@ and starting an errand from a job or a watcher.
 
 ## 12. Review
 
-The first review round (security, the owner's real flows, regressions) found
-real faults. Each fix has a test named after the fault in
-`apps/agent/tests/errands.test.js` ("review round one") and
-`apps/agent/tests/errands-wiring.test.js`.
+Two review rounds (security, the owner's real flows replayed message by
+message, regressions, and a check that each fix held) found real faults.
+Each fix has a test named after the fault in
+`apps/agent/tests/errands.test.js` ("review round one", "review round
+two") and `apps/agent/tests/errands-wiring.test.js`.

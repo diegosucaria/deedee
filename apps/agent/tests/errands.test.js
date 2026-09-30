@@ -613,11 +613,10 @@ describe('errands', () => {
 
     describe('review round one', () => {
         test('an errand never writes to Deedee\'s own number or to the owner\'s lines', async () => {
-            for (const n of [DEEDEE, OWNER]) {
-                const out = await service.start({ contact: n, goal: 'tell', request: 'que llego tarde' });
-                expect(out.success).toBe(false);
-                expect(out.error).toMatch(/never writes there/);
-            }
+            const deedee = await service.start({ contact: DEEDEE, goal: 'tell', request: 'que llego tarde' });
+            expect(deedee.error).toMatch(/Deedee's own number/);
+            const owner = await service.start({ contact: OWNER, goal: 'tell', request: 'que llego tarde' });
+            expect(owner.error).toMatch(/owner's own number/);
             expect(sends).toHaveLength(0);
         });
 
@@ -658,6 +657,7 @@ describe('errands', () => {
                 if (url.endsWith('/whatsapp/history')) return { data: chat };
                 if (url.endsWith('/whatsapp/resolve')) return { data: { phoneJid: '5490000000555@s.whatsapp.net', lid: '100000000000099@lid', name: 'Stranger', allJids: ['5490000000555@s.whatsapp.net', '100000000000099@lid'] } };
                 if (url.endsWith('/whatsapp/style-stats')) return { data: STATS };
+                if (url.endsWith('/whatsapp/status')) return { data: { assistant: { me: { id: DEEDEE } } } };
                 return { data: {} };
             });
             drafts.push(draftAnswer('request'));
@@ -767,7 +767,7 @@ describe('errands', () => {
             clock += 60e3;
             service.claim(contactWrites('perdón, a las 11?'), { contactString: CONTACT });
             await service.flush(errand.id);
-            const note = notes().find(n => /escribió de nuevo después del turno/.test(n.content));
+            const note = notes().find(n => /escribió de nuevo después de reservar/.test(n.content));
             expect(note.metadata.jobTaint).toHaveLength(1);
             expect(sends).toHaveLength(2);
         });
@@ -943,6 +943,30 @@ describe('errands', () => {
             expect(db.getPendingConfirmation(card.id).status).toBe('pending');
         });
 
+        test('Deedee\'s later question counts even when his chat carries another id (his WhatsApp ID)', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', { kind: 'offer', slots: [{ date: '2026-10-08', time: '10:30' }], summary: 'Offers 10:30.', tellOwner: false });
+            const card = pendingCards()[0];
+            const ownerLid = '100000000000099@lid';
+            agent._getOwnerWaIds = async () => new Set([`${OWNER}@s.whatsapp.net`, ownerLid]);
+            db.saveMessage({ id: 'later-q2', role: 'assistant', content: '¿Apago las luces?', source: 'whatsapp', chatId: ownerLid, timestamp: new Date(Date.now() + 1000).toISOString() });
+            const res = await approvals.intercept({ source: 'whatsapp', content: 'dale', metadata: { chatId: ownerLid } }, jest.fn());
+            expect(res).toBeNull();
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+        });
+
+        test('a bare "sí" right after the card decides it, from either of his ids', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', { kind: 'offer', slots: [{ date: '2026-10-08', time: '10:30' }], summary: 'Offers 10:30.', tellOwner: false });
+            const ownerLid = '100000000000099@lid';
+            agent._getOwnerWaIds = async () => new Set([`${OWNER}@s.whatsapp.net`, ownerLid]);
+            const res = await approvals.intercept({ source: 'whatsapp', content: 'sí', metadata: { chatId: ownerLid } }, jest.fn());
+            expect(res).toBeTruthy();
+            expect(sends.map(s => s.content)).toContain('dale, 10:30 voy');
+        });
+
         test('with foreign words in his chat, starting an errand asks once; in his clean chat it runs', async () => {
             const ownerMsg = { source: 'whatsapp', role: 'user', content: 'pedile turno', metadata: { chatId: `${OWNER}@s.whatsapp.net` } };
             const args = { contact: CONTACT, goal: 'book', request: 'turno' };
@@ -976,6 +1000,331 @@ describe('errands', () => {
             });
             expect(judge).not.toHaveBeenCalled();
             expect(res.run).toBe(false);
+        });
+    });
+
+    describe('review round two', () => {
+        const withStatus = (status) => {
+            const base = axios.get.getMockImplementation();
+            axios.get.mockImplementation(async (url, opts) => (url.endsWith('/whatsapp/status') ? { data: status } : base(url, opts)));
+        };
+
+        test('with Deedee\'s number unknown (her session down), no errand starts', async () => {
+            withStatus({ assistant: { status: 'connecting', me: null } });
+            const out = await service.start({ contact: CONTACT, goal: 'tell', request: 'que llego tarde' });
+            expect(out.success).toBe(false);
+            expect(out.error).toMatch(/cannot check Deedee's own number/);
+            expect(sends).toHaveLength(0);
+        });
+
+        test('Deedee\'s WhatsApp ID is refused like her number', async () => {
+            withStatus({ assistant: { me: { id: DEEDEE, lid: '100000000000011' } } });
+            const out = await service.start({ contact: '100000000000011@lid', goal: 'tell', request: 'hola' });
+            expect(out.error).toMatch(/Deedee's own number/);
+        });
+
+        test('a person allowed to talk to Deedee can still get an errand', async () => {
+            process.env.ALLOWED_WHATSAPP_NUMBERS = `${OWNER},${CONTACT}`;
+            try {
+                const out = await service.start({ contact: CONTACT, goal: 'tell', request: 'que llego tarde' });
+                expect(out.success).toBe(true);
+            } finally {
+                delete process.env.ALLOWED_WHATSAPP_NUMBERS;
+            }
+        });
+
+        test('a reply stored but not read (a failed history read) is read by the next sweep', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            const base = axios.get.getMockImplementation();
+            let failOnce = true;
+            axios.get.mockImplementation(async (url, opts) => {
+                if (url.endsWith('/whatsapp/history') && failOnce) { failOnce = false; throw new Error('socket hang up'); }
+                return base(url, opts);
+            });
+            forms.push({ kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirmed.', tellOwner: false });
+            service.claim(contactWrites('te espero jueves 10'), { contactString: CONTACT });
+            await service.flush(errand.id);
+            expect(db.getErrand(errand.id).state).toBe('waiting_contact');
+            await service.sweep();
+            expect(db.getErrand(errand.id).state).toBe('done');
+        });
+
+        test('the catch-up does not store a voice note the hook already transcribed', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            forms.push({ kind: 'other', slots: [], summary: 'x', tellOwner: false });
+            service.claim({ source: 'whatsapp:user', content: '', parts: [{ inlineData: { mimeType: 'audio/ogg', data: 'AAAA' } }], timestamp: new Date(clock).toISOString(), metadata: { phoneNumber: CONTACT } }, { contactString: CONTACT });
+            chat.push({ role: 'user', content: '[Audio Message]', timestamp: clock - 800, id: 'A9', fromMe: false });
+            await service.flush(errand.id);
+            clock += CATCHUP;
+            await service.sweep();
+            expect(db.listErrandEvents(errand.id).filter(e => e.kind === 'received')).toHaveLength(1);
+        });
+
+        test('his approved step that waited for new words tells him when it goes out', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', { kind: 'offer', slots: [{ date: '2026-10-08', time: '10:30' }], summary: 'Offers 10:30.', tellOwner: false });
+            service.bufferMs = 60e3;
+            clock += 1000;
+            service.claim(contactWrites('jaja'), { contactString: CONTACT });
+            const res = await service.answer({ id: errand.id, action: 'accept', date: '2026-10-08', time: '10:30' }, { byOwner: true });
+            expect(res).toMatchObject({ success: true, deferred: true });
+            forms.push({ kind: 'other', slots: [], summary: 'Laughs.', tellOwner: false });
+            await service.flush(errand.id);
+            expect(notes().some(n => /Listo: turno con Alice el jue 08\/10 10:30/.test(n.content))).toBe(true);
+        });
+
+        test('news while his step waits holds the step and asks him again', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', { kind: 'offer', slots: [{ date: '2026-10-08', time: '10:30' }], summary: 'Offers 10:30.', tellOwner: false });
+            service.bufferMs = 60e3;
+            clock += 1000;
+            service.claim(contactWrites('ojo que el corte sale el doble'), { contactString: CONTACT });
+            await service.answer({ id: errand.id, action: 'accept', date: '2026-10-08', time: '10:30' }, { byOwner: true });
+            forms.push({ kind: 'other', slots: [], summary: 'The price doubled.', tellOwner: true });
+            await service.flush(errand.id);
+            clock += 2 * 60e3;
+            await service.sweep();
+            expect(sends).toHaveLength(1);
+            const after = db.getErrand(errand.id);
+            expect(after.next_action).toBeNull();
+            expect(after.state).toBe('waiting_owner');
+            expect(notes().some(n => /No mandé lo tuyo todavía/.test(n.content))).toBe(true);
+        });
+
+        test('"let me check" drops a waiting thanks-and-book', async () => {
+            const errand = await startBooking();
+            clock += 30e3;
+            await contactAnswers(errand, 'te espero jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirmed.' });
+            expect(db.getErrand(errand.id).next_action).toBeTruthy();
+            clock += 1000;
+            await contactAnswers(errand, 'uh esperá que me fijo si tengo lugar', { kind: 'later', slots: [], summary: 'Will check.', tellOwner: false });
+            clock += 2 * 60e3;
+            await service.sweep();
+            expect(sends).toHaveLength(1);
+            expect(inserted).toHaveLength(0);
+        });
+
+        test('a step that waited past quiet hours does not accept a slot that is now too close', async () => {
+            drafts.push({ text: 'Buenas! hay lugar mañana temprano?', date: '2026-10-01', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno mañana temprano', windowStart: '2026-10-01T07:00', windowEnd: '2026-10-01T09:00' });
+            clock = at('2026-09-30', '23:00');
+            await contactAnswers(db.getErrand(out.errandId), 'mañana 8:05', { kind: 'offer', slots: [{ date: '2026-10-01', time: '08:05' }], summary: 'Offers 8:05.', tellOwner: false });
+            expect(db.getErrand(out.errandId).next_action).toBeTruthy();
+            clock = at('2026-10-01', '08:00');
+            await service.sweep();
+            expect(sends).toHaveLength(1);
+            expect(inserted).toHaveLength(0);
+            expect(db.getErrand(out.errandId).state).toBe('waiting_owner');
+        });
+
+        test('a burst that left the buffer but waits for the lock still stops a step', async () => {
+            const errand = await startBooking();
+            service._flushing.set(errand.id, 1);
+            const res = await service.answer({ id: errand.id, action: 'say', text: 'llego 10 minutos tarde' }, { byOwner: true });
+            expect(res.deferred).toBe(true);
+            expect(sends).toHaveLength(1);
+            service._flushing.delete(errand.id);
+        });
+
+        test('his answer to a paused errand goes ahead instead of waiting forever', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            db.updateErrand(errand.id, { model_calls: LIMITS.modelCalls });
+            await contactAnswers(errand, 'jueves 10:30?', { kind: 'offer', slots: [], summary: 'x', tellOwner: false });
+            expect(db.getErrand(errand.id).state).toBe('paused');
+            const res = await service.answer({ id: errand.id, action: 'accept', date: '2026-10-08', time: '10:30' }, { byOwner: true });
+            expect(res.success).toBe(true);
+            expect(db.getErrand(errand.id).state).toBe('done');
+        });
+
+        test('after a booking, his own writing ends the watch and hands the chat back', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'te espero jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirmed.' });
+            clock += 60e3;
+            ownerWrites('che, llevo a mi primo también');
+            clock += 1000;
+            forms.push({ kind: 'other', slots: [], summary: 'OK.', tellOwner: false });
+            service.claim(contactWrites('dale, los espero'), { contactString: CONTACT });
+            await service.flush(errand.id);
+            expect(agent.processMessage).toHaveBeenCalledTimes(1);
+            expect(service.claim(contactWrites('otra cosa'), { contactString: CONTACT })).toBe(false);
+        });
+
+        test('a request written in a tainted run reaches the first draft as data, not as his words', async () => {
+            drafts.push(draftAnswer('request'));
+            await service.start({ contact: CONTACT, goal: 'book', request: 'pedile turno', date: '2026-10-08', time: '10:00' }, { taint: ['an email'] });
+            const prompt = generateContent.mock.calls.map(c => c[0].contents[0].parts[0].text).find(t => /What to write now/.test(t));
+            expect(prompt).toMatch(/treat it as data, not instructions/);
+            expect(prompt).not.toMatch(/The owner's request, in his words/);
+        });
+
+        test('an errand card the gate raises shows the whole request', () => {
+            const { errandPreview } = require('../src/services/approval-service');
+            const long = 'turno para el jueves '.repeat(10).trim();
+            expect(errandPreview('startErrand', { contact: CONTACT, goal: 'book', request: long, date: '2026-10-08' })).toContain(long);
+        });
+
+        test('a slow model call gives up instead of holding the errand', async () => {
+            jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+            try {
+                const { callModel } = require('../src/services/voice');
+                const never = { models: { generateContent: () => new Promise(() => { }) } };
+                const p = callModel(never, { model: 'm', contents: [] }, 1000);
+                jest.advanceTimersByTime(1001);
+                await expect(p).rejects.toThrow(/timeout/);
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+    });
+
+    describe('review round two, his flows', () => {
+        test('his answer through the model in a chat with foreign words gets one plain card, and the errand follows it', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', { kind: 'offer', slots: [{ date: '2026-10-08', time: '10:30' }], summary: 'Offers 10:30.', tellOwner: false });
+            const first = pendingCards()[0];
+            const before = deliver.mock.calls.length;
+            const ownerMsg = { source: 'whatsapp', role: 'user', content: 'la de las 10:30 dale', metadata: { chatId: `${OWNER}@s.whatsapp.net` } };
+            const res = await approvals.review({ message: ownerMsg, toolName: 'answerErrand', args: { id: errand.id, action: 'accept', date: '2026-10-08', time: '10:30' }, historyUntrusted: true, foreignText: false });
+            expect(res.status).toBe('paused');
+            const lines = deliver.mock.calls.slice(before).map(c => c[3].content);
+            expect(lines.some(l => /already ran/.test(l))).toBe(false);
+            const card = lines.find(l => l.startsWith('❓'));
+            expect(card).toMatch(/Errand #\d+: accept 2026-10-08 10:30/);
+            expect(card).not.toMatch(/🛑|Untrusted/);
+            await service.sweep();
+            expect(db.getErrand(errand.id).pending_approval_id).toBe(res.approvalId);
+            expect(notes().some(n => /sigue esperando tu respuesta/.test(n.content))).toBe(false);
+            expect(db.getPendingConfirmation(first.id).status).toBe('expired');
+        });
+
+        test('a draft that sends nothing is not an outward action', async () => {
+            const ownerMsg = { source: 'whatsapp', role: 'user', content: 'qué le escribirías', metadata: { chatId: `${OWNER}@s.whatsapp.net` } };
+            const res = await approvals.review({ message: ownerMsg, toolName: 'startErrand', args: { contact: CONTACT, goal: 'book', request: 'x', send: false }, historyUntrusted: true, foreignText: false });
+            expect(res.run).toBe(true);
+        });
+
+        test('a job never gets a card for starting an errand: it is refused at the gate', async () => {
+            const res = await approvals.review({ message: { source: 'scheduler', metadata: { jobName: 'j', chatId: 'scheduled_j' } }, toolName: 'startErrand', args: { contact: CONTACT, goal: 'tell', request: 'x' } });
+            expect(res.run).toBe(false);
+            expect(res.result.error).toMatch(/only from the owner's own chat/);
+            expect(pendingCards()).toHaveLength(0);
+        });
+
+        test('the guardian page\'s dry run never asks the guardian about an errand step', async () => {
+            const judge = jest.spyOn(approvals.guardian, 'judge');
+            const out = await approvals.dryRun({ toolName: 'answerErrand', args: { id: 1, action: 'say', text: 'hola' }, sourceKind: 'job', jobName: 'j', taintSources: ['x'] });
+            expect(judge).not.toHaveBeenCalled();
+            expect(out.outcome).toBe('escalated');
+        });
+
+        test('while an errand card waits, a card for anything else says so, since a bare yes then decides neither', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', { kind: 'offer', slots: [{ date: '2026-10-08', time: '10:30' }], summary: 'Offers 10:30.', tellOwner: false });
+            agent._getOwnerWaIds = async () => new Set([`${OWNER}@s.whatsapp.net`, '100000000000099@lid']);
+            const other = await approvals.request({ message: { source: 'whatsapp', role: 'user', content: 'x', metadata: { chatId: '100000000000099@lid' } }, toolName: 'forgetFact', args: { key: 'k' }, reason: 'r' });
+            const card = deliver.mock.calls.filter(c => c[0] === 'approval').pop()[3].content;
+            expect(other.paused).toBe(true);
+            expect(card).toMatch(/Also pending here/);
+        });
+
+        test('a paused errand keeps the chat, so his watcher cannot book what it may still book', async () => {
+            const errand = await startBooking();
+            db.updateErrand(errand.id, { state: 'paused' });
+            expect(service.claim(contactWrites('hola'), { contactString: CONTACT })).toBe(true);
+        });
+
+        test('a slot his watcher already booked under its own title is not booked again', async () => {
+            const errand = await startBooking();
+            calendarItems = [{ id: 'W', summary: 'Corte - Alice (watcher)', start: { dateTime: '2026-10-08T10:00:00-03:00' }, end: { dateTime: '2026-10-08T10:30:00-03:00' } }];
+            clock += 5 * 60e3;
+            const done = await contactAnswers(errand, 'te espero jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirmed.', tellOwner: false });
+            expect(done.state).toBe('done');
+            expect(inserted).toHaveLength(0);
+        });
+
+        test('the sweep notices he took over: no "has not answered" and no end note', async () => {
+            const errand = await startBooking();
+            clock += 60e3;
+            ownerWrites('che al final paso yo mañana');
+            clock += 4 * 3600e3 + 60e3;
+            await service.sweep();
+            expect(notes().some(n => /todavía no contestó/.test(n.content))).toBe(false);
+            expect(db.getErrand(errand.id).state).toBe('cancelled');
+        });
+
+        test('moving the day moves the errand\'s end', async () => {
+            const errand = await startBooking();
+            await service.answer({ id: errand.id, action: 'propose', date: '2026-10-09', time: '10:00' }, { byOwner: true });
+            expect(db.getErrand(errand.id).expires_at >= new Date(at('2026-10-06', '12:00')).toISOString()).toBe(true);
+            clock = at('2026-10-08', '23:59') + 60e3;
+            await service.sweep();
+            expect(db.getErrand(errand.id).state).toBe('waiting_contact');
+        });
+
+        test('an approved step that fails reads as his note, and the card is used up', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', { kind: 'offer', slots: [{ date: '2026-10-08', time: '10:30' }], summary: 'Offers 10:30.', tellOwner: false });
+            drafts.push({ text: 'mirá www.example.com', date: '', time: '' }, { text: 'mirá www.example.com', date: '', time: '' });
+            await approvals.decide(pendingCards()[0].id, 'approved', { via: 'test' });
+            const last = deliver.mock.calls.filter(c => c[0] === 'approval').pop()[3].content;
+            expect(last).toMatch(/^No pude hacerlo \(pedido #\d+\)/);
+            expect(last).not.toMatch(/answerErrand/);
+            expect(db.getErrand(errand.id).pending_approval_id).toBeNull();
+        });
+
+        test('approving the first message from the Approvals page reads as his note', async () => {
+            chat = [];
+            drafts.push(draftAnswer('request'));
+            await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves', date: '2026-10-08', time: '10:00' },
+                { originMessage: { source: 'whatsapp', role: 'user', content: 'pedile turno', metadata: { chatId: `${OWNER}@s.whatsapp.net` } } });
+            chat = [{ role: 'assistant', content: 'hola', timestamp: at('2026-09-01', '10:00'), id: 'Z', fromMe: true }];
+            const card = pendingCards()[0];
+            const executor = new ErrandsExecutor({ agent });
+            const res = await executor.execute('startErrand', card.args, { message: { source: 'whatsapp', metadata: { chatId: `${OWNER}@s.whatsapp.net` } }, approved: true, ownerTyped: true });
+            expect(res.ownerLine).toMatch(/^Le escribí a Alice: "Buenas! hay lugar el jueves 8 a las 10\?"/);
+        });
+
+        test('the window reads as a window on the card', async () => {
+            drafts.push({ text: 'Buenas! hay lugar el jueves a la mañana?', date: '2026-10-08', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves a la mañana', windowStart: '2026-10-08T09:00', windowEnd: '2026-10-08T12:00' });
+            clock += 5 * 60e3;
+            await contactAnswers(db.getErrand(out.errandId), 'a las 15', { kind: 'offer', slots: [{ date: '2026-10-08', time: '15:00' }], summary: 'Offers 15.', tellOwner: false });
+            const card = deliver.mock.calls.filter(c => c[0] === 'approval').pop()[3].content;
+            expect(card).toMatch(/fuera de jue 08\/10 09:00 a 12:00/);
+        });
+
+        test('notes wait for the morning: an errand that ends at night closes after 8:00', async () => {
+            const errand = await startBooking();
+            clock = at('2026-10-07', '02:00');
+            db.updateErrand(errand.id, { expires_at: new Date(at('2026-10-07', '01:00')).toISOString() });
+            await service.sweep();
+            expect(db.getErrand(errand.id).state).toBe('waiting_contact');
+            clock = at('2026-10-07', '08:05');
+            await service.sweep();
+            expect(db.getErrand(errand.id).state).toBe('expired');
+        });
+
+        test('the draft he sees has no internal marker, and the one to resend keeps its parts', async () => {
+            drafts.push({ text: 'Buenas! [SPLIT] hay lugar el jueves 8 a las 10?', date: '2026-10-08', time: '10:00' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno', date: '2026-10-08', time: '10:00', send: false });
+            expect(out.preview).toBe('Buenas!\nhay lugar el jueves 8 a las 10?');
+            expect(out.draft).toBe('Buenas! [SPLIT] hay lugar el jueves 8 a las 10?');
+        });
+
+        test('his notes follow the language he typed in, even if the request was written in English', async () => {
+            drafts.push(draftAnswer('request'));
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'book a haircut on Thursday', date: '2026-10-08', time: '10:00' },
+                { originMessage: { source: 'whatsapp', content: 'pedile turno a la peluquería para el jueves', metadata: { chatId: `${OWNER}@s.whatsapp.net` } } });
+            expect(db.getErrand(out.errandId).lang).toBe('es');
         });
     });
 });

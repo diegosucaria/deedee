@@ -56,6 +56,10 @@ It never writes the message itself.
    It uses the `gws_personal` calendar tool (`ERRANDS_CALENDAR_ACCOUNT`
    picks another), and skips an event that is already there.
 
+Notes and cards call an errand a "pedido" in Spanish. Notes that can wait
+never go out between 22:00 and 08:00. A paused errand keeps the chat, so his
+watcher does not book what the errand may still book.
+
 He answers an errand in his chat. The turn context of his own chat lists
 open errands, so "sí", "decile a las 11" or "cancelalo" reach
 `answerErrand`. If he writes to the person himself, the errand steps aside

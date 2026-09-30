@@ -524,7 +524,7 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
             return isOwnerTarget(a) ? null : 'send a message';
         case 'sendSlackMessage': return 'send a Slack message';
         // An errand writes to a person from the owner's own account.
-        case 'startErrand': return 'start an errand that writes to someone as the owner';
+        case 'startErrand': return a.send === false ? null : 'start an errand that writes to someone as the owner';
         case 'answerErrand': return a.action === 'cancel' ? null : 'send a message as the owner on an errand';
         // A changed number redirects later messages "to" this contact.
         // Metadata holds the contact's writing style, which autopilot drafts
