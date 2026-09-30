@@ -3032,10 +3032,10 @@ describe('errands', () => {
             expect(notes().some(n => /todavía no contestó/.test(n.content))).toBe(true);
         });
 
-        test('"jueves o viernes a las 10" asked the night before: he hears of no answer before Thursday 10:00', async () => {
+        test('"el jueves de 9 a 12" asked the night before: he hears of no answer before Thursday 09:00', async () => {
             clock = at('2026-10-07', '21:30');
-            drafts.push({ text: 'Buenas! tenés lugar el jueves o el viernes a las 10?', date: '2026-10-08', time: '10:00' });
-            await service.start({ contact: CONTACT, goal: 'book', request: 'turno jueves o viernes a las 10', windowStart: '2026-10-08T10:00', windowEnd: '2026-10-09T10:00' });
+            drafts.push({ text: 'Buenas! tenés lugar el jueves a la mañana?', date: '2026-10-08', time: '' });
+            await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves de 9 a 12', windowStart: '2026-10-08T09:00', windowEnd: '2026-10-08T12:00' });
             clock = at('2026-10-08', '08:05');
             await service.sweep();
             expect(notes().some(n => /no contestó/.test(n.content))).toBe(true);
@@ -3096,7 +3096,7 @@ describe('errands', () => {
             clock += 5 * 60e3;
             await contactAnswers(errand, 'tengo a las 11, igual me fijo si se libera a las 10 y te aviso', { kind: 'later', slots: [{ date: '2026-10-08', time: '11:00' }], summary: 'Offers 11, checks 10.', tellOwner: false });
             expect(pendingCards()).toHaveLength(1);
-            expect(lastCard()).toMatch(/jue 08\/10 a las 11:00.*se fija si se libera otro horario/);
+            expect(lastCard()).toMatch(/jue 08\/10 a las 11:00.*también dijo que se fija y te avisa/);
             expect(inserted).toHaveLength(0);
         });
 
@@ -3133,6 +3133,85 @@ describe('errands', () => {
             clock = at('2026-10-07', '21:35');
             await service.sweep();
             expect(notes().some(n => /no contestó/.test(n.content))).toBe(true);
+        });
+
+        test('"tengo 11, igual me fijo" with news: the news reaches him too', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'tengo a las 11, igual me fijo si se libera a las 10. ojo que ahora atiendo en el local de la vuelta', { kind: 'later', slots: [{ date: '2026-10-08', time: '11:00' }], summary: 'Offers 11 and moved to the shop around the corner.', tellOwner: true });
+            expect(notes().some(n => /Moved|moved|local|Offers 11/.test(n.content))).toBe(true);
+            expect(pendingCards()).toHaveLength(1);
+        });
+
+        test('"tengo 11, igual me fijo" with a voice note it could not read: the card says so', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            agent.impersonationService.transcribeAudio.mockResolvedValueOnce(null);
+            service.claim({ source: 'whatsapp:user', content: '', parts: [{ inlineData: { mimeType: 'audio/ogg', data: 'AAAA' } }], timestamp: new Date(clock).toISOString(), metadata: { phoneNumber: CONTACT } }, { contactString: CONTACT });
+            forms.push({ kind: 'later', slots: [{ date: '2026-10-08', time: '11:00' }], summary: 'Offers 11, checks 10.', tellOwner: false });
+            service.claim(contactWrites('tengo a las 11, igual me fijo si se libera a las 10'), { contactString: CONTACT });
+            await service.flush(errand.id);
+            expect(lastCard()).toMatch(/audio que no pude entender/);
+        });
+
+        test('a second line of his after her "no" brings no "todavía no contestó" either', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'uh el jueves no tengo nada', { kind: 'decline', slots: [], summary: 'No room on Thursday.', tellOwner: false });
+            clock += 15 * 60e3;
+            drafts.push({ text: 'bueno, gracias igual', date: '', time: '' });
+            await service.answer({ id: errand.id, action: 'say', text: 'gracias igual' }, { byOwner: true });
+            clock += 10 * 60e3;
+            drafts.push({ text: 'saludos!', date: '', time: '' });
+            const res = await service.answer({ id: errand.id, action: 'say', text: 'saludos' }, { byOwner: true });
+            expect(res.ownerLine).toMatch(/No quedó nada agendado/);
+            clock += 5 * 3600e3;
+            await service.sweep();
+            expect(notes().some(n => /todavía no contestó/.test(n.content))).toBe(false);
+        });
+
+        test('a card that lapsed at night: her newer words make its "sigue esperando" note moot', async () => {
+            const errand = await startBooking();
+            clock = at('2026-09-30', '23:00');
+            await contactAnswers(errand, 'perdón la hora! 10 no tengo, 10:30?', offer('10:30'));
+            db.decidePendingConfirmation(pendingCards()[0].id, 'expired', { via: 'sweeper' });
+            clock = at('2026-10-01', '07:10');
+            await service.sweep();
+            await contactAnswers(errand, 'pará que me fijo si puedo a las 10', later);
+            clock = at('2026-10-01', '08:05');
+            await service.sweep();
+            expect(notes().some(n => /sigue esperando tu respuesta/.test(n.content))).toBe(false);
+            expect(db.getErrand(errand.id).state).toBe('waiting_contact');
+        });
+
+        test('his "no" to her offer takes it off the table: her later "me fijo" does not bring it up', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'a las 10 no, tengo 10:30', offer('10:30'));
+            await approvals.decide(pendingCards()[0].id, 'denied', { via: 'test' });
+            await service.sweep();
+            clock += 10 * 60e3;
+            await contactAnswers(errand, 'pará que me fijo', later);
+            expect(notes().some(n => /10:30 ya no lo doy por hecho/.test(n.content))).toBe(false);
+        });
+
+        test('"hoy o mañana a cualquier hora": the no-answer note waits the usual four hours', async () => {
+            clock = at('2026-10-06', '10:00');
+            drafts.push({ text: 'Buenas! tenés lugar hoy o mañana?', date: '2026-10-06', time: '' });
+            await service.start({ contact: CONTACT, goal: 'book', request: 'turno hoy o mañana', windowStart: '2026-10-06T00:00', windowEnd: '2026-10-08T00:00' });
+            clock = at('2026-10-06', '10:30');
+            await service.sweep();
+            expect(notes().some(n => /no contestó/.test(n.content))).toBe(false);
+            clock = at('2026-10-06', '14:05');
+            await service.sweep();
+            expect(notes().some(n => /no contestó/.test(n.content))).toBe(true);
+        });
+
+        test('a slot that already passed is not "too soon"', async () => {
+            const errand = await startBooking();
+            clock = at('2026-10-08', '10:05');
+            await contactAnswers(errand, 'hoy a las 10 tenía lugar', { kind: 'offer', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Had room at 10 today.', tellOwner: false });
+            expect(notes().some(n => /muy pronto/.test(n.content))).toBe(false);
         });
 
         test('her "venite ya" offer, too soon to accept, is told as such, not as "no entendí"', async () => {

@@ -204,6 +204,7 @@ export function eventLine(event, opts = {}) {
     }
     case 'decided': {
         if (!d.action) return other();
+        if (d.afterNo) return 'After their no: his words ask nothing, so no answer is awaited';
         if (d.deferred) return `Waited: they wrote again before ${clip(d.action, 20)} went out`;
         const line = [`Decided: ${clip(d.action, 20)}`, slotText(d.slot)].filter(Boolean).join(' ');
         const waits = d.waitsUntil ? `, sends after ${fmt(d.waitsUntil)}` : '';
