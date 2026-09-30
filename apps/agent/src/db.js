@@ -4622,6 +4622,16 @@ class AgentDB {
     return this.getPendingConfirmation(rowId);
   }
 
+  /** Cards (any status) for one errand's steps, newest first. */
+  listErrandCards(errandId, { limit = 10 } = {}) {
+    const rows = this.db.prepare(`
+      SELECT * FROM pending_confirmations
+      WHERE tool_name = 'answerErrand' AND CAST(json_extract(args, '$.id') AS INTEGER) = ?
+      ORDER BY created_at DESC LIMIT ?
+    `).all(Number(errandId), Math.max(1, Math.min(Number(limit) || 10, 50)));
+    return rows.map(r => this._mapConfirmationRow(r));
+  }
+
   getPendingConfirmation(id) {
     return this._mapConfirmationRow(this.db.prepare('SELECT * FROM pending_confirmations WHERE id = ?').get(id));
   }

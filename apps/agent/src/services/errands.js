@@ -1118,7 +1118,7 @@ class ErrandService {
         const lang = args.lang === 'es' || args.lang === 'en' ? args.lang
             : langOf(`${typeof originMessage?.content === 'string' ? originMessage.content : ''} ${request}`);
         // Someone he never wrote to: he confirms the person first.
-        if (!wroteBefore && !approved) return this._askStart(args, contactName, draftText, originMessage, lang, runId);
+        if (!wroteBefore && !approved) return this._askStart(args, contactName, draftText, originMessage, lang, runId, ids);
 
         const errand = this.db.createErrand({
             goal, mode: range ? 'window' : 'ask', state: 'waiting_contact', contactJid, contactIds: [...ids], contactName,
@@ -1157,7 +1157,7 @@ class ErrandService {
     }
 
     /** A card for the first message to someone he never wrote to. Approving it runs startErrand again. */
-    async _askStart(args, contactName, text, originMessage, lang, runId = null) {
+    async _askStart(args, contactName, text, originMessage, lang, runId = null, ids = null) {
         const approvals = this.agent.approvals;
         if (!approvals || typeof approvals.askOwner !== 'function' || !originMessage) {
             return { success: false, error: `He has never written to ${contactName}. Ask him to confirm the person before starting.` };
@@ -1166,8 +1166,18 @@ class ErrandService {
         const shown = clip(text.replace(/\s*\[SPLIT\]\s*/g, ' / '), 160);
         // He asked again for the same person: the new card replaces the old one,
         // so a bare yes has one card to decide.
+        // Only the same request (goal and words) for the same person; another
+        // request for that person keeps its own card.
+        const samePerson = (c) => {
+            if (String(c || '') === String(args.contact || '')) return true;
+            if (!(ids instanceof Set)) return false;
+            let person = null;
+            try { person = this.db.getPerson(String(c || '')) || null; } catch { person = null; }
+            return ids.has(digitsOf(person?.phone || c));
+        };
         const same = (typeof this.db.listPendingConfirmations === 'function' ? this.db.listPendingConfirmations() : [])
-            .filter(r => r.tool_name === 'startErrand' && digitsOf(r.args?.contact) && digitsOf(r.args?.contact) === digitsOf(args.contact));
+            .filter(r => r.tool_name === 'startErrand' && samePerson(r.args?.contact)
+                && String(r.args?.goal || '') === String(args.goal || '') && clip(r.args?.request, REQUEST_CHARS) === clip(args.request, REQUEST_CHARS));
         const res = await approvals.askOwner({
             message: originMessage,
             toolName: 'startErrand',
@@ -1781,8 +1791,9 @@ Answer in JSON.`;
         const dropped = this._withdraw(errand);
         // The card asks one thing only: his dropped step (a card of his, or
         // one that waited for her words) is named, not asked about.
-        const mine = waiting?.owner ? this._stepName(errand, waiting) : (dropped.own ? dropped.step : null);
-        const detail = t.cardDetail(name, offered, reason) + (mine ? t.heldStep(mine) : (dropped.own || waiting?.owner) ? t.notSent : '');
+        const lapsed = !waiting?.owner && !dropped.own ? this._hisPendingCard(errand) : null;
+        const mine = waiting?.owner ? this._stepName(errand, waiting) : dropped.own ? dropped.step : lapsed ? this._stepName(errand, lapsed.args) : null;
+        const detail = t.cardDetail(name, offered, reason) + (mine ? t.heldStep(mine) : (dropped.own || waiting?.owner || lapsed) ? t.notSent : '');
         const res = await approvals.askOwner({
             message: this._runMessage(errand),
             toolName: 'answerErrand',
@@ -1807,11 +1818,25 @@ Answer in JSON.`;
         return [...slots].sort((a, b) => Math.abs(zonedMs(a.date, a.time, tz) - target) - Math.abs(zonedMs(b.date, b.time, tz) - target))[0];
     }
 
-    /** A card of his own (his word at the gate) still waiting on this errand, or null. */
+    /**
+     * A step of his own (his word at the gate) that is still open on this
+     * errand: its card waits, or it lapsed unanswered and nothing went out
+     * since. While it is open, the errand acts on nothing by itself. Null
+     * when he approved it, said no, or the errand moved on and asked him.
+     */
     _hisPendingCard(errand) {
         try {
-            const rows = typeof this.db.listPendingConfirmations === 'function' ? this.db.listPendingConfirmations() : [];
-            return rows.find(r => r.tool_name === 'answerErrand' && Number(r.args?.id) === Number(errand.id) && r.origin_meta?.ownerChat === true) || null;
+            const cards = typeof this.db.listErrandCards === 'function' ? this.db.listErrandCards(errand.id) : [];
+            const his = cards.find(c => c.origin_meta?.ownerChat === true);
+            if (!his) return null;
+            if (his.status === 'pending') return his;
+            // Lapsed, or withdrawn when the errand moved on: his word stands
+            // until a step goes out (he approved it, or said something newer)
+            // or he says no. Meanwhile the errand only asks.
+            if (his.status !== 'expired') return null;
+            const sentSince = this.db.listErrandEvents(errand.id, { newest: 100 })
+                .some(e => e.kind === 'sent' && Date.parse(e.at) > Date.parse(his.created_at));
+            return sentSince ? null : his;
         } catch {
             return null;
         }
@@ -2113,7 +2138,8 @@ Answer in JSON.`;
         }
         // An ask errand she already answered ends with his follow-up: it no
         // longer holds her chat, and no "has not answered" note can follow.
-        if (args.action === 'say' && errand.goal === 'ask' && errand.last_contact_at) {
+        const lastRead = errand.goal === 'ask' ? this.db.listErrandEvents(errand.id, { newest: 50 }).filter(e => e.kind === 'read' && !e.detail?.failed).pop() : null;
+        if (args.action === 'say' && errand.goal === 'ask' && lastRead?.detail?.kind === 'answer') {
             const closed = this._close(errand.id, 'done', 'answered');
             if (closed) this._event(errand.id, 'closed', { state: 'done' });
             const line = t.told(name, said);

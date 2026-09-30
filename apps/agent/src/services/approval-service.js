@@ -148,7 +148,8 @@ const APPROVE_CORE = new Set(['yes', 'y', 'si', 'sí', 'ok', 'okay', 'dale', 'ap
     'confirmado', 'proceed', 'adelante', 'hacelo', 'hazlo', 'yep', 'yeah', 'sure', 'claro', '👍', '👌', '✅']);
 const APPROVE_FILLER = new Set(['please', 'pls', 'por', 'favor', 'porfa', 'go', 'ahead', 'do', 'it', 'just', 'nomas', 'nomás',
     'reservalo', 'resérvalo', 'reservala', 'resérvala', 'reserva', 'reservá', 'bookealo', 'agendalo', 'agéndalo',
-    'mandalo', 'mándalo', 'envialo', 'envíalo', 'borralo', 'bórralo', 'pagalo', 'págalo']);
+    'mandalo', 'mándalo', 'envialo', 'envíalo', 'borralo', 'bórralo', 'pagalo', 'págalo',
+    'mandale', 'mandáselo', 'mandaselo', 'decile', 'decíselo', 'deciselo', 'escribile']);
 const DENY_CORE = new Set(['no', 'n', 'nope', 'not', 'deny', 'denied', 'reject', 'rechazar', 'rechazo', 'cancel', 'cancelar', '👎', '❌']);
 const DENY_FILLER = new Set(['please', 'por', 'favor', 'gracias', 'thanks', 'dejalo', 'déjalo', 'mejor', 'todavia', 'todavía',
     'not', 'yet', 'aun', 'aún', 'ahora']);
@@ -967,8 +968,12 @@ class ApprovalService {
                 // He asked for it again in his own chat, but other messages came
                 // after the card, so a bare yes no longer reaches it: the model
                 // tells him the one answer that does.
-                if (kind === 'chat' && !continuationOf(message) && (await this._stillAsking(existing, message)) === false && (await this._ownerTypedRun(message, kind))) {
-                    return { run: false, status: 'paused', decisionId: row?.id, approvalId: existing.id, result: { info: `This exact step already waits on card ${existing.id}, and other messages came after it, so his short yes does not reach it. Do not call it again. Tell him, in his language, to reply /confirm ${existing.id} to do it, or /cancel ${existing.id} to drop it.` } };
+                // A new run of his own chat asking for the same step (his words
+                // were no bare yes, or came after other messages): only the
+                // card can do it, so he gets its id.
+                const newRun = !!run?.id && run.id !== existing.origin_meta?.cardRunId;
+                if (kind === 'chat' && !continuationOf(message) && (newRun || (await this._stillAsking(existing, message)) === false) && (await this._ownerTypedRun(message, kind))) {
+                    return { run: false, status: 'paused', decisionId: row?.id, approvalId: existing.id, result: { info: `This exact step already waits on card ${existing.id}; calling it again does not answer the card. Do not call it again. Tell him, in his language, to reply /confirm ${existing.id} to do it, or /cancel ${existing.id} to drop it.` } };
                 }
                 // Our own rule text, never the stored card reason: that one can
                 // carry the guardian's words, which quote what a third party wrote.

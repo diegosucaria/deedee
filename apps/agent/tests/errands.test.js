@@ -2218,6 +2218,79 @@ describe('errands', () => {
             expect(lastCard()).toContain('no salió');
         });
 
+        test('his step whose card lapsed unanswered still stops the errand from booking over it', async () => {
+            const errand = await startBooking();
+            clock = at('2026-10-06', '23:10');
+            await contactAnswers(errand, 'dale, jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            clock = at('2026-10-07', '07:30');
+            const res = await approvals.review({ message: ownerSays('mejor a las 11'), toolName: 'answerErrand', args: { id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, historyUntrusted: true, foreignText: true });
+            // On the device his card has lapsed by 08:00.
+            db.decidePendingConfirmation(res.approvalId, 'expired', { via: 'sweeper' });
+            clock = at('2026-10-07', '08:01');
+            await service.sweep();
+            expect(sends).toHaveLength(1);
+            expect(inserted).toHaveLength(0);
+            expect(lastCard()).toContain('Lo tuyo ("proponer el jue 08/10 a las 11:00") no salió.');
+        });
+
+        test('his step withdrawn by her question still stands: her next yes to his first time asks him', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', offer('10:30'));
+            await approvals.review({ message: ownerSays('decile que mejor a las 11'), toolName: 'answerErrand', args: { id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, historyUntrusted: true, foreignText: true });
+            clock += 60e3;
+            await contactAnswers(errand, 'es corte solo?', { kind: 'question', slots: [], summary: 'Asks if it is only a haircut', tellOwner: false });
+            clock += 60e3;
+            await contactAnswers(errand, 'ah pará, a las 10 sí tengo', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms 10.', tellOwner: false });
+            expect(sends).toHaveLength(1);
+            expect(inserted).toHaveLength(0);
+        });
+
+        test('"sí, mandale" answers his card, and a new run repeating its step gets the card id', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', offer('10:30'));
+            const args = { id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' };
+            const first = await approvals.review({ message: { ...ownerSays('mejor a las 11'), id: 'r-1' }, toolName: 'answerErrand', args, historyUntrusted: true, foreignText: true, run: { id: 'run-1', previews: new Map() } });
+            const again = await approvals.review({ message: { ...ownerSays('sí, mandale lo de las 11 porfa'), id: 'r-2' }, toolName: 'answerErrand', args, historyUntrusted: true, foreignText: true, run: { id: 'run-2', previews: new Map() } });
+            expect(again.result.info).toContain(`/confirm ${first.approvalId}`);
+            const res = await approvals.intercept({ ...ownerSays('sí, mandale'), id: 'r-3' }, jest.fn());
+            expect(res).toBeTruthy();
+        });
+
+        test('a People id and then the number of the same new person leave one card', async () => {
+            chat = [];
+            const origin = { source: 'whatsapp', content: 'escribile a Alice', metadata: { chatId: OWNER_CHAT } };
+            drafts.push(draftAnswer('request'));
+            await service.start({ contact: 'p-alice-0000-0000-0000-000000000001', goal: 'book', request: 'turno el jueves', date: '2026-10-08', time: '10:00' }, { originMessage: origin });
+            drafts.push(draftAnswer('request'));
+            await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves', date: '2026-10-08', time: '10:00' }, { originMessage: origin });
+            expect(pendingCards().filter(c => c.tool_name === 'startErrand')).toHaveLength(1);
+        });
+
+        test('an ask errand stays open after his follow-up to her question: her answer still reaches him', async () => {
+            drafts.push({ text: 'venís el sábado?', date: '', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale si viene el sábado' });
+            clock += 5 * 60e3;
+            await contactAnswers(db.getErrand(out.errandId), 'a qué hora?', { kind: 'question', slots: [], summary: 'Asks what time', tellOwner: false });
+            drafts.push({ text: 'a las 8', date: '', time: '' });
+            await service.answer({ id: out.errandId, action: 'say', text: 'a las 8' }, { byOwner: true });
+            expect(db.getErrand(out.errandId).closed_at).toBeNull();
+            clock += 5 * 60e3;
+            await contactAnswers(db.getErrand(out.errandId), 'dale, voy', { kind: 'answer', slots: [], summary: 'She comes', tellOwner: false });
+            expect(notes().pop().content).toMatch(/contestó tu pregunta/);
+        });
+
+        test('a different request to the same new person keeps its own card', async () => {
+            chat = [];
+            const origin = { source: 'whatsapp', content: 'preguntale a Alice', metadata: { chatId: OWNER_CHAT } };
+            drafts.push({ text: 'tenés el libro?', date: '', time: '' });
+            await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale si tiene el libro' }, { originMessage: origin });
+            drafts.push({ text: 'soy Bob', date: '', time: '' });
+            await service.start({ contact: CONTACT, goal: 'tell', request: 'decile que soy Bob' }, { originMessage: origin });
+            expect(pendingCards().filter(c => c.tool_name === 'startErrand')).toHaveLength(2);
+        });
+
         test('an ask errand she answered ends with his follow-up, so no false "has not answered" note follows', async () => {
             drafts.push({ text: 'abrís el sábado?', date: '', time: '' });
             const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale si abre el sábado' });
