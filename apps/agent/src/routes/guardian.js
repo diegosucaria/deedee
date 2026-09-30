@@ -9,7 +9,7 @@ const OUTCOMES = ['auto_allowed', 'auto_denied', 'escalated', 'escalated_approve
     'escalated_failed', 'deny_list', 'breaker_stop', 'ran_unasked', 'owner_instructed', 'escalated_duplicate',
     'escalated_superseded', 'shell_refused'];
 const RISKS = ['low', 'medium', 'high'];
-const SOURCE_KINDS = ['chat', 'job', 'watcher', 'subagent', 'system'];
+const SOURCE_KINDS = ['chat', 'job', 'watcher', 'subagent', 'system', 'errand'];
 const DAY_RE = /^\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?$/;
 
 /** A comma list where every item is allowed, or null. */

@@ -2236,11 +2236,16 @@ class Agent {
       );
       // Time, goals, skills, vault and location change per message, so they go
       // in the user turn and the system instruction stays cacheable.
-      // Open errands, in his own chat only: a bare "sí" or "decile a las 11"
-      // then finds its errand. Names from People and checked slots only.
+      // Errands, in his own typed chat only: their rules, and the open ones,
+      // so a bare "sí" or "decile a las 11" finds its errand. Names from
+      // People and checked slots only. Jobs, watchers and voice calls get none.
       let openErrands = null;
-      if (!isLightweight && this.errands) {
-        try { if (await this._ownerTyped(message)) openErrands = this.errands.turnContextLines(); } catch (e) { openErrands = null; }
+      let errandTurn = false;
+      if (!isLightweight && this.errands?.enabled?.()) {
+        try { errandTurn = !!(await this._ownerTyped(message)); } catch (e) { errandTurn = false; }
+        if (errandTurn) {
+          try { openErrands = this.errands.turnContextLines(); } catch (e) { openErrands = null; }
+        }
       }
       const turnContext = isLightweight ? '' : getTurnContext({
         dateString: timeString,
@@ -2249,7 +2254,8 @@ class Agent {
         vaultContext,
         location: message.metadata?.location,
         browserSecretNames: hasBrowserTools ? browserSecretNames : null,
-        openErrands
+        openErrands,
+        errandRules: errandTurn
       });
 
       console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens)${isLightweight ? ' (lightweight)' : ''}.`);
@@ -2260,8 +2266,8 @@ class Agent {
         systemInstruction += `\n
         \n === IMPERSONATION & TONE MATCHING ===
           IF you are asked to draft a message for the user, or if you are replying via the 'user' (whatsapp:user) session:
-        0. **Errands first**: to write to someone for him, use 'startErrand' (send=false for a draft he wants to see first). It writes in his voice from his chat with that person.
-        1. **His own messages**: in that chat his messages are the ones 'readChatHistory' marks "Me"; "Them" is the contact. Mirror him, never the contact.
+        ${errandTurn ? `0. **Errands first**: to write to someone for him, use 'startErrand' (send=false for a draft he wants to see first). It writes in his voice from his chat with that person.
+        ` : ''}1. **His own messages**: in that chat his messages are the ones 'readChatHistory' marks "Me"; "Them" is the contact. Mirror him, never the contact.
         2. **Match Tone**: Mimic his style, brevity, capitalization (lowercase?), and emoji usage.
         3. **Be Natural**: Do not sound like an AI. Use "I", not "Deedee".
         This never applies to what you say back to the owner, and never to a watcher report: there you write as Deedee.

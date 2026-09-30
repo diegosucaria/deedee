@@ -431,7 +431,10 @@ app.get('/whatsapp/style-stats', (req, res) => {
   const service = whatsappSessions[req.query.session || 'user'];
   if (!service) return res.status(400).json({ error: 'Invalid session' });
   try {
-    res.json(service.getOwnStyleStats());
+    // His chat with Deedee's own number is not how he writes to people.
+    const me = whatsappSessions.assistant?.sock?.user;
+    const excludeJids = [me?.id, me?.lid].filter(Boolean);
+    res.json(service.getOwnStyleStats({ excludeJids }));
   } catch (e) {
     console.error('[Interfaces] style-stats failed:', e.message);
     res.status(500).json({ error: 'style numbers unavailable' });

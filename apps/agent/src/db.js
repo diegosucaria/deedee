@@ -757,6 +757,10 @@ class AgentDB {
         no_reply_noted INTEGER NOT NULL DEFAULT 0,
         next_check_at TEXT,
         next_action TEXT,
+        slot_owned INTEGER NOT NULL DEFAULT 0,
+        read_through INTEGER NOT NULL DEFAULT 0,
+        request_tainted INTEGER NOT NULL DEFAULT 0,
+        grace_until TEXT,
         origin_chat_id TEXT,
         origin_source TEXT,
         expires_at TEXT NOT NULL,
@@ -5387,13 +5391,14 @@ class AgentDB {
     const info = this.db.prepare(`
       INSERT INTO errands (goal, mode, state, contact_jid, contact_ids, contact_name, person_id, request, slot,
         window_start, window_end, event_title, location, duration_min, origin_chat_id, origin_source,
-        expires_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        expires_at, created_at, updated_at, slot_owned, request_tainted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(fields.goal, fields.mode || 'ask', fields.state || 'waiting_contact', fields.contactJid,
       JSON.stringify(fields.contactIds || []), fields.contactName || null, fields.personId || null, fields.request,
       json(fields.slot), fields.windowStart || null, fields.windowEnd || null, fields.eventTitle || null,
       fields.location || null, Number.isFinite(fields.durationMin) ? fields.durationMin : null,
-      fields.originChatId || null, fields.originSource || null, fields.expiresAt, now, now);
+      fields.originChatId || null, fields.originSource || null, fields.expiresAt, now, now,
+      fields.slotOwned ? 1 : 0, fields.requestTainted ? 1 : 0);
     return this.getErrand(info.lastInsertRowid);
   }
 
@@ -5413,10 +5418,10 @@ class AgentDB {
    * Set columns on an errand. JSON columns take objects; `null` clears.
    * Returns the updated row, or null when there is no such errand.
    */
-  updateErrand(id, patch = {}) {
+  updateErrand(id, patch = {}, { closed = false } = {}) {
     const allowed = new Set(['state', 'mode', 'slot', 'window_start', 'window_end', 'offer', 'agreed', 'event_id',
       'pending_approval_id', 'sent_count', 'auto_count', 'model_calls', 'last_sent_at', 'last_contact_at',
-      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'closed_at', 'close_reason', 'contact_ids']);
+      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'contact_ids', 'slot_owned', 'grace_until', 'read_through']);
     const jsonCols = new Set(['slot', 'offer', 'agreed', 'contact_ids', 'next_action']);
     const sets = [];
     const values = [];
@@ -5428,7 +5433,10 @@ class AgentDB {
     if (sets.length === 0) return this.getErrand(id);
     sets.push('updated_at = ?');
     values.push(new Date().toISOString(), Number(id));
-    this.db.prepare(`UPDATE errands SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    // A closed errand keeps its outcome: a step still running when he
+    // cancelled must not write it back to life. Only callers that mean to
+    // (the calendar id, the watch after a booking) pass { closed: true }.
+    this.db.prepare(`UPDATE errands SET ${sets.join(', ')} WHERE id = ?${closed ? '' : ' AND closed_at IS NULL'}`).run(...values);
     return this.getErrand(id);
   }
 
@@ -5455,9 +5463,14 @@ class AgentDB {
       .run(Number(errandId), new Date().toISOString(), String(kind), text);
   }
 
-  listErrandEvents(errandId, { limit = 200 } = {}) {
-    return this.db.prepare('SELECT * FROM errand_events WHERE errand_id = ? ORDER BY id ASC LIMIT ?')
-      .all(Number(errandId), Math.max(1, Math.min(Number(limit) || 200, 1000)))
+  /** An errand's steps, oldest first. `newest`: only the last N, still oldest first. */
+  listErrandEvents(errandId, { limit = 200, newest = null } = {}) {
+    const rows = newest
+      ? this.db.prepare('SELECT * FROM errand_events WHERE errand_id = ? ORDER BY id DESC LIMIT ?')
+        .all(Number(errandId), Math.max(1, Math.min(Number(newest) || 200, 1000))).reverse()
+      : this.db.prepare('SELECT * FROM errand_events WHERE errand_id = ? ORDER BY id ASC LIMIT ?')
+        .all(Number(errandId), Math.max(1, Math.min(Number(limit) || 200, 1000)));
+    return rows
       .map(r => {
         let detail = null;
         if (r.detail) { try { detail = JSON.parse(r.detail); } catch { detail = r.detail; } }

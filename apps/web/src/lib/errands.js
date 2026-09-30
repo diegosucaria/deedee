@@ -204,9 +204,14 @@ export function eventLine(event, opts = {}) {
     }
     case 'decided': {
         if (!d.action) return other();
+        if (d.deferred) return `Waited: they wrote again before ${clip(d.action, 20)} went out`;
         const line = [`Decided: ${clip(d.action, 20)}`, slotText(d.slot)].filter(Boolean).join(' ');
         const waits = d.waitsUntil ? `, sends after ${fmt(d.waitsUntil)}` : '';
         return `${line}${waits}${d.auto ? ' (on its own)' : ''}`;
+    }
+    case 'after': {
+        if (d.failed) return 'After the booking: could not read their message';
+        return `After the booking: ${[clip(d.kind || 'message', 20), slots(d.slots)].filter(Boolean).join(', ')}`;
     }
     case 'asked': {
         if (d.offer) {
@@ -240,7 +245,8 @@ export function eventLine(event, opts = {}) {
         return `Error${where}`;
     }
     case 'note':
-        return d.noReply ? 'Told you they have not answered yet' : other();
+        if (d.noReply) return 'Told you they have not answered yet';
+        return d.told ? 'Told you what else they wrote' : other();
     case 'owner':
         return own(CARD_STATUS, d.status) || (d.status ? `Card: ${clip(d.status, 20)}` : other());
     default:

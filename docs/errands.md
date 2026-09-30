@@ -30,27 +30,37 @@ It never writes the message itself.
 
 1. **Start.** `startErrand` reads the last 60 messages of his chat with that
    person and his style numbers. For `book` it checks his calendar for that
-   day. `voice.js` writes the first message, and it goes out from his
-   account (`session: 'user'`, `strictSession: true`: never from Deedee's
-   number). If he never wrote to that person, he gets a card first.
+   day, and a time the draft picks must be free. `voice.js` writes the first
+   message, and it goes out from his account (`session: 'user'`,
+   `strictSession: true`: never from Deedee's number). If he never wrote to
+   that person, he gets a card first. An errand never writes to his own
+   lines or to Deedee's number.
 2. **Replies.** In `agent.js`, a contact's message on his account reaches
    the errand before watchers and Autopilot. While an errand is open for a
-   chat, they skip that chat. Messages wait 20 seconds for the rest of a
-   burst (longer while the contact types). Voice notes are transcribed.
+   chat, and until the booked slot (12 hours at most) after it books, they
+   skip that chat. Messages wait 20 seconds for the rest of a burst (longer
+   while the contact types). Voice notes are transcribed; a photo, or a
+   voice note it cannot read, reaches him.
 3. **Reading.** A Flash call with no tools fills a form: `offer`,
-   `confirm`, `decline`, `question`, `answer` or `other`, with slots. Code
-   keeps only real dates in the future.
+   `confirm`, `decline`, `question`, `answer`, `later` or `other`, with
+   slots, and says whether the messages carry news for him. Code keeps only
+   real slots at least 15 minutes ahead.
 4. **Deciding.** Code decides:
-   - the contact confirms the slot he asked for, or (window mode) offers a
-     free slot inside his window: Deedee answers on her own and books;
+   - the contact confirms the slot he asked for on his day, or (window
+     mode) offers a slot inside his window, and his calendar is free then:
+     Deedee answers on her own and books;
    - any other slot: a card for `answerErrand`, "sí" accepts it;
-   - a question, a refusal, an unclear answer: a note asks him.
+   - a question, a refusal, an unclear answer: a note asks him;
+   - small talk: nothing; news: a note.
 5. **Booking.** Code adds the event to his primary calendar with no guests.
    It uses the `gws_personal` calendar tool (`ERRANDS_CALENDAR_ACCOUNT`
    picks another), and skips an event that is already there.
 
-He answers an errand in his chat. The turn context lists open errands, so
-"sí", "decile a las 11" or "cancelalo" reach `answerErrand`.
+He answers an errand in his chat. The turn context of his own chat lists
+open errands, so "sí", "decile a las 11" or "cancelalo" reach
+`answerErrand`. If he writes to the person himself, the errand steps aside
+and his watchers see the chat again. Notes and cards come in his language
+(Spanish when his request is).
 
 ## The voice
 
@@ -69,9 +79,10 @@ After the model writes, code:
 
 - removes an opening "¿" or "¡" and a final period when he almost never
   uses them;
-- refuses links, phone numbers, emails, money, brackets, words aimed at an
-  assistant, more than 160 characters or 2 messages, and a time other than
-  the slot;
+- refuses links, phone numbers, emails, brackets around words, words aimed
+  at an assistant, commands to Deedee, more than 160 characters or 2
+  messages, and a time other than the slot; money only when his own words
+  mention it; an accept must name its time;
 - lets a refused draft try once more with the reasons; a second refusal
   sends nothing.
 
@@ -87,11 +98,12 @@ After the model writes, code:
 | No answer | he hears after 4 hours; Deedee never writes again on her own |
 | Life | until the slot's day, 7 days at most |
 | Model calls | 20 per errand, then it pauses |
+| Contact messages | 60 per errand, then it pauses |
 
 ## Switches
 
-- `ERRANDS=0`: no errand starts, the hook and the sweep stop. Read on every
-  call.
+- `ERRANDS=0`: no errand starts, the hook and the sweep stop; a cancel
+  still works. Read on every call.
 - `ERRANDS_CALENDAR_ACCOUNT`: the Google account label whose calendar gets
   the bookings. Default `personal`.
 - `communication_dry_run` (Settings): errands draft and send nothing.

@@ -30,6 +30,7 @@ export const SOURCE_KINDS = [
     { id: 'watcher', label: 'Watcher' },
     { id: 'subagent', label: 'Sub-agent' },
     { id: 'system', label: 'System' },
+    { id: 'errand', label: 'Errand' },
 ];
 const SOURCE_KIND_IDS = SOURCE_KINDS.map(s => s.id);
 export const MODES = [

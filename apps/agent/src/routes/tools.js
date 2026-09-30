@@ -100,8 +100,11 @@ function createToolRouter(agent) {
         try {
             const mcpTools = await agent.mcp.getTools();
 
-            // Extract internal tools from Gemini definition format
-            const internalTools = toolDefinitions.flatMap(def => def.functionDeclarations || []);
+            // Extract internal tools from Gemini definition format.
+            // Errands start and are answered only in his typed chat (services/errands.js):
+            // in a voice call they would always refuse, so the call never sees them.
+            const internalTools = toolDefinitions.flatMap(def => def.functionDeclarations || [])
+                .filter(t => !['startErrand', 'answerErrand', 'listErrands'].includes(t.name));
 
             // Merge both lists
             const allTools = [...internalTools, ...mcpTools];

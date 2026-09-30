@@ -48,11 +48,20 @@ const STEPS = Object.freeze({
 
 // Checks on every outgoing text. The words aimed at a model catch a draft a
 // contact's old messages steered; a real message to a barber never has them.
-const LINK_RE = /https?:\/\/|www\.|\b[a-z0-9-]+\.(?:com|net|org|ar|io|app|link|xyz|info|me|ly)\b/i;
+const LINK_RE = /https?:\/\/|www\.|\b[a-z0-9-]+\.(?:com|net|org|ar|io|app|link|xyz|info|me|ly|co|gl|dev|ai|gg|to|tv|us|uk|es|br|mx|cl|uy|biz|site|online|store|shop|page|click|top|live|lat)\b|\b[a-z0-9-]+\.[a-z]{2,}\/\S/i;
 const PHONE_RE = /(?:\+?\d[\s.-]?){7,}/;
-const MONEY_RE = /[$€£]|\b(?:usd|u\$s|ars|pesos?|d[oó]lares?|euros?|plata|transfer\w*|cbu|cvu|alias)\b/i;
-const MODEL_WORDS_RE = /\b(?:ignor\w*|instrucci\w*|instruction\w*|prompt\w*|deedee|system|asistente|assistant|chatbot|inteligencia artificial|modelo de lenguaje|ia|ai)\b/i;
-const BRACKETS_RE = /[()[\]{}<>]/;
+// Money: a steered draft must never promise a payment in his name. His own
+// words may still mention it (allowMoney).
+const MONEY_RE = /[$€£]|\b(?:usd|u\$s|ars|pesos?|d[oó]lares?|euros?|plata|transfer\w*|cbu|cvu|alias|pag(?:ar|o|as|ás|ue|amos)|se[ñn]a|abon\w*|cobr\w*)\b/i;
+// Words aimed at a model, and the one tell of an assistant writing ("IA", in
+// capitals: in lower case "ia" is how people type "ya").
+const MODEL_WORDS_RE = /\b(?:ignor[aáeé]|instrucci|instruction|prompt|deedee|asistente|assistant|chatbot|inteligencia artificial|modelo de lenguaje)/i;
+const CAPS_AI_RE = /\b(?:IA|AI)\b/;
+// Brackets around words ("(8 de octubre)"); a smiley such as ":)" or "<3" is fine.
+const BRACKETS_RE = /\([^()]*[\p{L}\p{N}][^()]*\)|\[[^\]]*\]|\{[^}]*\}/u;
+// A message that reads as a command to Deedee herself.
+const COMMAND_RE = /^\s*\/|\/(?:confirm|cancel|approve|deny|stop|clear)\b/i;
+const NUMBER_WORDS = { una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12 };
 
 function clip(text, max) {
     const s = String(text ?? '').replace(/\s+/g, ' ').trim();
@@ -148,7 +157,28 @@ function timesIn(text) {
     for (const m of s.matchAll(/\b(?:a las|las|tipo|a eso de|como a las)\s+(\d{1,2})(?![\d:.,])(?!\s*(?:hs?|am|pm)\b)(?!\s+y\s+(?:media|cuarto)\b)/g)) add(m[1]);
     for (const m of s.matchAll(/(?<![\d])(\d{1,2})\s+y\s+media\b/g)) add(m[1], 30);
     for (const m of s.matchAll(/(?<![\d])(\d{1,2})\s+y\s+cuarto\b/g)) add(m[1], 15);
+    // "a la 1", "a la una", "a las diez", "a las dos y media", "al mediodía".
+    for (const m of s.matchAll(/\ba la (1|una)\b(\s+y\s+media)?/g)) add(1, m[2] ? 30 : 0);
+    for (const m of s.matchAll(/\b(?:a las|las)\s+(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\b(\s+y\s+media)?/g)) add(NUMBER_WORDS[m[1]], m[2] ? 30 : 0);
+    if (/\bmediod[ií]a\b/.test(s)) add(12, 0);
+    // "10 voy", "9:30 está perfecto": an hour right before a word of agreement.
+    for (const m of s.matchAll(/(?<!(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|el|del)\s+)(?<![\d:.,/])(\d{1,2})\s+(?:voy|est[aá]|va|me sirve|me queda|perfecto|genial|dale|listo)\b/g)) add(m[1]);
     return out;
+}
+
+function toMinutes(hhmm) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''));
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+/** Does a named time fall inside [start, end] (HH:MM)? The 12-hour reading counts too. */
+function inRange(found, range) {
+    const lo = toMinutes(range?.start);
+    const hi = toMinutes(range?.end);
+    if (lo === null || hi === null) return true;
+    const readings = [found.hour * 60 + found.min];
+    if (found.hour < 12) readings.push((found.hour + 12) * 60 + found.min);
+    return readings.some(v => v >= lo && v <= hi);
 }
 
 /** Does a named time match HH:MM? "4:30" matches 16:30: people write the afternoon on a 12-hour clock. */
@@ -166,7 +196,7 @@ function sameTime(found, hhmm) {
  * @param {string[]} parts the messages, in order
  * @param {{ step: string, time?: string|null }} ctx - time: the slot's HH:MM the text must name (or may name alone)
  */
-function checkText(parts, { step, time = null } = {}) {
+function checkText(parts, { step, time = null, range = null, allowMoney = false } = {}) {
     const list = (Array.isArray(parts) ? parts : [parts]).map(p => String(p ?? '').trim()).filter(Boolean);
     const problems = [];
     if (list.length === 0) return ['it was empty'];
@@ -177,13 +207,16 @@ function checkText(parts, { step, time = null } = {}) {
     if (LINK_RE.test(all)) problems.push('it had a link');
     if (all.includes('@')) problems.push('it had an email or a handle');
     if (PHONE_RE.test(all)) problems.push('it had a phone number');
-    if (MONEY_RE.test(all)) problems.push('it talked about money');
-    if (MODEL_WORDS_RE.test(all)) problems.push('it had words aimed at an assistant');
+    if (!allowMoney && MONEY_RE.test(all)) problems.push('it talked about money');
+    if (MODEL_WORDS_RE.test(all) || CAPS_AI_RE.test(all)) problems.push('it had words aimed at an assistant');
+    if (list.some(p => COMMAND_RE.test(p))) problems.push('it looked like a command');
     if (BRACKETS_RE.test(all)) problems.push('it had brackets');
     const named = timesIn(all);
-    if (time) {
+    if (range) {
+        if (named.some(t => !inRange(t, range))) problems.push(`it named a time outside ${range.start}-${range.end}`);
+    } else if (time) {
         if (named.some(t => !sameTime(t, time))) problems.push(`it named a time other than ${time}`);
-        if ((step === 'propose' || step === 'request') && !named.some(t => sameTime(t, time))) problems.push(`it did not name the time ${time}`);
+        if ((step === 'propose' || step === 'request' || step === 'accept') && !named.some(t => sameTime(t, time))) problems.push(`it did not name the time ${time}`);
     }
     if ((step === 'accept' || step === 'thanks' || step === 'decline') && all.includes('?')) problems.push('it asked a new question');
     if (step === 'thanks' && all.length > 60) problems.push('a thanks must be short');
@@ -238,7 +271,8 @@ class VoiceService {
      *   problems: string[], calls: number }>}
      *   ok false: the last draft failed a check (problems) or the model failed; send nothing.
      */
-    async draft({ ownerName, contactName, history, notes, stats, step, brief, now = Date.now(), timeZone, chatId = null, requireTime = null, requireDate = null }) {
+    async draft({ ownerName, contactName, history, notes, stats, step, brief, now = Date.now(), timeZone, chatId = null,
+        requireTime = null, requireDate = null, range = null, allowMoney = false, check = null }) {
         const client = this.agent?.client;
         if (!client?.models || typeof client.models.generateContent !== 'function') {
             return { ok: false, parts: [], text: '', date: null, time: null, problems: ['no model client'], calls: 0 };
@@ -278,9 +312,13 @@ class VoiceService {
             const named = timesIn(parts.join('\n'));
             const ownTime = answer.time || (named.length === 1 ? `${String(named[0].hour).padStart(2, '0')}:${String(named[0].min).padStart(2, '0')}` : null);
             const time = requireTime || ownTime;
-            const problems = checkText(parts, { step, time });
+            const problems = checkText(parts, { step, time: range ? null : time, range, allowMoney });
             if (requireDate && answer.date && answer.date !== requireDate) problems.push(`it asked for ${answer.date} instead of ${requireDate}`);
-            last = { parts, text: parts.join('\n'), date: answer.date || requireDate || null, time: requireTime || ownTime, problems };
+            last = { parts, text: parts.join('\n'), date: answer.date || requireDate || null, time: range ? null : (requireTime || ownTime), problems };
+            // The caller's own check (his calendar), once the text passes.
+            if (problems.length === 0 && typeof check === 'function') {
+                try { problems.push(...((await check(last)) || [])); } catch { /* a failed check refuses nothing */ }
+            }
             if (problems.length === 0) return { ok: true, ...last, calls };
             retryProblems = problems;
         }
@@ -289,6 +327,6 @@ class VoiceService {
 }
 
 module.exports = {
-    VoiceService, buildPrompt, checkText, cleanText, habitLines, formatChat, timesIn, sameTime, splitParts, parseAnswer,
+    VoiceService, buildPrompt, checkText, cleanText, habitLines, formatChat, timesIn, sameTime, inRange, splitParts, parseAnswer,
     STEPS, MAX_CHARS, MAX_PARTS, RARE, RESPONSE_SCHEMA
 };

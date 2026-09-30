@@ -85,7 +85,9 @@ const SECRET_KEY_RE = /pass|secret|token|api[_-]?key|auth|cookie|credential|otp/
 const SAFETY_RULES = new Set(['malformed', 'shell-remote-exec', 'shell-system-damage', 'shell-credentials', 'shell-cdp', 'file-browser-profile']);
 // Rules for actions that reach other people or open the house. His word
 // covers them only while no third-party text sits in the history the model reads.
-const OUTWARD_RULES = new Set(['email-send', 'first-contact', 'ha-critical', 'ha-bulk']);
+const OUTWARD_RULES = new Set(['email-send', 'first-contact', 'ha-critical', 'ha-bulk', 'errand-send']);
+// Errand steps are the owner's to decide (specs/050-errands.md): never the guardian's.
+const ERRAND_TOOLS = new Set(['startErrand', 'answerErrand']);
 
 /**
  * Marks the run that resumes a chat after the owner approved a paused call
@@ -310,6 +312,11 @@ function compactFields(data) {
  */
 function approvedResultText(toolName, result, { untrusted = false } = {}) {
     const name = String(toolName || 'the action');
+    // Our own tools may write the owner's line themselves (errands): plain
+    // words in his language, no tool name. Never for a third party's text.
+    if (!untrusted && result && typeof result === 'object' && typeof result.ownerLine === 'string' && result.ownerLine.trim()) {
+        return oneLine(result.ownerLine);
+    }
     if (untrusted) {
         // Third-party text stays out of the line: it would land in the chat
         // history as our own words, with no untrusted marker.
@@ -884,13 +891,13 @@ class ApprovalService {
                 });
                 // Our own rule text, never the stored card reason: that one can
                 // carry the guardian's words, which quote what a third party wrote.
-                return { run: false, status: 'paused', decisionId: row?.id, result: { info: pausedInfo(toolName, why || 'This action needs the owner\'s approval.', where, true) } };
+                return { run: false, status: 'paused', decisionId: row?.id, approvalId: existing.id, result: { info: pausedInfo(toolName, why || 'This action needs the owner\'s approval.', where, true) } };
             }
         }
 
         let verdict = null;
         let intent = null;
-        if (settings.mode === 'smart' && this.guardian && cover !== 'ask') {
+        if (settings.mode === 'smart' && this.guardian && cover !== 'ask' && !ERRAND_TOOLS.has(toolName)) {
             intent = await this._intent(message);
             verdict = await this.guardian.judge({
                 toolName, args, sourceKind: kind, ownerMessage: intent.ownerMessage, jobName: intent.jobName,
@@ -1217,7 +1224,7 @@ class ApprovalService {
      * @param {{ message: object, toolName: string, args: object, reason: string, preview?: string|null }} p
      * @returns {Promise<{ paused: boolean, id?: string, result: object }>}
      */
-    async askOwner({ message, toolName, args, reason, preview = null }) {
+    async askOwner({ message, toolName, args, reason, preview = null, card = null }) {
         const deny = this.rules.denyCheck(toolName, args, this.settings().deny);
         if (deny.denied) {
             return { paused: false, result: { error: `Blocked by the owner's deny-list (pattern "${deny.pattern}"). Nothing was sent.` } };
@@ -1231,7 +1238,7 @@ class ApprovalService {
         });
         return this.request({
             message, toolName, args, reason, taintSources: taintSources.length ? taintSources : null,
-            guardianDecisionId: row?.id || null, preview
+            guardianDecisionId: row?.id || null, preview, card
         });
     }
 
@@ -1240,7 +1247,7 @@ class ApprovalService {
      * moved on). A later "yes" must not run it. Marked expired; the chat
      * that holds it is told.
      */
-    withdraw(id, why = 'it no longer applies') {
+    withdraw(id, why = 'it no longer applies', { quiet = false } = {}) {
         if (!id || !this.hasStore()) return false;
         let done = null;
         try { done = this.db.decidePendingConfirmation(id, 'expired', { via: 'withdrawn' }); } catch (e) {
@@ -1250,6 +1257,8 @@ class ApprovalService {
         if (!done) return false;
         console.log(`[Approvals] ${id} (${done.tool_name}) withdrawn: ${why}.`);
         this._broadcast({ id, status: 'expired', chatId: done.reply_chat_id, toolName: done.tool_name });
+        // Quiet: a newer card or a note already tells him what changed.
+        if (quiet) return true;
         const target = { channel: done.reply_channel || 'whatsapp', chatId: done.reply_chat_id };
         this._deliverTo(target, `No longer needed (${id}): ${why}.`, done)
             .catch(e => console.warn(`[Approvals] could not close the card ${id}: ${e.message}`));
@@ -1260,7 +1269,7 @@ class ApprovalService {
      * Pause a tool call until the owner answers.
      * @returns {Promise<{ paused: boolean, id?: string, delivered?: boolean, result: object }>}
      */
-    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null, modelReason = null, guardianDecisionId = null, ownerConsent = false, preview = null }) {
+    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null, modelReason = null, guardianDecisionId = null, ownerConsent = false, preview = null, card = null }) {
         const why = reason || 'This action needs the owner\'s approval.';
         // The model reads only our own rule text, never the guardian's words.
         const whyForModel = modelReason || why;
@@ -1285,7 +1294,7 @@ class ApprovalService {
         const ttlMs = route.mode === 'interactive' ? settings.ttlInteractiveMin * 60e3 : settings.ttlDeferredHours * 3600e3;
         const meta = message?.metadata || {};
         const originMeta = {};
-        for (const key of ['jobName', 'jobOrigin', 'jobRun', 'allowedTools', 'forceModel', 'session', 'phoneNumber', 'isGroup', 'groupName']) {
+        for (const key of ['jobName', 'jobOrigin', 'jobRun', 'allowedTools', 'forceModel', 'session', 'phoneNumber', 'isGroup', 'groupName', 'errandId']) {
             if (meta[key] !== undefined) originMeta[key] = meta[key];
         }
         // What tainted the run: shown on the card, and kept so an approved
@@ -1296,6 +1305,16 @@ class ApprovalService {
         if (ownerConsent === true) originMeta.ownerConsent = true;
         // What the preview step said this call will do, for the card.
         if (typeof preview === 'string' && preview.trim()) originMeta.preview = truncate(preview.trim(), SUMMARY_CHARS);
+        // A question in plain words (an errand's next step): the card shows
+        // it instead of the tool, the arguments and the safety lines.
+        if (card && typeof card === 'object' && typeof card.question === 'string') {
+            originMeta.card = {
+                question: truncate(card.question, SUMMARY_CHARS),
+                ...(card.detail ? { detail: truncate(String(card.detail), SUMMARY_CHARS) } : {}),
+                lang: card.lang === 'es' ? 'es' : 'en',
+                ...(card.denied ? { denied: truncate(String(card.denied), SUMMARY_CHARS) } : {})
+            };
+        }
         const row = this.db.createPendingConfirmation({
             id: this._newId(),
             originChatId: meta.chatId ? String(meta.chatId) : null,
@@ -1403,6 +1422,21 @@ class ApprovalService {
 
     /** The text the owner reads. Short: what, key args, why, how to answer. */
     buildCard(row, { others = [], origin = '', ttlMs = null, mirrorOf = null } = {}) {
+        const plain = row.origin_meta?.card;
+        if (plain && typeof plain.question === 'string') {
+            const es = plain.lang === 'es';
+            const ttl = ttlMs ?? (new Date(row.expires_at).getTime() - Date.now());
+            const out = [`❓ ${plain.question}`];
+            if (plain.detail) out.push(plain.detail);
+            if (others.length > 0) {
+                out.push(es ? `Hay otras preguntas pendientes: respondé /confirm ${row.id} o /cancel ${row.id}.`
+                    : `Other questions wait here: reply /confirm ${row.id} or /cancel ${row.id}.`);
+            } else {
+                out.push(es ? `Respondé sí o no (${row.id}).` : `Reply yes or no (${row.id}).`);
+            }
+            if (Number.isFinite(ttl) && ttl > 0) out.push(es ? `Vence en ${humanDuration(ttl)}.` : `Expires in ${humanDuration(ttl)}.`);
+            return out.join('\n');
+        }
         const lines = [`🛑 Approval needed (id ${row.id})`];
         const preview = typeof row.origin_meta?.preview === 'string' ? row.origin_meta.preview : '';
         // The check step's own summary says what will happen better than the raw arguments.
@@ -1533,6 +1567,11 @@ class ApprovalService {
 
         const pending = await this.pendingHere(message);
         if (pending.length !== 1) return null;
+        // An errand card asks about someone else's chat, and "dale" is an
+        // everyday word. A bare yes decides it only while the card is the
+        // last thing Deedee said here; otherwise the model reads the word in
+        // its context (he may be answering a later question).
+        if (pending[0].origin_meta?.errandId !== undefined && !this._isNewestInChat(pending[0], chatId)) return null;
         const decision = decisionWord(text, { toolName: pending[0].tool_name });
         if (!decision) return null;
         if (await this._questionOpen(message)) return null;
@@ -1541,6 +1580,21 @@ class ApprovalService {
             return { handled: true, reply: await this._reply(message, 'Reply yes to cancel it, or no to keep it.', sendCallback) };
         }
         return this.decide(pending[0].id, decision, { via: 'chat', message, sendCallback });
+    }
+
+    /** Is this card the newest message Deedee wrote in the chat? Unknown counts as no. */
+    _isNewestInChat(row, chatId) {
+        if (typeof this.db?.getRecentMessageOrigins !== 'function') return false;
+        try {
+            const rows = this.db.getRecentMessageOrigins(String(chatId), 20);
+            const newest = rows.find(r => r.role === 'assistant');
+            if (!newest) return false;
+            let meta = newest.metadata;
+            if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = null; } }
+            return meta?.approval?.id === row.id;
+        } catch {
+            return false;
+        }
     }
 
     /**
@@ -1617,7 +1671,7 @@ class ApprovalService {
         this._broadcast({ id: row.id, status: decision, chatId: row.reply_chat_id, toolName: row.tool_name });
 
         if (decision === 'denied') {
-            const text = `Denied: ${row.tool_name} will not run.`;
+            const text = row.origin_meta?.card?.denied || `Denied: ${row.tool_name} will not run.`;
             const reply = message ? await this._reply(message, text, sendCallback) : await this._deliverTo(this._resultTarget(row, null), text, row);
             return { handled: true, row, reply };
         }

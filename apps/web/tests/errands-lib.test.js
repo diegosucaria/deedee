@@ -191,3 +191,12 @@ describe('step lines', () => {
         expect(eventLine(ev('received', { excerpt: 'z'.repeat(1000) })).length).toBeLessThanOrEqual(320);
     });
 });
+
+describe('eventLine: steps added in review', () => {
+    test('a step that waited for new words, a message after the booking, and a note of news read as plain lines', () => {
+        expect(eventLine({ kind: 'decided', detail: { action: 'accept', deferred: true } })).toBe('Waited: they wrote again before accept went out');
+        expect(eventLine({ kind: 'after', detail: { kind: 'offer', slots: [{ date: '2026-10-08', time: '11:00' }] } })).toBe('After the booking: offer, Thu 08/10 11:00');
+        expect(eventLine({ kind: 'after', detail: { failed: true } })).toBe('After the booking: could not read their message');
+        expect(eventLine({ kind: 'note', detail: { told: true } })).toBe('Told you what else they wrote');
+    });
+});

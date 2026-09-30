@@ -439,7 +439,7 @@ const toolDefinitions = [
       {
         name: "startErrand",
         category: "communication",
-        description: "Do something for the owner with one person over WhatsApp, writing from his own account in his voice: book a slot ('book'), ask a question and tell him the answer ('ask'), or pass on a message ('tell'). Use it whenever he asks you to write to someone for him; never write that message yourself. The errand writes it from his chat with that person, waits for the answer, asks him only when a choice is his, and adds an agreed slot to his calendar. Find the person with searchContacts first and pass the exact number or id; if several people fit, ask him which one. send=false only drafts the first message.",
+        description: "Only in the owner's own chat. Do something for him with one person over WhatsApp, writing from his own account in his voice: book a slot ('book'), ask a question and tell him the answer ('ask'), or pass on a message ('tell'). Use it whenever he asks you to write to someone for him; never write that message yourself. The errand writes it from his chat with that person, waits for the answer, asks him only when a choice is his, and adds an agreed slot to his calendar. Find the person with searchContacts first and pass the exact number or id; if several people fit, ask him which one. send=false only drafts the first message.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -462,14 +462,14 @@ const toolDefinitions = [
       {
         name: "answerErrand",
         category: "communication",
-        description: "The owner's answer on an open errand (listed in the TURN CONTEXT): 'accept' a slot, 'propose' another slot, 'decline', 'say' something else to the person, or 'cancel' the errand without writing. The errand writes the message in his voice.",
+        description: "Only in the owner's own chat. His answer on an open errand (listed in the TURN CONTEXT): 'accept' a slot, 'propose' another slot, 'decline', 'say' something else to the person, or 'cancel' the errand without writing. accept and propose need an explicit date and time. The errand writes the message in his voice.",
         parameters: {
           type: "OBJECT",
           properties: {
             id: { type: "NUMBER", description: "The errand id." },
             action: { type: "STRING", description: "'accept', 'propose', 'decline', 'say' or 'cancel'." },
-            date: { type: "STRING", description: "accept or propose: YYYY-MM-DD. accept defaults to the slot on the table." },
-            time: { type: "STRING", description: "accept or propose: HH:MM (24 h)." },
+            date: { type: "STRING", description: "accept or propose: YYYY-MM-DD, required (the slot on the table is in the TURN CONTEXT)." },
+            time: { type: "STRING", description: "accept or propose: HH:MM (24 h), required." },
             text: { type: "STRING", description: "say: what to tell them, in his words." }
           },
           required: ["id", "action"]

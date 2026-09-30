@@ -32,9 +32,10 @@ describe('voice: the checks every outgoing text passes', () => {
         expect(checkText([''], { step: 'say' })).toEqual(['it was empty']);
     });
 
-    test('an accept names only the accepted time, and asks nothing new', () => {
+    test('an accept names the accepted time and no other, and asks nothing new', () => {
         expect(checkText(['dale! 10 voy'], { step: 'accept', time: '10:00' })).toEqual([]);
-        expect(checkText(['dale!'], { step: 'accept', time: '10:00' })).toEqual([]);
+        expect(checkText(['dale!'], { step: 'accept', time: '10:00' })).toContain('it did not name the time 10:00');
+        expect(checkText(['listo, gracias'], { step: 'thanks', time: '10:00' })).toEqual([]);
         expect(checkText(['dale, a las 11'], { step: 'accept', time: '10:00' })).toContain('it named a time other than 10:00');
         expect(checkText(['dale, y el viernes?'], { step: 'accept', time: '10:00' })).toContain('it asked a new question');
     });
@@ -55,6 +56,36 @@ describe('voice: the checks every outgoing text passes', () => {
         expect(sameTime({ hour: 4, min: 30 }, '16:30')).toBe(true);
         expect(sameTime({ hour: 10, min: 0 }, '22:00')).toBe(true);
         expect(sameTime({ hour: 10, min: 0 }, '10:30')).toBe(false);
+    });
+});
+
+describe('voice: ordinary messages pass', () => {
+    test('a smiley, a heart, "ia" typed for "ya" and a plain hour are not refused', () => {
+        expect(checkText(['dale :)'], { step: 'say' })).toEqual([]);
+        expect(checkText(['gracias <3'], { step: 'say' })).toEqual([]);
+        expect(checkText(['ia voy saliendo'], { step: 'say' })).toEqual([]);
+        expect(checkText(['ignoro si abre el sábado'], { step: 'say' })).toEqual([]);
+    });
+
+    test('"a la 1", "a las diez" and "al mediodía" are times', () => {
+        expect(timesIn('a la una')).toEqual([{ hour: 1, min: 0 }]);
+        expect(timesIn('a las diez y media')).toEqual([{ hour: 10, min: 30 }]);
+        expect(timesIn('al mediodía')).toEqual([{ hour: 12, min: 0 }]);
+        expect(checkText(['hay lugar a la 1?'], { step: 'request', time: '13:00' })).toEqual([]);
+    });
+
+    test('a window request may name its bounds: any time inside the range passes', () => {
+        expect(checkText(['hay lugar el jueves entre las 9 y las 12?'], { step: 'request', range: { start: '09:00', end: '12:00' } })).toEqual([]);
+        expect(checkText(['hay lugar el jueves a las 15?'], { step: 'request', range: { start: '09:00', end: '12:00' } })).toContain('it named a time outside 09:00-12:00');
+    });
+
+    test('a command to Deedee never goes out, and money only in his own words', () => {
+        expect(checkText(['/confirm abc'], { step: 'say' })).toContain('it looked like a command');
+        expect(checkText(['dale /cancel'], { step: 'say' })).toContain('it looked like a command');
+        expect(checkText(['te paso la plata mañana'], { step: 'say' })).toContain('it talked about money');
+        expect(checkText(['te paso la plata mañana'], { step: 'say', allowMoney: true })).toEqual([]);
+        expect(checkText(['acepto pagar la seña'], { step: 'accept', time: null })).toContain('it talked about money');
+        expect(checkText(['mirá t.co/abc'], { step: 'say' })).toContain('it had a link');
     });
 });
 
@@ -146,6 +177,18 @@ describe('voice: drafting', () => {
         const out = await svc.draft({ stats: OWNER_STATS, step: 'request', brief: {}, timeZone: 'UTC', requireTime: '10:00', requireDate: '2026-10-08' });
         expect(out.ok).toBe(false);
         expect(out.problems).toContain('it asked for 2026-10-09 instead of 2026-10-08');
+    });
+
+    test('the caller\'s own check (his calendar) refuses a draft and gets one more try', async () => {
+        const { svc } = service([
+            { text: 'hay lugar el jueves a las 10?', date: '2026-10-08', time: '10:00' },
+            { text: 'hay lugar el jueves a las 11?', date: '2026-10-08', time: '11:00' }
+        ]);
+        const check = jest.fn(async (d) => (d.time === '10:00' ? ['it asked for 10:00, when his calendar is busy'] : []));
+        const out = await svc.draft({ stats: OWNER_STATS, step: 'request', brief: {}, timeZone: 'UTC', check });
+        expect(out.ok).toBe(true);
+        expect(out.time).toBe('11:00');
+        expect(check).toHaveBeenCalledTimes(2);
     });
 
     test('the time the text names becomes the slot when the model leaves it empty', async () => {

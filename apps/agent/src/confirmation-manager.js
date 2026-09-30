@@ -263,6 +263,14 @@ class ConfirmationManager {
                 message: 'First message to a contact the owner never messaged through Deedee.'
             },
             {
+                // An errand writes to a person from the owner's own account
+                // (services/errands.js). His word in his own clean chat
+                // covers it (OUTWARD_RULES); anywhere else it asks.
+                id: 'errand-send',
+                condition: (name, args) => name === 'startErrand' || (name === 'answerErrand' && asString(args.action) !== 'cancel'),
+                message: 'An errand writes to someone from the owner\'s own WhatsApp.'
+            },
+            {
                 id: 'appointments',
                 condition: (name) => /(?:^|_)(?:book|cancel)_(?:appointment|turn)$/i.test(name),
                 message: 'This books or cancels a real appointment.'

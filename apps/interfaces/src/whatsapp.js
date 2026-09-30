@@ -1596,15 +1596,16 @@ class WhatsAppService {
      * style-stats): numbers only, no text. Reads the newest rows by rowid,
      * never the whole table.
      */
-    getOwnStyleStats({ rows = 40000 } = {}) {
+    getOwnStyleStats({ rows = 40000, excludeJids = [] } = {}) {
         if (!this.store?.db) return { n: 0 };
+        const skip = new Set((excludeJids || []).map(j => String(j).replace(/:\d+(?=@)/, '')));
         const max = this.store.db.prepare('SELECT max(rowid) AS m FROM messages').get()?.m || 0;
         const list = this.store.db.prepare(`
             SELECT remote_jid, timestamp, content FROM messages
             WHERE rowid > ? AND from_me = 1 AND content IS NOT NULL AND content != ''
         `).all(Math.max(0, max - rows));
         const own = list
-            .filter(r => !String(r.remote_jid).endsWith('@g.us') && !/broadcast|newsletter/.test(String(r.remote_jid)))
+            .filter(r => !String(r.remote_jid).endsWith('@g.us') && !/broadcast|newsletter/.test(String(r.remote_jid)) && !skip.has(String(r.remote_jid)))
             .map(r => ({ text: r.content, ts: Number(r.timestamp) * 1000, chat: r.remote_jid }));
         return styleStats(own);
     }

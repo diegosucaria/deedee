@@ -22,7 +22,8 @@ class ErrandsExecutor extends BaseExecutor {
                 // A job, a watcher, a sub-agent or a contact's chat never starts one,
                 // not even with an approval card.
                 if (!ownerTyped) return { success: false, error: 'An errand starts only from the owner\'s own chat.' };
-                return errands.start(a, { approved, originMessage: context?.message || null });
+                // A run that read someone else's text marks the request it writes.
+                return errands.start(a, { approved, originMessage: context?.message || null, taint: context?.untrustedTaint || [] });
             case 'answerErrand':
                 return errands.answer(a, {
                     byOwner: ownerTyped,

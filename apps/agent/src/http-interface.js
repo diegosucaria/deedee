@@ -83,7 +83,10 @@ class HttpInterface extends EventEmitter {
       // The WhatsApp id of what went out, on the caller's own object: an
       // errand tells its messages from the ones the owner types himself.
       // The return value stays a boolean for every other caller.
-      if (res?.data?.messageId && message && typeof message === 'object') message.sentMessageId = String(res.data.messageId);
+      if (res?.data?.messageId && message && typeof message === 'object') {
+        // A frozen payload keeps no id, and the message still went out.
+        try { message.sentMessageId = String(res.data.messageId); } catch { /* frozen or sealed */ }
+      }
       return true;
     } catch (error) {
       console.error('[HttpInterface] Send Error:', error.message);

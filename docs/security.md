@@ -381,16 +381,26 @@ child, so file modes and `/proc` stop a read that a text rule misses.
 An errand writes to one person from the owner's own WhatsApp
 (`services/errands.js`, `docs/errands.md`). It adds no new kind of card:
 
-- **Start.** `startErrand` passes the gate like any tool call. In his own
-  clean chat his request is his approval, and the first message goes out
-  with no card. Only his own chat may start one (`ownerTyped`): a job, a
-  watcher, a sub-agent or a contact's chat is refused, even with a card. If
-  he never wrote to that person, a card for `startErrand` asks first.
+- **Start.** `startErrand` and `answerErrand` (but a cancel) pass the gate
+  under the `errand-send` rule, one of `OUTWARD_RULES`: in his own clean
+  chat his request is his approval, and the first message goes out with no
+  card; with someone else's words in the chat it asks once. The guardian
+  never decides these two tools: a card does. Only his own typed chat may
+  start one (`ownerTyped`): a job, a watcher, a sub-agent, a voice call or a
+  contact's chat is refused, even with a card. If he never wrote to that
+  person, a card for `startErrand` asks first. An errand never writes to his
+  own lines or to Deedee's number (a message from his account to hers would
+  arrive as his word). A request written in a tainted run is marked
+  (`request_tainted`) and never shown back as his words.
 - **His choices** (another slot, a question, a refusal) come as a card for
   `answerErrand` through `ApprovalService.askOwner`: no rule and no guardian,
-  the deny-list still applies. A card for an older offer cannot answer a
+  the deny-list still applies. The card reads as a plain question in his
+  language (`origin_meta.card`). A bare yes decides an errand card only
+  while it is the last thing Deedee said in that chat (`_isNewestInChat`):
+  "dale" is his everyday word. A card for an older offer cannot answer a
   newer one: the errand withdraws it (`ApprovalService.withdraw`) and checks
-  the approval id when it runs.
+  the approval id when it runs. `accept` and `propose` need an explicit date
+  and time, so an approved card runs exactly what it showed.
 - **Steps inside his scope** (the contact confirms the slot he asked for, or
   offers a free slot inside his window) run through `review()` with a
   `grant`. The errand service vouches for the step with a random one-time
@@ -402,7 +412,10 @@ An errand writes to one person from the owner's own WhatsApp
 - **After reading a contact's text** a run asks before `startErrand` and
   before any `answerErrand` but a cancel (`taintedAction`).
 - **Notes to the owner** hold only checked slots and People names. A note
-  that must quote the contact carries the `jobTaint` mark.
+  that says what the contact said carries the `jobTaint` mark. A refused
+  draft never goes back to the model.
+- **Races:** every step on one errand runs under its lock and reads the row
+  again before it sends or books; a closed errand is never written back.
 
 ## Approval guardian
 
