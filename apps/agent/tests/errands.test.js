@@ -2268,6 +2268,85 @@ describe('errands', () => {
             expect(pendingCards().filter(c => c.tool_name === 'startErrand')).toHaveLength(1);
         });
 
+        test('after his "no" to a card, her repeat of his first time is never booked on its own', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            agent.impersonationService.transcribeAudio.mockResolvedValueOnce(null);
+            service.bufferMs = 60e3;
+            service.claim(contactWrites('dale jueves 10'), { contactString: CONTACT });
+            service.claim({ ...contactWrites(''), parts: [{ inlineData: { mimeType: 'audio/ogg', data: 'AAAA' } }] }, { contactString: CONTACT });
+            forms.push({ kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            await service.flush(errand.id);
+            await approvals.decide(pendingCards()[0].id, 'denied', { via: 'test' });
+            await service.sweep();
+            service.bufferMs = 5;
+            clock += 20 * 60e3;
+            await contactAnswers(errand, 'te espero el jueves a las 10 entonces', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            expect(sends).toHaveLength(1);
+            expect(inserted).toHaveLength(0);
+        });
+
+        test('his newer step dropped by her "me fijo" still stops her later yes to his first time', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', offer('10:30'));
+            service.bufferMs = 60e3;
+            service.claim(contactWrites('igual me fijo si se libera algo y te aviso'), { contactString: CONTACT });
+            const res = await service.answer({ id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, { byOwner: true });
+            expect(res.deferred).toBe(true);
+            forms.push({ kind: 'later', slots: [], summary: 'Will check.', tellOwner: false });
+            await service.flush(errand.id);
+            service.bufferMs = 5;
+            clock += 30 * 60e3;
+            await contactAnswers(errand, 'listo, a las 10 sí tengo', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms 10.', tellOwner: false });
+            expect(sends).toHaveLength(1);
+            expect(inserted).toHaveLength(0);
+            expect(db.getErrand(errand.id).state).toBe('waiting_owner');
+        });
+
+        test('"me fijo" after her earlier yes brings the no-answer note after four hours of silence', async () => {
+            const errand = await startBooking();
+            clock = at('2026-10-06', '23:10');
+            await contactAnswers(errand, 'dale, jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            clock = at('2026-10-06', '23:13');
+            await contactAnswers(errand, 'uh esperá que me fijo', { kind: 'later', slots: [], summary: 'Will check.', tellOwner: false });
+            clock = at('2026-10-07', '08:05');
+            await service.sweep();
+            expect(notes().some(n => /escribió pero todavía no contestó lo que le pedí/.test(n.content))).toBe(true);
+        });
+
+        test('an ask errand whose answer was a voice note only he could hear ends with his follow-up', async () => {
+            drafts.push({ text: 'abrís el sábado?', date: '', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale si abre el sábado' });
+            clock += 5 * 60e3;
+            agent.impersonationService.transcribeAudio.mockResolvedValueOnce(null);
+            forms.push({ kind: 'other', slots: [], summary: 'A voice note.', tellOwner: false });
+            service.claim({ ...contactWrites(''), parts: [{ inlineData: { mimeType: 'audio/ogg', data: 'AAAA' } }] }, { contactString: CONTACT });
+            await service.flush(out.errandId);
+            drafts.push({ text: 'gracias!', date: '', time: '' });
+            await service.answer({ id: out.errandId, action: 'say', text: 'gracias!' }, { byOwner: true });
+            expect(db.getErrand(out.errandId).state).toBe('done');
+        });
+
+        test('"y decile ..." is not a yes; a bare "y" still is', async () => {
+            const card = await approvals.request({ message: { source: 'whatsapp', role: 'user', content: 'x', metadata: { chatId: OWNER_LID } }, toolName: 'forgetFact', args: { key: 'k' }, reason: 'r' });
+            expect(await approvals.intercept({ ...ownerSays('y decile'), id: 'y-1' }, jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+            expect(await approvals.intercept({ ...ownerSays('y'), id: 'y-2' }, jest.fn())).toBeTruthy();
+        });
+
+        test('an ask errand answered with a photo ends with his follow-up', async () => {
+            drafts.push({ text: 'qué modelo tenés?', date: '', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale qué modelo tiene' });
+            clock += 5 * 60e3;
+            forms.push({ kind: 'other', slots: [], summary: 'A photo.', tellOwner: false });
+            service.claim({ ...contactWrites('[Image]'), parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }] }, { contactString: CONTACT });
+            await service.flush(out.errandId);
+            drafts.push({ text: 'gracias!', date: '', time: '' });
+            await service.answer({ id: out.errandId, action: 'say', text: 'gracias!' }, { byOwner: true });
+            expect(db.getErrand(out.errandId).state).toBe('done');
+        });
+
         test('an ask errand stays open after his follow-up to her question: her answer still reaches him', async () => {
             drafts.push({ text: 'venís el sábado?', date: '', time: '' });
             const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale si viene el sábado' });

@@ -144,7 +144,8 @@ function normalizeWord(text) {
 
 // A short reply decides a card when every word is on these lists and one
 // word says yes (or no). "ok gracias" or "yes, send it tomorrow" go to the model.
-const APPROVE_CORE = new Set(['yes', 'y', 'si', 'sí', 'ok', 'okay', 'dale', 'approve', 'approved', 'confirm', 'confirmed', 'confirmo',
+// A bare "y" is yes, but "y decile..." is Spanish for "and tell her...": not in the core.
+const APPROVE_CORE = new Set(['yes', 'si', 'sí', 'ok', 'okay', 'dale', 'approve', 'approved', 'confirm', 'confirmed', 'confirmo',
     'confirmado', 'proceed', 'adelante', 'hacelo', 'hazlo', 'yep', 'yeah', 'sure', 'claro', '👍', '👌', '✅']);
 const APPROVE_FILLER = new Set(['please', 'pls', 'por', 'favor', 'porfa', 'go', 'ahead', 'do', 'it', 'just', 'nomas', 'nomás',
     'reservalo', 'resérvalo', 'reservala', 'resérvala', 'reserva', 'reservá', 'bookealo', 'agendalo', 'agéndalo',

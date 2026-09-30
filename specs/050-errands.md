@@ -166,7 +166,9 @@ Errands add no new kind of card. They use the approval service as it is.
   it.
 - **Steps inside his scope.** The contact confirms the slot he asked for,
   or, in window mode, offers a slot inside the window that is free on his
-  calendar. The errand runs `answerErrand` through the same gate with an
+  calendar, and he has not been asked or stepped in since the slot was set
+  (`auto_ok`: any card or note to him, his "no", or a step of his on hold
+  turns it off; a slot of his that goes out turns it on). The errand runs `answerErrand` through the same gate with an
   errand grant. The approval service asks the errand service to check the
   grant (errand open, step and slot inside the scope, limits not hit) and
   records the decision as `owner_grant`. The deny-list, the floor and his
@@ -293,7 +295,7 @@ own.
 
 ## 12. Review
 
-Ten review rounds (security, the owner's real flows replayed message by
+Eleven review rounds (security, the owner's real flows replayed message by
 message, regressions, and a check that each fix held) found real faults.
 Each fix has a test named after the fault in
 `apps/agent/tests/errands.test.js` ("review round one", "review round
