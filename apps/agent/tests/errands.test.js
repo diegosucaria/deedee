@@ -3001,6 +3001,149 @@ describe('errands', () => {
             expect(sends).toHaveLength(1);
         });
 
+        test('her "perdón!!" after her "no" does not hide it: his thanks bring no "todavía no contestó" note', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'uh el jueves no tengo nada', { kind: 'decline', slots: [], summary: 'No room on Thursday.', tellOwner: false });
+            clock += 60e3;
+            await contactAnswers(errand, 'perdón!!', { kind: 'other', slots: [], summary: 'Sorry.', tellOwner: false });
+            clock += 15 * 60e3;
+            drafts.push({ text: 'bueno, gracias igual', date: '', time: '' });
+            await service.answer({ id: errand.id, action: 'say', text: 'gracias igual' }, { byOwner: true });
+            clock += 5 * 3600e3;
+            await service.sweep();
+            expect(notes().some(n => /todavía no contestó/.test(n.content))).toBe(false);
+        });
+
+        test('her "me fijo" after a note that asked about her yes: the errand waits for her again', async () => {
+            const errand = await startBooking();
+            clock = at('2026-09-30', '23:10');
+            await contactAnswers(errand, 'dale jueves 10', confirms());
+            clock = at('2026-09-30', '23:20');
+            forms.push({ kind: 'other', slots: [], summary: 'A photo.', tellOwner: false });
+            service.claim({ ...contactWrites('[Image]'), parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }] }, { contactString: CONTACT });
+            await service.flush(errand.id);
+            expect(db.getErrand(errand.id).state).toBe('waiting_owner');
+            clock = at('2026-09-30', '23:30');
+            await contactAnswers(errand, 'pará que me fijo', later);
+            expect(db.getErrand(errand.id).state).toBe('waiting_contact');
+            clock = at('2026-10-01', '12:05');
+            await service.sweep();
+            expect(notes().some(n => /todavía no contestó/.test(n.content))).toBe(true);
+        });
+
+        test('"jueves o viernes a las 10" asked the night before: he hears of no answer before Thursday 10:00', async () => {
+            clock = at('2026-10-07', '21:30');
+            drafts.push({ text: 'Buenas! tenés lugar el jueves o el viernes a las 10?', date: '2026-10-08', time: '10:00' });
+            await service.start({ contact: CONTACT, goal: 'book', request: 'turno jueves o viernes a las 10', windowStart: '2026-10-08T10:00', windowEnd: '2026-10-09T10:00' });
+            clock = at('2026-10-08', '08:05');
+            await service.sweep();
+            expect(notes().some(n => /no contestó/.test(n.content))).toBe(true);
+        });
+
+        test('"el jueves a cualquier hora" ends on Thursday, not a day late', async () => {
+            clock = at('2026-10-05', '09:00');
+            drafts.push({ text: 'Buenas! tenés lugar el jueves?', date: '2026-10-08', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves a cualquier hora', windowStart: '2026-10-08T00:00', windowEnd: '2026-10-09T00:00' });
+            expect(Date.parse(db.getErrand(out.errandId).expires_at)).toBeLessThanOrEqual(at('2026-10-08', '22:00'));
+        });
+
+        test('her bare "dale" to a window: the note names the window, not only its first day', async () => {
+            drafts.push({ text: 'Buenas! tenés lugar el jueves o el viernes a las 10?', date: '2026-10-08', time: '10:00' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno jueves o viernes a las 10', windowStart: '2026-10-08T10:00', windowEnd: '2026-10-09T10:00' });
+            clock += 5 * 60e3;
+            await contactAnswers(db.getErrand(out.errandId), 'dale', { kind: 'confirm', slots: [], summary: 'Says yes.', tellOwner: false });
+            expect(notes().pop().content).toMatch(/le había pedido el jue 08\/10 a vie 09\/10, a las 10:00/);
+        });
+
+        test('her "me fijo" after the card for her offer lapsed: he hears it and the offer leaves the table', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'a las 10 no, tengo 10:30', offer('10:30'));
+            // The card lapses unanswered.
+            db.decidePendingConfirmation(pendingCards()[0].id, 'expired', { via: 'timeout' });
+            clock += 10 * 60e3;
+            await contactAnswers(errand, 'pará que me fijo si todavía tengo las 10:30 y te aviso', later);
+            expect(notes().pop().content).toMatch(/se fija y te avisa .*Lo del jue 08\/10 a las 10:30 ya no lo doy por hecho/);
+            expect(service.turnContextLines()[0]).not.toMatch(/on the table/);
+        });
+
+        test('her "me fijo" leaves a card of his for another slot as the live question: no note, his "sí" still sends it', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'a las 10 no, tengo 10:30', offer('10:30'));
+            const res = await approvals.review({ message: ownerSays('decile que mejor 11'), toolName: 'answerErrand', args: { id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, historyUntrusted: true, foreignText: true });
+            expect(res.status).toBe('paused');
+            const before = notes().length;
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'pará que me fijo', later);
+            expect(notes()).toHaveLength(before);
+            expect(db.getPendingConfirmation(res.approvalId).status).toBe('pending');
+        });
+
+        test('an automatic accept that pauses on a bad draft still names her yes', async () => {
+            const errand = await startBooking();
+            drafts.push({ text: 'dale, 11 voy', date: '', time: '' }, { text: 'dale, 11 voy', date: '', time: '' });
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'dale jueves 10 te espero', confirms());
+            expect(db.getErrand(errand.id).state).toBe('paused');
+            expect(db.getErrand(errand.id).held_yes).toMatchObject({ date: '2026-10-08', time: '10:00' });
+            expect(service.turnContextLines()[0]).toMatch(/they agreed to 2026-10-08 10:00/);
+        });
+
+        test('"tengo a las 11, igual me fijo si se libera las 10": he gets a card for 11:00', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'tengo a las 11, igual me fijo si se libera a las 10 y te aviso', { kind: 'later', slots: [{ date: '2026-10-08', time: '11:00' }], summary: 'Offers 11, checks 10.', tellOwner: false });
+            expect(pendingCards()).toHaveLength(1);
+            expect(lastCard()).toMatch(/jue 08\/10 a las 11:00.*se fija si se libera otro horario/);
+            expect(inserted).toHaveLength(0);
+        });
+
+        test('his new slot after her "no" still waits for her answer: his next words do not silence the note', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'uh el jueves no tengo nada', { kind: 'decline', slots: [], summary: 'No room on Thursday.', tellOwner: false });
+            clock += 10 * 60e3;
+            drafts.push({ text: 'y a las 17?', date: '2026-10-08', time: '17:00' });
+            const p = await service.answer({ id: errand.id, action: 'propose', date: '2026-10-08', time: '17:00' }, { byOwner: true });
+            expect(p).toMatchObject({ success: true });
+            clock += 10 * 60e3;
+            drafts.push({ text: 'confirmame cuando puedas', date: '', time: '' });
+            const res = await service.answer({ id: errand.id, action: 'say', text: 'confirmame cuando puedas' }, { byOwner: true });
+            expect(res.ownerLine).not.toMatch(/No quedó nada agendado/);
+            clock += 5 * 3600e3;
+            await service.sweep();
+            expect(notes().some(n => /no contestó/.test(n.content))).toBe(true);
+        });
+
+        test('"jueves o viernes de 21 a 7" over two nights never books Friday noon on its own', async () => {
+            drafts.push({ text: 'hola! tenés lugar jueves o viernes a la noche?', date: '2026-10-08', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'jueves o viernes de 21 a 7', windowStart: '2026-10-08T21:00', windowEnd: '2026-10-10T07:00' });
+            clock += 5 * 60e3;
+            await contactAnswers(db.getErrand(out.errandId), 'viernes 12?', offer('12:00', '2026-10-09'));
+            expect(inserted).toHaveLength(0);
+            expect(lastCard()).toMatch(/fuera de tu rango \(jue 08\/10 a vie 09\/10, de 21:00 a 07:00 del día siguiente\)/);
+        });
+
+        test('a 07:30 slot asked the evening before: he hears of no answer that evening, not after the slot', async () => {
+            clock = at('2026-10-07', '20:00');
+            drafts.push({ text: 'Buenas! hay lugar mañana a las 7:30?', date: '2026-10-08', time: '07:30' });
+            await service.start({ contact: CONTACT, goal: 'book', request: 'turno mañana 7:30', date: '2026-10-08', time: '07:30' });
+            clock = at('2026-10-07', '21:35');
+            await service.sweep();
+            expect(notes().some(n => /no contestó/.test(n.content))).toBe(true);
+        });
+
+        test('her "venite ya" offer, too soon to accept, is told as such, not as "no entendí"', async () => {
+            const errand = await startBooking();
+            clock = at('2026-10-01', '09:00');
+            await contactAnswers(errand, 'venite ya, 9:10?', { kind: 'offer', slots: [{ date: '2026-10-01', time: '09:10' }], summary: 'Offers 9:10 now.', tellOwner: false });
+            const last = notes().pop().content;
+            expect(last).toMatch(/muy pronto/);
+            expect(last).not.toMatch(/no entendí/);
+        });
+
         test('"y decile ..." or "y?" ("and tell her ...", "so?") is not a yes', async () => {
             const card = await approvals.request({ message: { source: 'whatsapp', role: 'user', content: 'x', metadata: { chatId: OWNER_LID } }, toolName: 'forgetFact', args: { key: 'k' }, reason: 'r' });
             expect(await approvals.intercept({ ...ownerSays('y decile'), id: 'y-1' }, jest.fn())).toBeNull();

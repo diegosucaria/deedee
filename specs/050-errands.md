@@ -233,7 +233,7 @@ Code enforces these, not the prompt.
 | All messages per errand | 10; then it pauses |
 | Gap between its own messages | at least 1 minute |
 | Quiet hours | 22:00-08:00 local: nothing goes out on its own and no note that can wait is sent; a step waits until 08:00, unless the slot would pass first (then he gets a card at once). A card or note about the contact's reply goes out at once: the slot may not wait |
-| No answer from the contact | the owner hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word (four hours of her day: the night does not count), and he hears by two hours before the slot; his words after her "no" that ask nothing wait for no answer; Deedee never writes again on her own |
+| No answer from the contact | the owner hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word (four hours of her day: the night does not count), and he hears by two hours before the slot (the evening before, when that falls at night); his words after her "no" that ask nothing wait for no answer, even when small talk came after her "no"; Deedee never writes again on her own |
 | Life of an errand | until the slot's day, 7 days at most; a new day he proposes moves it. An end in quiet hours moves to 21:55, and past its end an errand closes at once, so it raises no cards at night |
 | Voice notes | 60 seconds to transcribe, then unreadable |
 | Model calls per errand | 20; then it pauses and tells him. His own steps, and the errand once he answers it after a pause, get 40 |
@@ -298,7 +298,7 @@ own.
 
 ## 12. Review
 
-Twenty review rounds (security, the owner's real flows replayed message by
+Twenty-one review rounds (security, the owner's real flows replayed message by
 message, regressions, and a check that each fix held) found real faults.
 Each fix has a test named after the fault in
 `apps/agent/tests/errands.test.js` ("review round one", "review round

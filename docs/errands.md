@@ -44,7 +44,8 @@ It never writes the message itself.
 3. **Reading.** A Flash call with no tools fills a form: `offer`,
    `confirm`, `decline`, `question`, `answer`, `later` or `other`, with
    slots, and says whether the messages carry news for him. Code keeps only
-   real slots at least 15 minutes ahead.
+   real slots at least 15 minutes ahead. An offer sooner than that ("venite
+   ya") reaches him as too soon to accept.
 4. **Deciding.** Code decides:
    - the contact confirms the slot he asked for on his day, or (window
      mode) offers a slot inside his window, and his calendar is free then:
@@ -89,13 +90,19 @@ meanwhile do not drop it silently. Her "no tengo lugar", her "me fijo" (he is
 told), her newer offer, his "no" to its card, or a step of his that picks
 another slot ends it. Her "me fijo", even with a photo or news, takes that
 slot off the table and takes back any card that would accept a slot of hers
-(the errand's, or his own "aceptale"); he hears what it took back. After a
+(the errand's, or his own "aceptale"); he hears what it took back, and the
+errand waits for her again. An offer of hers whose card lapsed is no longer
+taken as settled either. A card of his for another slot or his words stays
+the live question, with no note. "Tengo a las 11, igual me fijo si se libera
+a las 10" brings a card for 11:00. Her yes that the errand is about to
+accept on its own stays on record until it is booked, so a pause or a
+takeover still names it. After a
 booking, her "me fijo" reaches him too. A window of 00:00 to 00:00 means any
 time on its days. Otherwise its hours hold on each day: "jueves o viernes a
-las 10" (10:00 to 10:00) takes 10:00 only. Hours that pass midnight and end
-by 06:00 hold each night, up to the morning after its last night. Hours that
-end after 06:00 the next day ("jueves a la tarde o viernes a la mañana") are
-one stretch, shown with both ends. A first message may name only the
+las 10" (10:00 to 10:00) takes 10:00 only. Hours that pass midnight hold each
+night, up to the morning after its last night. From one afternoon to a
+morning after 06:00 the next day ("jueves a la tarde o viernes a la
+mañana") is one stretch, shown with both ends. A first message may name only the
 window's days. While a step he asked for waits for the contact's
 new words to be read, or waits on a card of his (or that card lapsed or was
 dropped, and nothing went out since), the errand accepts nothing on its own;
@@ -155,7 +162,7 @@ After the model writes, code:
 | All messages | 10 per errand |
 | Gap between its own messages | 1 minute |
 | Quiet hours | 22:00 to 08:00: a step waits until 08:00 |
-| No answer | he hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word (four hours of her day: the night does not count), and he hears by two hours before the slot; his words after her "no" that ask nothing wait for no answer; Deedee never writes again on her own |
+| No answer | he hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word (four hours of her day: the night does not count), and he hears by two hours before the slot (the evening before, when that falls at night); his words after her "no" that ask nothing wait for no answer, even when small talk came after her "no"; Deedee never writes again on her own |
 | Life | until the slot's day, 7 days at most; an end in quiet hours moves to 21:55 (a late slot keeps its evening); past its end an errand closes at once, and a note held by quiet hours goes out at 08:00. He hears at the start when the errand ends before the day |
 | Model calls | 20 per errand, 40 for his own steps and once he answers a paused errand |
 | Voice notes | 60 seconds to transcribe, then it counts as unreadable |
