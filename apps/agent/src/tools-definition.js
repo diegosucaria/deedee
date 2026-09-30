@@ -449,7 +449,7 @@ const toolDefinitions = [
             date: { type: "STRING", description: "book: the day he wants, YYYY-MM-DD." },
             time: { type: "STRING", description: "book: the time he wants, HH:MM (24 h). Leave it out when he named none: the errand asks for his usual time with that person." },
             windowStart: { type: "STRING", description: "book, only when he says any time in a range is fine: its start, YYYY-MM-DDTHH:MM local time." },
-            windowEnd: { type: "STRING", description: "book: the end of that range, YYYY-MM-DDTHH:MM local time. Over several days, the start and end hours hold on each day (\"Thursday or Friday, 9 to 12\" is 09:00 to 12:00 on both). Inside it the errand accepts an offer on its own when his calendar is free." },
+            windowEnd: { type: "STRING", description: "book: the end of that range, YYYY-MM-DDTHH:MM local time. Over several days, the start and end hours hold on each day (\"Thursday or Friday, 9 to 12\" is 09:00 to 12:00 on both; \"Thursday or Friday at 10\" is 10:00 to 10:00, so 10:00 only). Any time on a day: 00:00 to 00:00 the next day. Hours past midnight (\"de 21 a 1\") end on the morning after the last night. Inside it the errand accepts an offer on its own when his calendar is free." },
             eventTitle: { type: "STRING", description: "book: the calendar event title (e.g. 'Dentista - Alice')." },
             location: { type: "STRING", description: "book: the event location, if he gave one." },
             durationMinutes: { type: "NUMBER", description: "book: the event length in minutes. Default 60." },

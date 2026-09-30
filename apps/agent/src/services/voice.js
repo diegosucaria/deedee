@@ -182,8 +182,8 @@ function inRange(found, range) {
     if (lo === null || hi === null) return true;
     const readings = [found.hour * 60 + found.min];
     if (found.hour < 12) readings.push((found.hour + 12) * 60 + found.min);
-    // The same start and end: any time. Hours that pass midnight wrap.
-    if (lo === hi) return true;
+    // 00:00 to 00:00: any time. The same hour at both ends otherwise: that hour. Hours that pass midnight wrap.
+    if (lo === hi) return lo === 0 || readings.includes(lo);
     return readings.some(v => (lo < hi ? (v >= lo && v <= hi) : (v >= lo || v <= hi)));
 }
 
@@ -343,8 +343,10 @@ class VoiceService {
             const ownTime = answer.time || (named.length === 1 ? `${String(named[0].hour).padStart(2, '0')}:${String(named[0].min).padStart(2, '0')}` : null);
             const time = requireTime || ownTime;
             const problems = checkText(parts, { step, time: range ? null : time, range, allowMoney });
-            if (requireDate && answer.date && answer.date !== requireDate) problems.push(`it asked for ${answer.date} instead of ${requireDate}`);
-            last = { parts, text: parts.join('\n'), date: answer.date || requireDate || null, time: range ? null : (requireTime || ownTime), problems };
+            // One day, or (a window over several days) any of its days.
+            const dates = Array.isArray(requireDate) ? requireDate : (requireDate ? [requireDate] : []);
+            if (dates.length > 0 && answer.date && !dates.includes(answer.date)) problems.push(`it asked for ${answer.date} instead of ${dates.join(' or ')}`);
+            last = { parts, text: parts.join('\n'), date: answer.date || dates[0] || null, time: range ? null : (requireTime || ownTime), problems };
             // The caller's own check (his calendar), once the text passes.
             if (problems.length === 0 && typeof check === 'function') {
                 try { problems.push(...((await check(last)) || [])); } catch { /* a failed check refuses nothing */ }
