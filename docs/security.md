@@ -277,20 +277,20 @@ mean either answer, so the owner is asked to reply yes or no. A reply
 counts only when all four hold: the card was delivered to this very chat
 (for a job, that is the owner channel), it is the only approval pending
 there, no `askUser` question is open there, and the card is still the
-question he is answering (`_stillAsking`). That last one fails once
-something that asks him something else came in that chat after the card:
-his words to the model, a model reply from another run (`metadata.model`),
-another card, or an errand's note (`metadata.errandId`). So after he asks
-for a draft and Deedee shows it, "dale, mandalo" answers the draft, never a
-job's card from the morning; and a job's card that lands while he talks to
-Deedee does not take his "dale" for her question. These do not count: a
-reply about the card (`aboutApproval`), an `askUser` question, his words
+question he is answering (`_stillAsking`): nothing came in that chat
+after it but the reply of the very run that raised it (`cardRunId`,
+`turnRunId`), a reply about the card (`aboutApproval`), a line that says
+another card is settled, an `askUser` question he answered, and his words
 that only answered a card or a question (marked `answeredCard`,
-`answeredQuestion`), the reply of the very run that raised the card
-(`cardRunId`, `turnRunId`), and a plain job note such as a briefing. An
-errand's own card is stricter: anything Deedee said after it counts. A card
-that lands after Deedee's question is the newest question, so a bare yes
-answers it. In every other case the word goes on to `askUser` and the
+`answeredQuestion`). Anything else may be what his word answers: his words
+to the model and the reply to them, a job's note (it may ask something), a
+question that lapsed, another card. So after he asks for a draft and
+Deedee shows it, "dale, mandalo" answers the draft, never a job's card from
+the morning. A card that lands after Deedee's question is the newest
+question, so a bare yes answers it. When his bare yes or no reaches no card
+this way, the model's turn context names the waiting card
+(`undecidedCard`): the model cannot approve it, and tells him to reply
+`/confirm <id>`. In every other case the word goes on to `askUser` and the
 model, so an "ok" typed to the model in another chat never fires a job's
 paused action. When a question is open,
 `askUser` reads the reply first. The bare `/confirm` and `/cancel` act only
@@ -419,9 +419,9 @@ An errand writes to one person from the owner's own WhatsApp
   the deny-list still applies. The card reads as a plain question in his
   language (`origin_meta.card`) and says why it asks: his calendar is busy
   then, the slot is outside his window, or the day or time was one the
-  draft picked. A bare yes decides an errand card only while it is the last
-  thing Deedee said in that chat (`_isNewestInChat`): "dale" is his everyday
-  word; the check covers every id his chat carries. A card the gate raises
+  draft picked. A bare yes decides an errand card only while it is still
+  the question he is answering (`_stillAsking`, see Answers above): "dale"
+  is his everyday word; the check covers every id his chat carries. A card the gate raises
   for an errand step is a plain question too (`ErrandService.gateCard`): the
   exact text first, the person's People name, the date in his words, and
   the true reason (someone else's words in the chat, his always-ask list).

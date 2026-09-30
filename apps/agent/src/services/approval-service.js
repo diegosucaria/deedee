@@ -533,6 +533,8 @@ class ApprovalService {
         // run only remembers its own. Without this the card falls back to raw
         // arguments, which for a booking is an opaque token.
         this._recentPreviews = new Map();
+        // chat id -> the card his bare yes or no just did not reach (undecidedCard).
+        this._undecided = new Map();
     }
 
     /** Remember what a two-step check step said it would do. */
@@ -1709,10 +1711,15 @@ class ApprovalService {
         // otherwise the model reads the word in its context: after he asks
         // for a draft, "dale, mandalo" is about the draft, never a job's card.
         const asking = await this._stillAsking(pending[0], message);
-        if (asking === false) return null;
         // Unknown history: an errand's card still asks for proof ("dale" is
         // his everyday word); any other card keeps the rule of one card here.
-        if (asking === null && pending[0].origin_meta?.errandId !== undefined) return null;
+        if (asking === false || (asking === null && pending[0].origin_meta?.errandId !== undefined)) {
+            // The model hears that a card waits here, so it can tell him how to answer it.
+            if (decisionWord(text, { toolName: pending[0].tool_name })) {
+                this._undecided.set(String(chatId), { id: pending[0].id, at: Date.now(), messageId: message?.id || null });
+            }
+            return null;
+        }
         const decision = decisionWord(text, { toolName: pending[0].tool_name });
         if (!decision) return null;
         if (await this._questionOpen(message)) return null;
@@ -1726,15 +1733,14 @@ class ApprovalService {
     }
 
     /**
-     * Is this card still the question he is answering? Since it went out,
-     * nothing may have come in that chat that asks him something else: his
-     * words to the model (and so a reply to them), a model reply from
-     * another run, another card, or an errand's note. A reply about the card,
-     * an askUser question (an open one takes the word first anyway), his
-     * words that only answered a card or a question, the reply of the very
-     * run that raised the card, and a plain job note (a briefing) do not
-     * count. His WhatsApp chat can carry several ids; all count. true,
-     * false, or null when the history cannot be read.
+     * Is this card still the question he is answering? Only while nothing
+     * came in that chat after it but the reply of the very run that raised
+     * it, a reply about the card, a line that says another card is settled,
+     * an askUser question he answered, and his words that only answered a
+     * card or a question. Anything else (his words to the model, a reply to
+     * them, a note, a question that lapsed, another card) may be what his
+     * word answers. His WhatsApp chat can carry several ids; all count.
+     * true, false, or null when the history cannot be read.
      */
     async _stillAsking(row, message) {
         if (typeof this.db?.listChatMessagesSince !== 'function') return null;
@@ -1747,9 +1753,6 @@ class ApprovalService {
             const { rows, more } = this.db.listChatMessagesSince([row.reply_chat_id, chatId, ...ownerIds], row.created_at, { excludeId: message?.id || null });
             if (more) return false;
             const runId = row.origin_meta?.cardRunId || null;
-            // An errand's own card asks about someone else's chat, and "dale" is
-            // his everyday word: anything Deedee said after it counts.
-            const strict = row.origin_meta?.errandId !== undefined && row.origin_meta?.errandId !== null;
             for (const m of rows) {
                 const meta = m.metadata || {};
                 if (m.role === 'user') {
@@ -1757,15 +1760,31 @@ class ApprovalService {
                     return false;
                 }
                 if (meta.approval?.id === row.id || meta.aboutApproval === row.id) continue;
-                if (strict) return false;
-                if (meta.question) continue;
+                // A settled card's line ("No longer needed", a result) asks nothing.
+                if (meta.approval && meta.approval.status && meta.approval.status !== 'pending') continue;
                 if (runId && meta.turnRunId === runId) continue;
-                if (meta.model || meta.approval || meta.aboutApproval || (meta.errandId !== undefined && meta.errandId !== null)) return false;
+                if (meta.question?.id && typeof this.db.getQuestionStatus === 'function' && this.db.getQuestionStatus(meta.question.id) === 'answered') continue;
+                return false;
             }
             return true;
         } catch {
             return null;
         }
+    }
+
+    /**
+     * The card his bare yes or no just did not reach (other messages came
+     * after it), for the model's turn context: the model cannot approve it,
+     * but it can tell him how. Read once.
+     */
+    undecidedCard(message) {
+        const chatId = message?.metadata?.chatId;
+        const entry = chatId ? this._undecided.get(String(chatId)) : null;
+        if (!entry) return null;
+        this._undecided.delete(String(chatId));
+        if (Date.now() - entry.at > 2 * 60e3 || entry.messageId !== (message?.id || null)) return null;
+        const row = this.hasStore() ? this.db.getPendingConfirmation(entry.id) : null;
+        return row && row.status === 'pending' ? { id: row.id, toolName: row.tool_name } : null;
     }
 
     /**

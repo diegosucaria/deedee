@@ -85,4 +85,11 @@ describe('errands in shared places', () => {
         await Agent.prototype._mirrorToOwnerChat.call(self, { id: 'n1', source: 'whatsapp:assistant', type: 'text', content: 'Alice preguntó algo', metadata: { chatId: '5490000000001@s.whatsapp.net', errandId: 4 } });
         expect(saved[0].metadata).toMatchObject({ type: 'text', errandId: 4 });
     });
+
+    test('a card his bare yes did not reach is named in the turn context, with how to answer it', () => {
+        const ctx = getTurnContext({ dateString: 'T', waitingCard: { id: 'abc123', toolName: 'sendEmail' } });
+        expect(ctx).toContain('A CARD WAITS IN THIS CHAT: abc123 (sendEmail)');
+        expect(ctx).toContain('/confirm abc123');
+        expect(getTurnContext({ dateString: 'T' })).not.toContain('A CARD WAITS');
+    });
 });

@@ -2884,9 +2884,10 @@ class AgentDB {
     const since = Date.parse(sinceIso);
     if (ids.length === 0 || !Number.isFinite(since)) return { rows: [], more: false };
     const cap = Math.max(1, Math.min(Number(limit) || 50, 200));
+    // His words and Deedee's only: a run's tool steps are not messages to him.
     const newest = this.db.prepare(`
       SELECT id, role, timestamp, metadata FROM messages
-      WHERE chat_id IN (${ids.map(() => '?').join(', ')}) AND id IS NOT ?
+      WHERE chat_id IN (${ids.map(() => '?').join(', ')}) AND id IS NOT ? AND role IN ('user', 'assistant')
       ORDER BY timestamp DESC, rowid DESC
       LIMIT ?
     `).all(...ids, excludeId === null || excludeId === undefined ? null : String(excludeId), cap + 1);
@@ -4268,6 +4269,12 @@ class AgentDB {
       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
     `).run(id, chatId || null, replyChatId, replySource || null, source || null, question,
       options ? JSON.stringify(options) : null, expiresAt || null);
+  }
+
+  /** A question's status by id ('pending', 'answered', 'expired', ...), or null. */
+  getQuestionStatus(id) {
+    if (!id) return null;
+    return this.db.prepare('SELECT status FROM pending_questions WHERE id = ?').get(String(id))?.status || null;
   }
 
   /** The open question waiting on `replyChatId`, or undefined. */

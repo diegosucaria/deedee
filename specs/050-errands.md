@@ -140,12 +140,13 @@ Errands add no new kind of card. They use the approval service as it is.
   own steps. `startErrand` and `answerErrand` count as "Message a contact"
   on his always-ask list.
 - **A bare yes and other cards.** A bare yes decides any card only while
-  the card is still the question he is answering: nothing that asks him
-  something else came after it (his words to the model, a model reply from
-  another run, another card, an errand's note). After he asks for a draft,
+  the card is still the question he is answering: nothing came after it but
+  the same run's reply, lines about cards, a question he answered, and his
+  words that only answered a card or a question. After he asks for a draft,
   "dale, mandalo" is about the draft, never a job's card from the morning.
   A card that lands after the draft is the newest question, and a bare yes
-  answers it.
+  answers it. When his word reaches no card, the model hears which card
+  waits and tells him to reply `/confirm <id>`.
 - **His choices.** A slot other than the one he asked for (ask mode), a
   question from the contact, a refusal, an unclear answer or a voice note
   Deedee cannot read. Deedee asks with a card for `answerErrand`. It reads
@@ -155,8 +156,8 @@ Errands add no new kind of card. They use the approval service as it is.
   one the draft picked. "sí" runs it, "no" sends nothing, "cancelar"
   cancels the errand, and other words go to the model, which calls
   `answerErrand` with an explicit date and time. A bare yes decides an
-  errand card only while the card is the last thing Deedee said to him
-  (under any of his chat ids). When the gate itself holds an errand step
+  errand card only while the card is still the question he is answering
+  (under any of his chat ids; see below). When the gate itself holds an errand step
   (someone else's words in his chat, or his always-ask list), its card is a
   plain question too: the exact text first, the person's People name, the
   date in his words and the true reason. It retires every older card for
@@ -289,7 +290,7 @@ own.
 
 ## 12. Review
 
-Four review rounds (security, the owner's real flows replayed message by
+Five review rounds (security, the owner's real flows replayed message by
 message, regressions, and a check that each fix held) found real faults.
 Each fix has a test named after the fault in
 `apps/agent/tests/errands.test.js` ("review round one", "review round

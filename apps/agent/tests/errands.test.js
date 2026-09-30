@@ -1752,7 +1752,7 @@ describe('errands', () => {
             clock = at('2026-10-07', '08:01');
             await service.sweep();
             expect(db.getErrand(errand.id).state).toBe('cancelled');
-            expect(notes().pop().content).toMatch(/Alice ya había confirmado el jue 08\/10 a las 10:00 y no lo agendé: decime si lo agendo\./);
+            expect(notes().pop().content).toMatch(/Estaba por aceptarle a Alice el jue 08\/10 a las 10:00 y agendarlo; no lo hice: decime si lo agendo\./);
         });
 
         test('with his calendar unreadable, a day-only request still goes out, and her yes asks him', async () => {
@@ -1868,17 +1868,73 @@ describe('errands', () => {
             expect(res.reply.content).toBe('Esa pregunta ya no está pendiente.');
         });
 
-        test('a job note after a job\'s card leaves a bare "sí" for the card; an errand\'s note does not', async () => {
+        test('a note after a job\'s card leaves his bare "sí" to the model, which hears that a card waits', async () => {
             const jobMsg = { source: 'scheduler', metadata: { jobName: 'facturas', chatId: 'scheduled_facturas' } };
             const card = await approvals.request({ message: jobMsg, toolName: 'sendEmail', args: { to: 'user@example.com', subject: 'x' }, reason: 'r' });
-            const later = (id, metadata) => db.saveMessage({ id, role: 'assistant', content: 'nota', source: 'whatsapp:assistant', chatId: OWNER_LID, timestamp: new Date(Date.now() + 5000).toISOString(), metadata });
-            later('brief-1', { type: 'text' });
-            expect(await approvals.intercept({ ...ownerSays('sí'), id: 'yes-a' }, jest.fn())).toBeTruthy();
+            // Another job's note, which may ask him something ("¿Querés que la pague?").
+            db.saveMessage({ id: 'note-1', role: 'assistant', content: 'Vence la tarjeta mañana. ¿Querés que la pague?', source: 'whatsapp:assistant', chatId: OWNER_LID, timestamp: new Date(Date.now() + 5000).toISOString(), metadata: { type: 'text' } });
+            const msg = { ...ownerSays('dale'), id: 'yes-a' };
+            expect(await approvals.intercept(msg, jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+            expect(approvals.undecidedCard(msg)).toEqual({ id: card.id, toolName: 'sendEmail' });
+            // Read once.
+            expect(approvals.undecidedCard(msg)).toBeNull();
+        });
+
+        test('a question he answered, or a settled card\'s line, after a card still leaves "sí" for it', async () => {
+            const jobMsg = { source: 'scheduler', metadata: { jobName: 'agenda', chatId: 'scheduled_agenda' } };
+            const card = await approvals.request({ message: jobMsg, toolName: 'sendEmail', args: { to: 'user@example.com', subject: 'x' }, reason: 'r' });
+            const t = Date.now() + 5000;
+            db.createPendingQuestion({ id: 'q-1', chatId: OWNER_LID, replyChatId: OWNER_LID, question: '¿Archivo las promos?', options: ['sí', 'no'] });
+            db.closePendingQuestion('q-1', 'answered', 'no');
+            db.saveMessage({ id: 'q-row', role: 'assistant', content: '¿Archivo las promos?', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(t).toISOString(), metadata: { question: { id: 'q-1' } } });
+            db.saveMessage({ id: 'q-ans', role: 'user', content: 'no', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(t + 1000).toISOString(), metadata: { answeredQuestion: 'q-1' } });
+            db.saveMessage({ id: 'gone', role: 'assistant', content: 'No longer needed (old): x.', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(t + 2000).toISOString(), metadata: { approval: { id: 'old', status: 'expired' } } });
+            expect(await approvals.intercept({ ...ownerSays('sí'), id: 'yes-q' }, jest.fn())).toBeTruthy();
             expect(db.getPendingConfirmation(card.id).status).toBe('approved');
-            const card2 = await approvals.request({ message: jobMsg, toolName: 'sendEmail', args: { to: 'user@example.com', subject: 'y' }, reason: 'r' });
-            later('errand-note-1', { type: 'text', errandId: 7 });
-            expect(await approvals.intercept({ ...ownerSays('dale'), id: 'yes-b' }, jest.fn())).toBeNull();
-            expect(db.getPendingConfirmation(card2.id).status).toBe('pending');
+        });
+
+        test('a question that lapsed after a card takes the word from the card', async () => {
+            const card = await approvals.request({ message: { source: 'scheduler', metadata: { jobName: 'facturas', chatId: 'scheduled_facturas' } }, toolName: 'sendEmail', args: { to: 'user@example.com', subject: 'x' }, reason: 'r' });
+            db.createPendingQuestion({ id: 'q-2', chatId: OWNER_LID, replyChatId: OWNER_LID, question: '¿Qué te ponés hoy?', options: ['sí', 'no'] });
+            db.closePendingQuestion('q-2', 'timeout');
+            db.saveMessage({ id: 'q2-row', role: 'assistant', content: '¿Qué te ponés hoy?', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(Date.now() + 5000).toISOString(), metadata: { question: { id: 'q-2' } } });
+            expect(await approvals.intercept({ ...ownerSays('dale'), id: 'yes-l' }, jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+        });
+
+        test('a run\'s tool steps after its card do not count as messages to him', async () => {
+            const card = await approvals.request({ message: { source: 'whatsapp', role: 'user', content: 'x', metadata: { chatId: OWNER_LID } }, toolName: 'forgetFact', args: { key: 'k' }, reason: 'r', extraMeta: { cardRunId: 'run-b' } });
+            for (let i = 0; i < 60; i++) {
+                db.saveMessage({ id: `step-${i}`, role: i % 2 ? 'function' : 'model', content: 'x', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(Date.now() + 1000 + i).toISOString(), metadata: {} });
+            }
+            expect(await approvals.intercept({ ...ownerSays('dale'), id: 'yes-t' }, jest.fn())).toBeTruthy();
+            expect(db.getPendingConfirmation(card.id).status).toBe('approved');
+        });
+
+        test('his approval of an errand card holds while a sweep runs in between', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', offer('10:30'));
+            const card = pendingCards()[0];
+            db.decidePendingConfirmation(card.id, 'approved', { via: 'chat' });
+            await service.sweep();
+            const res = await service.answer({ id: errand.id, action: 'accept', date: '2026-10-08', time: '10:30' }, { approved: true, approvalId: card.id });
+            expect(res.success).toBe(true);
+            expect(db.getErrand(errand.id).state).toBe('done');
+        });
+
+        test('the same words he writes long after a refused send are his own', async () => {
+            const errand = await startBooking();
+            agent.interface.send.mockImplementationOnce(async () => false);
+            drafts.push({ text: 'llego 10 minutos tarde', date: '', time: '' });
+            await service.answer({ id: errand.id, action: 'say', text: 'llego 10 minutos tarde' }, { byOwner: true });
+            expect(db.getErrand(errand.id).state).toBe('paused');
+            clock += 60 * 60e3;
+            ownerWrites('llego 10 minutos tarde');
+            clock += CATCHUP;
+            await service.sweep();
+            expect(db.getErrand(errand.id).state).toBe('cancelled');
         });
 
         test('what Deedee sends from his account is kept as text only', async () => {

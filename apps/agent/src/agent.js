@@ -2254,6 +2254,12 @@ class Agent {
           try { openErrands = this.errands.turnContextLines(); } catch (e) { openErrands = null; }
         }
       }
+      // His bare yes or no that no card took (other messages came after it):
+      // the model cannot approve a card, but it can tell him how.
+      let waitingCard = null;
+      if (!isLightweight) {
+        try { waitingCard = this.approvals.undecidedCard?.(message) || null; } catch (e) { waitingCard = null; }
+      }
       const turnContext = isLightweight ? '' : getTurnContext({
         dateString: timeString,
         activeGoals,
@@ -2262,7 +2268,8 @@ class Agent {
         location: message.metadata?.location,
         browserSecretNames: hasBrowserTools ? browserSecretNames : null,
         openErrands,
-        errandRules: errandTurn
+        errandRules: errandTurn,
+        waitingCard
       });
 
       console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens)${isLightweight ? ' (lightweight)' : ''}.`);
