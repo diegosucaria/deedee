@@ -2600,6 +2600,56 @@ describe('errands', () => {
             expect(db.getErrand(errand.id).offer).toMatchObject({ date: '2026-10-08', time: '10:00' });
         });
 
+        test('her question while his thanks waits over her held yes: the note names both', async () => {
+            const errand = await startBooking();
+            clock = at('2026-10-06', '22:30');
+            await contactAnswers(errand, 'dale, jueves 10 te espero', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            service.bufferMs = 60e3;
+            clock += 60e3;
+            service.claim(contactWrites('es solo corte o también barba?'), { contactString: CONTACT });
+            const res = await service.answer({ id: errand.id, action: 'say', text: 'gracias!' }, { byOwner: true });
+            expect(res.deferred).toBe(true);
+            forms.push({ kind: 'question', slots: [], summary: 'Asks if it is only a haircut', tellOwner: false });
+            await service.flush(errand.id);
+            const note = notes().pop().content;
+            expect(note).toMatch(/Lo tuyo \("gracias!"\) no salió\./);
+            expect(note).toMatch(/Estaba por aceptarle a Alice el jue 08\/10 a las 10:00; no está en tu calendario\. Decime si lo acepto\./);
+        });
+
+        test('a heldYes in a tool call is ignored: only our own record of her yes counts', async () => {
+            const errand = await startBooking();
+            drafts.push({ text: 'gracias!', date: '', time: '' });
+            const res = await service.answer({ id: errand.id, action: 'say', text: 'gracias!', heldYes: { date: '2026-10-09', time: '18:00' } }, { byOwner: true });
+            expect(res.ownerLine).not.toMatch(/18:00/);
+            expect(db.getErrand(errand.id).offer).toBeNull();
+        });
+
+        test('a video note he sends her himself counts as his writing', async () => {
+            const errand = await startBooking();
+            clock += 60e3;
+            ownerWrites('[Media: ptvMessage]');
+            clock += 60e3;
+            await contactAnswers(errand, 'dale, jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            expect(db.getErrand(errand.id).state).toBe('cancelled');
+            expect(inserted).toHaveLength(0);
+        });
+
+        test('a PDF sent minutes after her voice note is still her answer', async () => {
+            drafts.push({ text: 'me pasás la lista de precios?', date: '', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'pedile la lista de precios' });
+            clock += 60e3;
+            service.claim({ ...contactWrites(''), parts: [{ inlineData: { mimeType: 'audio/ogg', data: 'AAAA' } }] }, { contactString: CONTACT });
+            agent.impersonationService.transcribeAudio.mockResolvedValueOnce('ya te la paso');
+            forms.push({ kind: 'later', slots: [], summary: 'Will send it.', tellOwner: false });
+            await service.flush(out.errandId);
+            expect(db.getErrand(out.errandId).closed_at).toBeNull();
+            clock += 2 * 60e3;
+            chat.push({ role: 'user', content: '[Media: documentMessage]', timestamp: clock, id: 'P1', fromMe: false });
+            clock += CATCHUP;
+            await service.sweep();
+            expect(db.getErrand(out.errandId).state).toBe('done');
+        });
+
         test('"y decile ..." or "y?" ("and tell her ...", "so?") is not a yes', async () => {
             const card = await approvals.request({ message: { source: 'whatsapp', role: 'user', content: 'x', metadata: { chatId: OWNER_LID } }, toolName: 'forgetFact', args: { key: 'k' }, reason: 'r' });
             expect(await approvals.intercept({ ...ownerSays('y decile'), id: 'y-1' }, jest.fn())).toBeNull();

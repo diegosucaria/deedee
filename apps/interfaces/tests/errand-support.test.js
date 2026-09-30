@@ -45,6 +45,13 @@ describe('errand support in the WhatsApp service', () => {
         ]);
     });
 
+    test('a file sent from a phone is labelled by its own kind, not by the context key WhatsApp puts first', () => {
+        const jid = '15550100@s.whatsapp.net';
+        store.db.prepare('INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data) VALUES (?, ?, ?, ?, ?, ?)').run('F1', jid, 0, 3000, '',
+            JSON.stringify({ key: { remoteJid: jid, id: 'F1', fromMe: false }, messageTimestamp: 3000, message: { messageContextInfo: { deviceListMetadata: {} }, documentWithCaptionMessage: { message: { documentMessage: { caption: 'lista' } } } } }));
+        expect(wa.getChatHistory(jid, 10)[0].content).toBe('[Media: documentWithCaptionMessage]');
+    });
+
     test('style numbers come from his own one-to-one texts only, and hold no text', () => {
         for (let i = 0; i < 30; i++) insert(`O${i}`, '15550100@s.whatsapp.net', true, 2000 + i * 200, i % 3 === 0 ? 'tenes turno el jueves?' : 'dale');
         insert('G1', '120000000000001@g.us', true, 9000, '¿Esto es un grupo?');

@@ -1572,7 +1572,10 @@ class WhatsAppService {
 
             // Simplify for agent consumption
             let content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
-            const msgType = Object.keys(m.message || {})[0];
+            // The message's own kind, not a key WhatsApp adds beside it
+            // (messageContextInfo comes first on most messages from a phone).
+            const msgType = Object.keys(m.message || {}).find(k => !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k))
+                || Object.keys(m.message || {})[0];
 
             if (!content) {
                 if (m.message?.audioMessage) content = '[Audio Message]';
