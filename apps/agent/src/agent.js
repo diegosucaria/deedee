@@ -414,7 +414,11 @@ class Agent {
         content,
         source: 'whatsapp:assistant',
         chatId,
-        metadata: { type: t, imagePath: payload.imagePath || null, ...(jobTaint.length > 0 ? { jobTaint: jobTaint.slice(0, 20).map(String) } : {}) }
+        metadata: {
+          type: t, imagePath: payload.imagePath || null, ...(jobTaint.length > 0 ? { jobTaint: jobTaint.slice(0, 20).map(String) } : {}),
+          // An errand's note asks him something: a bare yes after it is not for an older card.
+          ...(payload.metadata?.errandId !== undefined && payload.metadata?.errandId !== null ? { errandId: payload.metadata.errandId } : {})
+        }
       });
     } catch (e) {
       console.warn('[Mirror] saveMessageIfNew failed:', e.message);
@@ -892,6 +896,9 @@ class Agent {
     const meta = message?.metadata || {};
     const source = String(message?.source || '');
     if (meta.isSubAgent || meta.isGroup) return false;
+    // A job run held in his chat (JOB_OWN_CHAT=0) carries that chat's source
+    // and id, but a job wrote its words, not he.
+    if (meta.jobName || meta.errandId !== undefined) return false;
     // Behind his login or his API token.
     if (OWNER_ONLY_SOURCES.has(source)) return true;
     // His own chat with the assistant. The mirror of his personal account
@@ -3102,6 +3109,9 @@ class Agent {
             chatId: message.metadata?.chatId,
             model: decision.model,
             thinking: sessionThinking?.thinkingLevel || null,
+            // The run this reply ends: a card the same run raised stays the
+            // question a bare yes answers (ApprovalService._stillAsking).
+            ...(approvalRun?.id ? { turnRunId: approvalRun.id } : {}),
             ...approvedMeta(continuation)
           };
           reply.source = message.source; // Ensure reply source matches incoming message source

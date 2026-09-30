@@ -140,10 +140,12 @@ Errands add no new kind of card. They use the approval service as it is.
   own steps. `startErrand` and `answerErrand` count as "Message a contact"
   on his always-ask list.
 - **A bare yes and other cards.** A bare yes decides any card only while
-  the card is still the question he is answering: the last thing Deedee
-  said, or no new words of his to the model since it went out. After he
-  asks for a draft, "dale, mandalo" is about the draft, never a job's card
-  from the morning.
+  the card is still the question he is answering: nothing that asks him
+  something else came after it (his words to the model, a model reply from
+  another run, another card, an errand's note). After he asks for a draft,
+  "dale, mandalo" is about the draft, never a job's card from the morning.
+  A card that lands after the draft is the newest question, and a bare yes
+  answers it.
 - **His choices.** A slot other than the one he asked for (ask mode), a
   question from the contact, a refusal, an unclear answer or a voice note
   Deedee cannot read. Deedee asks with a card for `answerErrand`. It reads
@@ -222,10 +224,10 @@ Code enforces these, not the prompt.
 | All messages per errand | 10; then it pauses |
 | Gap between its own messages | at least 1 minute |
 | Quiet hours | 22:00-08:00 local: nothing goes out on its own and no note that can wait is sent; a step waits until 08:00. A card or note about the contact's reply goes out at once: the slot may not wait |
-| No answer from the contact | the owner hears after 4 hours; Deedee never writes again on her own |
+| No answer from the contact | the owner hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word; Deedee never writes again on her own |
 | Life of an errand | until the slot's day, 7 days at most; a new day he proposes moves it. An end in quiet hours moves to 21:55, and past its end an errand closes at once, so it raises no cards at night |
 | Voice notes | 60 seconds to transcribe, then unreadable |
-| Model calls per errand | 20; then it pauses and tells him |
+| Model calls per errand | 20; then it pauses and tells him. His own steps, and the errand once he answers it after a pause, get 40 |
 | Messages from the contact | 60 per errand; then it pauses |
 | Message length | 160 characters, 2 lines |
 
@@ -287,11 +289,12 @@ own.
 
 ## 12. Review
 
-Three review rounds (security, the owner's real flows replayed message by
+Four review rounds (security, the owner's real flows replayed message by
 message, regressions, and a check that each fix held) found real faults.
 Each fix has a test named after the fault in
 `apps/agent/tests/errands.test.js` ("review round one", "review round
-two", "review round two, his flows", "review round three") and
+two", "review round two, his flows", "review round three", "review round
+four") and
 `apps/agent/tests/errands-wiring.test.js`. Round three also changed the
 approval service for every card: a bare yes no longer approves a card he
 has moved on from (`docs/security.md`, Answers).

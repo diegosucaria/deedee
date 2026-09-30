@@ -277,15 +277,22 @@ mean either answer, so the owner is asked to reply yes or no. A reply
 counts only when all four hold: the card was delivered to this very chat
 (for a job, that is the owner channel), it is the only approval pending
 there, no `askUser` question is open there, and the card is still the
-question he is answering. That last one holds while the card is the last
-thing Deedee said there, or while he has not written to the model there
-since the card went out: after he asks for a draft and Deedee shows it,
-"dale, mandalo" answers the draft, never a job's card from the morning. A
-word that only answered a card or an `askUser` question is marked
-(`answeredCard`, `answeredQuestion`) and does not count as writing to the
-model. In every other case the word goes on to `askUser` and the model, so
-an "ok" typed to the model in another chat never fires a job's paused
-action. When a question is open,
+question he is answering (`_stillAsking`). That last one fails once
+something that asks him something else came in that chat after the card:
+his words to the model, a model reply from another run (`metadata.model`),
+another card, or an errand's note (`metadata.errandId`). So after he asks
+for a draft and Deedee shows it, "dale, mandalo" answers the draft, never a
+job's card from the morning; and a job's card that lands while he talks to
+Deedee does not take his "dale" for her question. These do not count: a
+reply about the card (`aboutApproval`), an `askUser` question, his words
+that only answered a card or a question (marked `answeredCard`,
+`answeredQuestion`), the reply of the very run that raised the card
+(`cardRunId`, `turnRunId`), and a plain job note such as a briefing. An
+errand's own card is stricter: anything Deedee said after it counts. A card
+that lands after Deedee's question is the newest question, so a bare yes
+answers it. In every other case the word goes on to `askUser` and the
+model, so an "ok" typed to the model in another chat never fires a job's
+paused action. When a question is open,
 `askUser` reads the reply first. The bare `/confirm` and `/cancel` act only
 with exactly one approval pending in the chat they are typed in; with
 several, the reply lists the ids and an id (or a unique prefix of at least
@@ -401,7 +408,8 @@ An errand writes to one person from the owner's own WhatsApp
   outward action.
 - **Only his own chat.** The gate refuses `startErrand` and `answerErrand`
   from any run but his own typed chat (`Agent._ownerTyped`), with no card:
-  a job, a watcher, a sub-agent, a voice call or a contact's chat. An
+  a job (even one held in his chat, `JOB_OWN_CHAT=0`), a watcher, a
+  sub-agent, a voice call or a contact's chat. An
   errand's own run may answer its own steps. A card that looked like his own
   question would send a third party's words from his account. The refusal
   is stored as `source_refused`, and the Guardian page's dry run gives the
@@ -422,9 +430,10 @@ An errand writes to one person from the owner's own WhatsApp
   follows a card another run raised. A card for an older offer cannot
   answer a newer one: the errand withdraws its cards
   (`ApprovalService.withdraw`) and checks the approval id when it runs.
+  When that drops a step he asked for, the next note or card says so.
   `accept` and `propose` need an explicit date and time, so an approved
   card runs exactly what it showed. "cancelar" on an errand's card cancels
-  the errand.
+  the errand; "/cancel <id>" answers only the card.
 - **Steps inside his scope** (the contact confirms the slot he asked for, or
   offers a free slot inside his window) run through `review()` with a
   `grant`. The errand service vouches for the step with a random one-time
@@ -443,10 +452,13 @@ An errand writes to one person from the owner's own WhatsApp
   voice note that takes more than 60 seconds to transcribe counts as
   unreadable, so it never holds the lock.
 - **His own writing:** a message from his account that no part of Deedee
-  sent means he took the chat over. The interface keeps what Deedee sent
-  from his account (a job, a greeting, an errand; `ownerAccountSends`), so
-  those never count. It keeps them in memory: after a restart, a message
-  Deedee sent before it counts as his.
+  sent means he took the chat over. The interface keeps the text Deedee
+  sent from his account (a job, a greeting, an errand; `ownerAccountSends`),
+  and the errand keeps the text of a send that timed out, so those never
+  count. The interface keeps them in memory: after a restart, a message
+  Deedee sent before it counts as his. If the contact had confirmed a slot
+  whose booking still waited, the takeover note says it is not on his
+  calendar.
 
 ## Approval guardian
 

@@ -63,4 +63,26 @@ describe('errands in shared places', () => {
         expect(out).toBe(true);
         console.log.mockRestore();
     });
+
+    test('a job run held in his chat is never his typing, so it gets no errand rules or tools', async () => {
+        const { Agent } = require('../src/agent');
+        const self = { approvals: { _isOwnerChat: async () => true } };
+        const typed = { source: 'whatsapp', content: 'pedile turno', metadata: { chatId: '100000000000099@lid' } };
+        expect(await Agent.prototype._ownerTyped.call(self, typed)).toBe(true);
+        expect(await Agent.prototype._ownerTyped.call(self, { ...typed, metadata: { ...typed.metadata, jobName: 'x' } })).toBe(false);
+        expect(await Agent.prototype._ownerTyped.call(self, { source: 'web', content: 'x', metadata: { chatId: 'w', jobName: 'x' } })).toBe(false);
+    });
+
+    test('an errand\'s note keeps its errand id in his chat, so a bare yes after it is not for an older card', async () => {
+        const { Agent } = require('../src/agent');
+        const saved = [];
+        const self = {
+            _ownerPreferredJid: '100000000000099@lid',
+            _normalizeWaChatId: Agent.prototype._normalizeWaChatId,
+            _getOwnerWaIds: async () => new Set(['5490000000001@s.whatsapp.net', '100000000000099@lid']),
+            db: { saveMessageIfNew: (m) => saved.push(m) }
+        };
+        await Agent.prototype._mirrorToOwnerChat.call(self, { id: 'n1', source: 'whatsapp:assistant', type: 'text', content: 'Alice preguntó algo', metadata: { chatId: '5490000000001@s.whatsapp.net', errandId: 4 } });
+        expect(saved[0].metadata).toMatchObject({ type: 'text', errandId: 4 });
+    });
 });

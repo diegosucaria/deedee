@@ -54,7 +54,11 @@ It never writes the message itself.
      window, or the day or time was one the draft picked, not he;
    - a question, a refusal, an unclear answer: a note asks him;
    - small talk: nothing; news: a note. A note that asks him says so when
-     a step that waited did not go out.
+     a step that waited, or one he asked for, did not go out.
+
+   Every card also says when his calendar is busy at that slot, or could
+   not be read. If his calendar cannot be read at the start, the errand
+   still asks for his usual time; her yes then comes to him as a card.
 5. **Booking.** Code adds the event to his primary calendar with no guests.
    It uses the `gws_personal` calendar tool (`ERRANDS_CALENDAR_ACCOUNT`
    picks another), and skips an event that is already there: one with the
@@ -75,9 +79,11 @@ He answers an errand in his chat. The turn context of his own chat lists
 open errands, so "sí", "decile a las 11" or "cancelalo" reach
 `answerErrand`. "cancelar" on an errand's card cancels the errand. If he
 writes to the person himself, the errand steps aside and his watchers see
-the chat again; a paused errand notices this too. A message Deedee sent
-from his account (a greeting job) is not him writing. Notes and cards come
-in his language (Spanish when his request is).
+the chat again; a paused errand notices this too. If the contact had
+confirmed a slot that was still waiting to be booked (say, overnight), the
+note says it is not on his calendar. A message Deedee sent from his account
+(a greeting job) is not him writing. Notes and cards come in his language
+(Spanish when his request is).
 
 ## The voice
 
@@ -112,10 +118,10 @@ After the model writes, code:
 | All messages | 10 per errand |
 | Gap between its own messages | 1 minute |
 | Quiet hours | 22:00 to 08:00: a step waits until 08:00 |
-| No answer | he hears after 4 hours; Deedee never writes again on her own |
-| Life | until the slot's day, 7 days at most; an end in quiet hours moves to 21:55, and past its end an errand closes at once |
+| No answer | he hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word; Deedee never writes again on her own |
+| Life | until the slot's day, 7 days at most; an end in quiet hours moves to 21:55 (a late slot keeps its evening); past its end an errand closes at once, and a note held by quiet hours goes out at 08:00. He hears at the start when the errand ends before the day |
+| Model calls | 20 per errand, 40 for his own steps and once he answers a paused errand |
 | Voice notes | 60 seconds to transcribe, then it counts as unreadable |
-| Model calls | 20 per errand, then it pauses |
 | Contact messages | 60 per errand, then it pauses |
 
 ## Switches

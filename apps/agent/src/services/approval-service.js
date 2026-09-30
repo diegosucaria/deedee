@@ -411,6 +411,15 @@ function errandPreview(toolName, args) {
     return null;
 }
 
+/** A card that is no longer waiting. A plain question (an errand's) says so in his words. */
+function settledText(row) {
+    const plain = row?.origin_meta?.card;
+    if (plain && typeof plain.question === 'string') {
+        return plain.lang === 'es' ? 'Esa pregunta ya no está pendiente.' : 'That question is no longer waiting.';
+    }
+    return `Approval ${row.id} (${row.tool_name}) is already ${row.status}.`;
+}
+
 /** What the model reads when a call waits for the owner. No id: nothing for it to repeat. */
 function pausedInfo(toolName, why, where, delivered) {
     return `Action PAUSED: '${toolName}' waits for the owner's approval. ${why || ''} ` +
@@ -1016,9 +1025,6 @@ class ApprovalService {
             const whyKey = hits.additions.length > 0 ? 'alwaysAsk'
                 : hits.floor.length > 0 ? 'floor'
                     : kind !== 'errand' && (foreignText !== false || historyUntrusted !== false || !!taint?.tainted) ? 'foreign' : 'rules';
-            card = this._errandCard(toolName, args, whyKey, message);
-            preview = card ? `${card.question} ${card.detail}` : errandPreview(toolName, args);
-            if (kind === 'chat') extraMeta = { ownerChat: true };
             // His new word on an errand (or the errand's own new step)
             // replaces any older card for that errand: with two waiting, a
             // bare yes would decide neither.
@@ -1026,11 +1032,16 @@ class ApprovalService {
                 const older = this.db.listPendingConfirmations().filter(r => r.tool_name === 'answerErrand' && Number(r.args?.id) === Number(args?.id));
                 retire = [...same, ...older.filter(r => !same.some(x => x.id === r.id))];
             }
+            // The errand's own step replaces a step he asked for: its card says his did not go out.
+            const dropped = kind === 'errand' && retire.some(r => r.origin_meta?.ownerChat === true);
+            card = this._errandCard(toolName, args, whyKey, message, { dropped });
+            preview = card ? `${card.question} ${card.detail}` : errandPreview(toolName, args);
+            if (kind === 'chat') extraMeta = { ownerChat: true };
         }
         const paused = await this.request({
             message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null,
             modelReason: why || null, guardianDecisionId: row?.id || null, ownerConsent: ownerAsked, preview, card,
-            extraMeta, replaces: retire.map(r => r.id)
+            extraMeta: { ...(extraMeta || {}), ...(run?.id ? { cardRunId: run.id } : {}) }, replaces: retire.map(r => r.id)
         });
         // Only once this card exists: the older ones it replaces can go.
         if (paused.paused) this._supersede(retire.filter(r => r.id !== paused.id), 'a newer card asks for the same action');
@@ -1297,20 +1308,25 @@ class ApprovalService {
         return false;
     }
 
-    /** The owner typed this himself, in his own chat (Agent._ownerTyped). */
+    /**
+     * The owner typed this himself, in his own chat (Agent._ownerTyped): a
+     * chat run, not a job's, and not a voice call (what he said never
+     * reaches us as text).
+     */
     async _ownerTypedRun(message, kind) {
+        if (kind !== 'chat' || splitChannel(message?.source).channel === 'live') return false;
         if (typeof this.agent?._ownerTyped === 'function') {
             try { return !!(await this.agent._ownerTyped(message)); } catch { return false; }
         }
-        return kind === 'chat';
+        return true;
     }
 
     /** The plain card for an errand step the gate holds, worded by the errand service. */
-    _errandCard(toolName, args, why, message) {
+    _errandCard(toolName, args, why, message, { dropped = false } = {}) {
         const errands = this.agent?.errands;
         if (errands && typeof errands.gateCard === 'function') {
             try {
-                const card = errands.gateCard(toolName, args, { why, message });
+                const card = errands.gateCard(toolName, args, { why, message, dropped });
                 if (card) return card;
             } catch (e) {
                 console.warn('[Approvals] errand card failed:', e.message);
@@ -1411,6 +1427,9 @@ class ApprovalService {
         if (ownerConsent === true) originMeta.ownerConsent = true;
         // An errand card raised by his own typed chat: the errand may follow it.
         if (extraMeta?.ownerChat === true) originMeta.ownerChat = true;
+        // The run that raised the card: its own reply after the card does not
+        // stop a bare yes from deciding it (see _stillAsking).
+        if (typeof extraMeta?.cardRunId === 'string' && extraMeta.cardRunId) originMeta.cardRunId = extraMeta.cardRunId;
         // What the preview step said this call will do, for the card.
         if (typeof preview === 'string' && preview.trim()) originMeta.preview = truncate(preview.trim(), ERRAND_TOOLS.has(toolName) ? 640 : SUMMARY_CHARS);
         // A question in plain words (an errand's next step): the card shows
@@ -1685,21 +1704,20 @@ class ApprovalService {
 
         const pending = await this.pendingHere(message);
         if (pending.length !== 1) return null;
-        // A bare yes may answer a later question of Deedee's (a draft: "dale,
-        // mandalo"), never a card it was not about. When the card is not the
-        // last thing Deedee said here, the model reads the word in its
-        // context: always for an errand's card (it asks about someone else's
-        // chat, and "dale" is an everyday word), and for any other card once
-        // he has written here since it went out.
-        if (!(await this._isNewestInChat(pending[0], chatId))) {
-            if (pending[0].origin_meta?.errandId !== undefined) return null;
-            if (await this._ownerWroteSince(pending[0], message)) return null;
-        }
+        // A bare yes answers the last question Deedee asked. It decides a
+        // card only while the card is still that question (_stillAsking);
+        // otherwise the model reads the word in its context: after he asks
+        // for a draft, "dale, mandalo" is about the draft, never a job's card.
+        const asking = await this._stillAsking(pending[0], message);
+        if (asking === false) return null;
+        // Unknown history: an errand's card still asks for proof ("dale" is
+        // his everyday word); any other card keeps the rule of one card here.
+        if (asking === null && pending[0].origin_meta?.errandId !== undefined) return null;
         const decision = decisionWord(text, { toolName: pending[0].tool_name });
         if (!decision) return null;
         if (await this._questionOpen(message)) return null;
         // Marked as an answer to this card: it never reached the model, so it
-        // is no new question of his (see _ownerWroteSince).
+        // is no new question of his (see _stillAsking).
         try { this.db.saveMessage({ ...message, metadata: { ...(message.metadata || {}), answeredCard: pending[0].id } }); } catch { /* history is best effort */ }
         if (decision === 'ambiguous') {
             return { handled: true, reply: await this._reply(message, 'Reply yes to cancel it, or no to keep it.', sendCallback, { approvalId: pending[0].id }) };
@@ -1708,42 +1726,45 @@ class ApprovalService {
     }
 
     /**
-     * Is this card the newest message Deedee wrote to him? His WhatsApp chat
-     * can carry several ids (his number, his WhatsApp ID), so all of them
-     * count. Unknown counts as no.
+     * Is this card still the question he is answering? Since it went out,
+     * nothing may have come in that chat that asks him something else: his
+     * words to the model (and so a reply to them), a model reply from
+     * another run, another card, or an errand's note. A reply about the card,
+     * an askUser question (an open one takes the word first anyway), his
+     * words that only answered a card or a question, the reply of the very
+     * run that raised the card, and a plain job note (a briefing) do not
+     * count. His WhatsApp chat can carry several ids; all count. true,
+     * false, or null when the history cannot be read.
      */
-    async _isNewestInChat(row, chatId) {
-        if (typeof this.db?.getLatestAssistantMessage !== 'function') return false;
-        try {
-            let ownerIds = [];
-            try { ownerIds = [...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { ownerIds = []; }
-            const newest = this.db.getLatestAssistantMessage([row.reply_chat_id, chatId, ...ownerIds]);
-            return !!newest && (newest.metadata?.approval?.id === row.id || newest.metadata?.aboutApproval === row.id);
-        } catch {
-            return false;
-        }
-    }
-
-    /**
-     * Has the owner written to the model in this chat since the card went
-     * out? A word that only answered a card or a question does not count.
-     * His WhatsApp chat can carry several ids, so all of them count there.
-     * The message being handled now does not count. Unknown counts as no:
-     * the rule of one card in this chat still holds.
-     */
-    async _ownerWroteSince(row, message) {
-        if (typeof this.db?.getLatestUserMessage !== 'function') return false;
+    async _stillAsking(row, message) {
+        if (typeof this.db?.listChatMessagesSince !== 'function') return null;
         try {
             const chatId = message?.metadata?.chatId;
             let ownerIds = [];
-            if (splitChannel(message?.source).channel === 'whatsapp') {
+            if (splitChannel(message?.source).channel === 'whatsapp' || splitChannel(row.reply_channel).channel === 'whatsapp') {
                 try { ownerIds = [...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { ownerIds = []; }
             }
-            const latest = this.db.getLatestUserMessage([row.reply_chat_id, chatId, ...ownerIds], { excludeId: message?.id || null });
-            if (!latest) return false;
-            return Date.parse(latest.timestamp) > Date.parse(row.created_at);
+            const { rows, more } = this.db.listChatMessagesSince([row.reply_chat_id, chatId, ...ownerIds], row.created_at, { excludeId: message?.id || null });
+            if (more) return false;
+            const runId = row.origin_meta?.cardRunId || null;
+            // An errand's own card asks about someone else's chat, and "dale" is
+            // his everyday word: anything Deedee said after it counts.
+            const strict = row.origin_meta?.errandId !== undefined && row.origin_meta?.errandId !== null;
+            for (const m of rows) {
+                const meta = m.metadata || {};
+                if (m.role === 'user') {
+                    if (meta.answeredCard || meta.answeredQuestion) continue;
+                    return false;
+                }
+                if (meta.approval?.id === row.id || meta.aboutApproval === row.id) continue;
+                if (strict) return false;
+                if (meta.question) continue;
+                if (runId && meta.turnRunId === runId) continue;
+                if (meta.model || meta.approval || meta.aboutApproval || (meta.errandId !== undefined && meta.errandId !== null)) return false;
+            }
+            return true;
         } catch {
-            return false;
+            return null;
         }
     }
 
@@ -1768,7 +1789,7 @@ class ApprovalService {
             if (!row) {
                 const decided = await this._decidedRowFor(message, idArg);
                 let text;
-                if (decided) text = `Approval ${decided.id} (${decided.tool_name}) is already ${decided.status}.`;
+                if (decided) text = settledText(decided);
                 else if (pending.length === 0) text = `No pending approval matches "${idArg}".`;
                 else text = this._listText(pending, `No pending approval matches "${idArg}". Pending:`);
                 await this._reply(message, text, sendCallback);
@@ -1813,7 +1834,7 @@ class ApprovalService {
                 existing = this.db.getPendingConfirmation(id) || existing;
                 if (existing.status === 'pending') existing = { ...existing, status: 'expired' };
             }
-            const why = !existing ? `No pending approval with id ${id}.` : `Approval ${id} (${existing.tool_name}) is already ${existing.status}.`;
+            const why = !existing ? `No pending approval with id ${id}.` : settledText(existing);
             if (message) return { handled: true, reply: await this._reply(message, why, sendCallback), status: existing?.status || 'missing' };
             return { handled: false, error: why, status: existing?.status || 'missing' };
         }
@@ -1825,7 +1846,9 @@ class ApprovalService {
             // "cancelar" on an errand's card: he wants the errand gone, not
             // only this step (the card's own "no" text would ask him to say so).
             const errandId = row.tool_name === 'answerErrand' ? Number(row.args?.id) : NaN;
-            if (Number.isFinite(errandId) && CANCEL_ERRAND_RE.test(String(message?.content || '')) && typeof this.agent?.errands?.cancelFromCard === 'function') {
+            const words = String(message?.content || '').trim();
+            // A slash command ("/cancel <id>") answers the card only.
+            if (Number.isFinite(errandId) && !words.startsWith('/') && CANCEL_ERRAND_RE.test(words) && typeof this.agent?.errands?.cancelFromCard === 'function') {
                 try {
                     const line = await this.agent.errands.cancelFromCard(errandId);
                     if (line) text = line;

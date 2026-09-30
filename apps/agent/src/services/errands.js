@@ -192,6 +192,23 @@ function fmtSlot(slot, timeZone, lang = 'en') {
     return lang === 'es' ? `${day} a las ${slot.time}` : `${day} ${slot.time}`;
 }
 
+/** Several slots, the day said once: "jue 08/10 a las 09:30, 11:00 o 12:00". */
+function fmtSlots(slots, timeZone, lang = 'en') {
+    const list = (slots || []).filter(x => x && validDate(x.date));
+    if (list.length === 0) return fmtSlot(null, timeZone, lang);
+    const days = [];
+    for (const x of list) {
+        const last = days[days.length - 1];
+        if (last && last.date === x.date) last.times.push(x.time); else days.push({ date: x.date, times: [x.time] });
+    }
+    const or = lang === 'es' ? 'o' : 'or';
+    const join = (items) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} ${or} ${items[items.length - 1]}`);
+    return join(days.map(d => {
+        const first = fmtSlot({ date: d.date, time: d.times[0] }, timeZone, lang);
+        return d.times.length === 1 ? first : `${first.slice(0, first.length - d.times[0].length)}${join(d.times)}`;
+    }));
+}
+
 /** "jue 08/10 de 09:00 a 12:00": his window, in his language. */
 function fmtWindow(errand, timeZone, lang = 'en') {
     const day = fmtSlot({ date: errand.window_start.slice(0, 10), time: null }, timeZone, lang);
@@ -257,6 +274,12 @@ const TEXTS = {
         unread: (n, id) => `${n} contestó (pedido #${id}) pero no pude leer la respuesta. Fijate en el chat.`,
         unreadAfter: 'no pude leer el mensaje.',
         after: (n, id, sum, s) => `${n} escribió de nuevo después de reservar (pedido #${id}): ${sentence(sum)} Tu calendario sigue con el ${s}.`,
+        takeoverHeld: (n, s) => ` ${n} ya había confirmado el ${s} y no lo agendé: decime si lo agendo.`,
+        noAnswerYet: (n, id) => `${n} escribió pero todavía no contestó lo que le pedí (pedido #${id}). No le vuelvo a escribir por mi cuenta; decime si querés.`,
+        whyAnd: (a, b) => `${a}, y ${b}`,
+        gateExpired: (id, q) => `Pedido #${id}: venció sin respuesta tu "${q}". Decime si lo hago.`,
+        endsOn: (d) => ` El pedido dura hasta el ${d}.`,
+        or: 'o',
         takeover: (n, id) => `Le escribiste vos a ${n}, así que dejé de encargarme del pedido #${id}. Ese chat sigue como siempre.`,
         paused: (n, id, why) => `Pausé el pedido #${id} con ${n}: ${why}. Decime qué hago, o que lo cancele.`,
         pausedNews: (n, id) => `${n} escribió de nuevo, y el pedido #${id} está pausado. Fijate en el chat y decime qué hago, o que lo cancele.`,
@@ -266,6 +289,7 @@ const TEXTS = {
         whyRules: 'tus reglas de aprobación lo frenaron',
         whyFlood: 'llegaron demasiados mensajes',
         expired: (n, id, book) => `El pedido #${id} con ${n} terminó sin ${book ? 'turno' : 'respuesta'}.`,
+        expiredOffer: (n, s) => ` La propuesta de ${n} (${s}) quedó sin tu respuesta.`,
         noReply: (n, id) => `${n} todavía no contestó (pedido #${id}). No le vuelvo a escribir por mi cuenta; decime si querés.`,
         cardExpired: (n, id, s) => `Pedido #${id}: la propuesta de ${n}${s ? ` (${s})` : ''} sigue esperando tu respuesta. Decime si la acepto, pido otro horario o lo cancelo.`,
         wroteAgain: (n) => `${n} escribió de nuevo antes de que saliera; no mandé nada. Leo lo nuevo y te aviso.`,
@@ -273,6 +297,7 @@ const TEXTS = {
         checking: (n, id) => `${n} dijo que se fija y avisa (pedido #${id}). No mandé lo tuyo; espero su respuesta.`,
         told: (n, t) => `Le dije a ${n}: "${t}".`,
         alreadyClosed: (id) => `El pedido #${id} ya estaba cerrado; no mandé nada.`,
+        isClosed: (id) => `El pedido #${id} ya estaba cerrado.`,
         movedOn: (id) => `Esa pregunta ya no vale: el pedido #${id} cambió. No mandé nada.`,
         failed: (id) => `No pude hacerlo (pedido #${id}); no mandé nada.`,
         failDraft: (n) => `No me salió un buen mensaje para ${n}; no mandé nada. Decime con otras palabras qué le digo.`,
@@ -329,6 +354,12 @@ const TEXTS = {
         unread: (n, id) => `${n} answered (errand #${id}) but I could not read the answer. Please look at the chat.`,
         unreadAfter: 'I could not read it.',
         after: (n, id, sum, s) => `${n} wrote again after the booking (errand #${id}): ${sentence(sum)} Your calendar still has ${s}.`,
+        takeoverHeld: (n, s) => ` ${n} had confirmed ${s}, and I did not add it to your calendar: tell me if I should.`,
+        noAnswerYet: (n, id) => `${n} wrote but has not answered what I asked yet (errand #${id}). I won't write again on my own; tell me if you want me to.`,
+        whyAnd: (a, b) => `${a}, and ${b}`,
+        gateExpired: (id, q) => `Errand #${id}: your "${q}" expired with no answer. Tell me if I should do it.`,
+        endsOn: (d) => ` The errand lasts until ${d}.`,
+        or: 'or',
         takeover: (n, id) => `You wrote to ${n} yourself, so I stopped handling errand #${id}. That chat works as usual again.`,
         paused: (n, id, why) => `Errand #${id} with ${n} is paused: ${why}. Tell me what to do, or to cancel it.`,
         pausedNews: (n, id) => `${n} wrote again, and errand #${id} is paused. Please look at the chat and tell me what to do, or to cancel it.`,
@@ -338,6 +369,7 @@ const TEXTS = {
         whyRules: 'your approval rules held it',
         whyFlood: 'too many messages arrived',
         expired: (n, id, book) => `Errand #${id} with ${n} ended without ${book ? 'a booking' : 'an answer'}.`,
+        expiredOffer: (n, s) => ` ${n}'s offer (${s}) was still waiting for your answer.`,
         noReply: (n, id) => `${n} has not answered errand #${id} yet. I won't write again on my own; tell me if you want me to.`,
         cardExpired: (n, id, s) => `Errand #${id}: ${n}'s offer${s ? ` (${s})` : ''} still waits for your answer. Tell me to accept it, ask for another time, or cancel.`,
         wroteAgain: (n) => `${n} wrote again before this went out; nothing was sent. I am reading it and will tell you.`,
@@ -345,6 +377,7 @@ const TEXTS = {
         checking: (n, id) => `${n} said they will check and answer (errand #${id}). Your step has not gone out; I am waiting for their answer.`,
         told: (n, t) => `Told ${n}: "${t}".`,
         alreadyClosed: (id) => `Errand #${id} was already closed; nothing was sent.`,
+        isClosed: (id) => `Errand #${id} was already closed.`,
         movedOn: (id) => `That question no longer stands: errand #${id} moved on. Nothing was sent.`,
         failed: (id) => `I could not do it (errand #${id}); nothing was sent.`,
         failDraft: (n) => `I could not write a good message to ${n}; nothing was sent. Tell me in other words what to say.`,
@@ -615,15 +648,16 @@ class ErrandService {
      */
     _endMs(from, lastDay = null, lastSlotMs = null) {
         const tz = this.timeZone();
-        let end = from + LIMITS.lifeMs;
-        if (lastDay) end = Math.min(end, zonedMs(lastDay, '23:59', tz));
-        if (this._quiet(end)) {
-            const { date, hour } = localParts(end, tz);
-            const evening = hour < LIMITS.quietEndHour ? localParts(zonedMs(date, '12:00', tz) - 24 * 3600e3, tz).date : date;
-            const moved = zonedMs(evening, `${String(LIMITS.quietStartHour).padStart(2, '0')}:00`, tz) - QUIET_MARGIN_MS;
-            end = Math.max(moved, Number.isFinite(lastSlotMs) ? lastSlotMs : 0, this.clock() + 60 * 60e3);
-        }
-        return end;
+        const cap = from + LIMITS.lifeMs;
+        const dayEnd = lastDay ? zonedMs(lastDay, '23:59', tz) : Infinity;
+        const end = Math.min(cap, dayEnd);
+        if (!this._quiet(end)) return end;
+        const { date, hour } = localParts(end, tz);
+        const evening = hour < LIMITS.quietEndHour ? localParts(zonedMs(date, '12:00', tz) - 24 * 3600e3, tz).date : date;
+        const moved = zonedMs(evening, `${String(LIMITS.quietStartHour).padStart(2, '0')}:00`, tz) - QUIET_MARGIN_MS;
+        // Only the slot's own day waits for a late slot; the 7-day cap never grows.
+        const slotFloor = end === dayEnd && Number.isFinite(lastSlotMs) ? lastSlotMs : 0;
+        return Math.min(end, Math.max(moved, slotFloor, this.clock() + 60 * 60e3));
     }
 
     /** The run a gated errand step belongs to: unattended, tainted by the contact's words. */
@@ -788,7 +822,8 @@ class ErrandService {
             let ok = false;
             try { ok = (await this.agent.interface.send(payload)) !== false; } catch (e) { ok = false; }
             if (!ok) {
-                this._event(errand.id, 'error', { step: 'send', sent: sent.length, of: parts.length });
+                // A send that timed out may still arrive: its text is kept, so it is never taken for his.
+                this._event(errand.id, 'error', { step: 'send', sent: sent.length, of: parts.length, attempted: parts[i] });
                 break;
             }
             sent.push({ text: parts[i], id: payload.sentMessageId || null, at: new Date(this.clock()).toISOString() });
@@ -813,6 +848,10 @@ class ErrandService {
         const ids = new Set();
         let last = null;
         for (const ev of this.db.listErrandEvents(errandId, { newest: 500 })) {
+            if (ev.kind === 'error' && ev.detail?.step === 'send' && typeof ev.detail.attempted === 'string') {
+                texts.add(ev.detail.attempted.trim());
+                continue;
+            }
             if (ev.kind !== 'sent' || !ev.detail || !Array.isArray(ev.detail.parts)) continue;
             for (const p of ev.detail.parts) {
                 if (p.text) texts.add(String(p.text).trim());
@@ -845,6 +884,16 @@ class ErrandService {
             if (m.id && own.ids.has(String(m.id))) return false;
             return !own.texts.has(content);
         });
+    }
+
+    /**
+     * Model calls an errand may use: 20 for its own work, 40 for his steps.
+     * Once he answered it after a pause, its reading gets the 40 too:
+     * otherwise the contact's answer to his step would pause it again unread.
+     */
+    _callBudget(errand, { own = false } = {}) {
+        const resumed = own || this.db.listErrandEvents(errand.id, { newest: 200 }).some(e => e.kind === 'resumed');
+        return LIMITS.modelCalls * (resumed ? 2 : 1);
     }
 
     _countModelCall(errand, n = 1) {
@@ -1001,8 +1050,10 @@ class ErrandService {
                 ...(goal === 'tell' ? { words: request } : {})
             };
             // A time the draft picks itself must be free on his calendar.
+            // A calendar it cannot read refuses nothing here: the slot then
+            // stays his choice (a card says so), since _inScope needs it free.
             const check = goal === 'book' && slot && !slot.time && !range
-                ? async (d) => (d.time && !(await this._isFree(durationMin, { date: slot.date, time: normTime(d.time) }))
+                ? async (d) => (d.time && normTime(d.time) && (await this._freeCheck(durationMin, { date: slot.date, time: normTime(d.time) })) === 'busy'
                     ? [`it asked for ${d.time}, when his calendar is busy`] : [])
                 : null;
             const d = await this.voice.draft({
@@ -1064,10 +1115,15 @@ class ErrandService {
             return { success: true, errandId: errand.id, sent: true, to: contactName, text: shown, info: 'Sent. Nothing to wait for.', ownerLine: t.told(contactName, said) };
         }
         const waitFor = goal === 'book' ? 'I will tell him when there is a slot to confirm, or book it if it is the one he asked for.' : 'I will tell him the answer.';
+        // A day past the errand's 7-day life: he hears when it ends, at the start.
+        const lastDate = draftSlot?.date || (windowEnd ? windowEnd.slice(0, 10) : null);
+        const endsEarly = lastDate && localParts(expiresMs, tz).date < lastDate;
+        const ends = endsEarly ? t.endsOn(fmtSlot({ date: localParts(expiresMs, tz).date, time: null }, tz, this._lang(errand))) : '';
         return {
             success: true, errandId: errand.id, sent: true, to: contactName, text: shown,
             ...(draftSlot ? { date: draftSlot.date, time: draftSlot.time || null } : {}),
-            info: `Sent from his WhatsApp. ${waitFor}`, ownerLine: t.sentWait(contactName, said)
+            info: `Sent from his WhatsApp. ${waitFor}${endsEarly ? ` The errand ends on ${localParts(expiresMs, tz).date}, before that day.` : ''}`,
+            ownerLine: t.sentWait(contactName, said) + ends
         };
     }
 
@@ -1258,7 +1314,7 @@ class ErrandService {
             return; // the sweep's catch-up tries again
         }
         if (this._ownerWrote(errand, history)) return this._takeover(errand, items);
-        if (errand.model_calls >= LIMITS.modelCalls) return this._pause(errand, this._t(errand).whyCalls(LIMITS.modelCalls));
+        if (errand.model_calls >= this._callBudget(errand)) return this._pause(errand, this._t(errand).whyCalls(errand.model_calls));
 
         const form = await this._read(errand, history, unread.slice(-READ_NEW_MAX));
         errand = this._markRead(errand, unread);
@@ -1271,6 +1327,8 @@ class ErrandService {
             return this._askNote(errand, t.unread(name, id));
         }
         this._event(id, 'read', { kind: form.kind, slots: form.slots, summary: form.summary, tellOwner: form.tellOwner });
+        // An answer to what the errand asked (not "me fijo", not small talk): the no-reply note stops.
+        if (form.kind !== 'other' && form.kind !== 'later') errand = this.db.updateErrand(id, { answered_at: errand.last_contact_at }) || errand;
         if (form.kind === 'other' || form.kind === 'later') {
             // Anything but small talk holds a waiting step: he decides again.
             if (unread.some(u => u.unreadable)) return this._askNote(errand, t.voice(name, id));
@@ -1546,20 +1604,22 @@ Answer in JSON.`;
         const t = TEXTS[lang];
         if (!slot?.time) return errand.slot?.time ? t.whyAsked(fmtSlot(errand.slot, tz, lang)) : t.whyNoTime;
         if (zonedMs(slot.date, slot.time, tz) < this.clock() + MIN_LEAD_MS) return t.whySoon;
-        const calendar = async () => {
-            const free = await this._freeCheck(errand.duration_min, slot, { errand });
-            return free === 'busy' ? t.whyBusy : free === 'unknown' ? t.whyCalendar : null;
-        };
+        // His calendar at that slot, for every card: "sí" must not book over a meeting unawares.
+        const free = await this._freeCheck(errand.duration_min, slot, { errand });
+        const cal = free === 'busy' ? t.whyBusy : free === 'unknown' ? t.whyCalendar : null;
+        const plus = (base) => (cal ? t.whyAnd(base, cal) : base);
         if (errand.mode === 'window' && errand.window_start && errand.window_end) {
             const at = `${slot.date}T${slot.time}`;
-            if (at < errand.window_start || at > errand.window_end) return t.whyOutside(fmtWindow(errand, tz, lang));
-            return (await calendar()) || t.whyCalendar;
+            if (at < errand.window_start || at > errand.window_end) return plus(t.whyOutside(fmtWindow(errand, tz, lang)));
+            return cal || t.whyCalendar;
         }
-        if (!errand.slot?.time) return t.whyNoTime;
+        if (!errand.slot?.time) return plus(t.whyNoTime);
         const asked = fmtSlot(errand.slot, tz, lang);
-        if (!errand.slot_owned) return t.whyPickedDay(asked);
-        if (sameSlot(slot, errand.slot)) return (await calendar()) || (errand.time_owned ? t.whyAsked(asked) : t.whyPickedTime(asked));
-        return errand.time_owned ? t.whyAsked(asked) : t.whyPickedTime(asked);
+        if (!errand.slot_owned) return plus(t.whyPickedDay(asked));
+        if (sameSlot(slot, errand.slot)) return cal || (errand.time_owned ? t.whyAsked(asked) : t.whyPickedTime(asked));
+        // Another day: the day was his, whoever picked the time.
+        if (slot.date !== errand.slot.date) return plus(t.whyAsked(errand.time_owned ? asked : fmtSlot({ date: errand.slot.date, time: null }, tz, lang)));
+        return plus(errand.time_owned ? t.whyAsked(asked) : t.whyPickedTime(asked));
     }
 
     /**
@@ -1570,7 +1630,7 @@ Answer in JSON.`;
      * @param {'foreign'|'alwaysAsk'|'floor'|'rules'} why
      * @returns {{ question: string, detail: string, lang: string, denied: string } | null}
      */
-    gateCard(toolName, args, { why = 'rules', message = null } = {}) {
+    gateCard(toolName, args, { why = 'rules', message = null, dropped = false } = {}) {
         const a = args && typeof args === 'object' ? args : {};
         const tz = this.timeZone();
         const flat = (v, max) => clip(String(v ?? '').replace(/\s*\[SPLIT\]\s*/g, ' / '), max);
@@ -1589,7 +1649,7 @@ Answer in JSON.`;
                 cancel: t.gateCancel(name)
             }[a.action] || t.gateSay(name);
             const said = a.action === 'say' && a.text ? `"${flat(a.text, 200)}" ` : '';
-            return { question, detail: `${said}${t.gateWhy[why] || t.gateWhy.rules} ${t.gateErrand(a.id)}`, lang, denied: t.gateDenied };
+            return { question, detail: `${said}${t.gateWhy[why] || t.gateWhy.rules} ${t.gateErrand(a.id)}${dropped ? t.held(true) : ''}`, lang, denied: t.gateDenied };
         }
         if (toolName === 'startErrand') {
             const lang = langOf(`${typed} ${a.request || ''}`);
@@ -1615,9 +1675,12 @@ Answer in JSON.`;
      */
     async cancelFromCard(errandId) {
         const errand = this.db.getErrand(errandId);
-        if (!errand || errand.closed_at) return null;
+        if (!errand) return null;
+        if (errand.closed_at) return this._t(errand).isClosed(errand.id);
         const out = await this._lock(errandId, () => this._perform(this.db.getErrand(errandId), { id: errandId, action: 'cancel' }, { auto: false }));
-        return out?.success ? out.ownerLine : null;
+        if (out?.success) return out.ownerLine;
+        const now = this.db.getErrand(errandId);
+        return now?.closed_at ? this._t(now).isClosed(now.id) : null;
     }
 
     /** A card for accepting a slot: his choice. "sí" runs answerErrand. */
@@ -1627,18 +1690,19 @@ Answer in JSON.`;
         const t = TEXTS[lang];
         const name = safeName(errand.contact_name);
         const best = this._best(errand, slots);
-        const offered = slots.map(s => fmtSlot(s, tz, lang)).join(', ');
+        const offered = fmtSlots(slots, tz, lang);
         const reason = why || await this._whyAsk(errand, best);
         const approvals = this.agent.approvals;
         if (!approvals || typeof approvals.askOwner !== 'function') return this._askNote(errand, t.cardDetail(name, offered, reason));
-        this._withdraw(errand);
+        const dropped = this._withdraw(errand);
+        const detail = t.cardDetail(name, offered, reason) + (dropped.own ? t.held(true) : '');
         const res = await approvals.askOwner({
             message: this._runMessage(errand),
             toolName: 'answerErrand',
             args: { id: errand.id, action: 'accept', date: best.date, time: best.time },
             reason: `${name} offered ${slots.map(s => fmtSlot(s, tz)).join(', ')} (errand #${errand.id}).`,
-            preview: `${t.cardQuestion(name, fmtSlot(best, tz, lang))} ${t.cardDetail(name, offered, reason)}`,
-            card: { question: t.cardQuestion(name, fmtSlot(best, tz, lang)), detail: t.cardDetail(name, offered, reason), lang, denied: t.cardDenied(name) }
+            preview: `${t.cardQuestion(name, fmtSlot(best, tz, lang))} ${detail}`,
+            card: { question: t.cardQuestion(name, fmtSlot(best, tz, lang)), detail, lang, denied: t.cardDenied(name) }
         });
         const updated = this.db.updateErrand(errand.id, {
             state: 'waiting_owner', offer: best, pending_approval_id: res.id || null, next_action: null, next_check_at: null
@@ -1663,10 +1727,11 @@ Answer in JSON.`;
      */
     async _askNote(errand, text, { taint = false } = {}) {
         const waiting = this.db.getErrand(errand.id)?.next_action;
-        this._withdraw(errand);
+        const dropped = this._withdraw(errand);
         const updated = this.db.updateErrand(errand.id, { state: 'waiting_owner', next_action: null, next_check_at: null });
-        this._event(errand.id, 'asked', { note: true, ...(waiting ? { dropped: waiting.action } : {}) });
-        await this._notify(errand, text + (waiting ? this._t(errand).held(!!waiting.owner) : ''), { taint });
+        this._event(errand.id, 'asked', { note: true, ...(waiting ? { dropped: waiting.action } : dropped.own ? { dropped: 'his card' } : {}) });
+        const held = waiting ? this._t(errand).held(!!waiting.owner) : dropped.own ? this._t(errand).held(true) : '';
+        await this._notify(errand, text + held, { taint });
         return updated;
     }
 
@@ -1686,35 +1751,67 @@ Answer in JSON.`;
     _withdraw(errand) {
         const stored = this.db.getErrand(errand.id)?.pending_approval_id || null;
         const ids = new Set(stored ? [stored] : []);
+        const his = new Set();
         try {
             for (const r of (typeof this.db.listPendingConfirmations === 'function' ? this.db.listPendingConfirmations() : [])) {
-                if (r.tool_name === 'answerErrand' && Number(r.args?.id) === Number(errand.id)) ids.add(r.id);
+                if (r.tool_name !== 'answerErrand' || Number(r.args?.id) !== Number(errand.id)) continue;
+                ids.add(r.id);
+                if (r.origin_meta?.ownerChat === true) his.add(r.id);
             }
         } catch { /* the stored one is enough */ }
+        let own = false;
         for (const id of ids) {
-            try { this.agent.approvals?.withdraw?.(id, 'the errand moved on', { quiet: true }); } catch (e) { console.warn(`[Errands] card ${id} not withdrawn: ${e.message}`); }
+            let gone = false;
+            try { gone = this.agent.approvals?.withdraw?.(id, 'the errand moved on', { quiet: true }) === true; } catch (e) { console.warn(`[Errands] card ${id} not withdrawn: ${e.message}`); }
+            if (gone && his.has(id)) own = true;
         }
         if (stored) this.db.updateErrand(errand.id, { pending_approval_id: null }, { closed: true });
+        // A step he asked for, waiting on his own card, did not go out: the next note says so.
+        return { own };
     }
 
     /** `note: false`: he is waiting for this step's answer, which says it instead. */
     async _pause(errand, why, { note = true } = {}) {
-        this._withdraw(errand);
+        const dropped = this._withdraw(errand);
         const updated = this.db.updateErrand(errand.id, { state: 'paused', next_action: null, next_check_at: null });
         this._event(errand.id, 'paused', { why });
-        if (note) await this._notify(errand, this._t(errand).paused(safeName(errand.contact_name), errand.id, why));
+        const t = this._t(errand);
+        if (note) await this._notify(errand, t.paused(safeName(errand.contact_name), errand.id, why) + (dropped.own ? t.held(true) : ''));
         return updated;
     }
 
     /** He wrote in the chat himself: the errand steps aside and hands the contact's messages back. */
     async _takeover(errand, items = [], { note = true } = {}) {
+        const held = this._heldAccept(this.db.getErrand(errand.id) || errand);
         this._withdraw(errand);
         const closed = this._close(errand.id, 'cancelled', 'the owner wrote in the chat himself');
         if (!closed) return null;
-        this._event(errand.id, 'closed', { state: 'cancelled', why: 'owner wrote' });
+        this._event(errand.id, 'closed', { state: 'cancelled', why: 'owner wrote', ...(held ? { held } : {}) });
         this._handBack(items);
-        if (note) await this._notify(errand, this._t(errand).takeover(safeName(errand.contact_name), errand.id));
+        if (note) await this._notify(errand, this._takeoverLine(errand, held));
         return closed;
+    }
+
+    /** "You wrote to them yourself", and a slot they confirmed that is not on his calendar. */
+    _takeoverLine(errand, held) {
+        const t = this._t(errand);
+        const name = safeName(errand.contact_name);
+        return t.takeover(name, errand.id) + (held ? t.takeoverHeld(name, fmtSlot(held, this.timeZone(), this._lang(errand))) : '');
+    }
+
+    /**
+     * A slot inside his scope the contact confirmed, whose thanks and booking
+     * had not gone out yet (quiet hours, the gap, a send WhatsApp refused).
+     * The errand read that message, so no watcher will see it.
+     */
+    _heldAccept(errand) {
+        if (!errand || errand.agreed) return null;
+        const step = errand.next_action;
+        if (step && !step.owner && step.action === 'accept' && step.date && step.time) return { date: step.date, time: step.time };
+        if (errand.state !== 'paused') return null;
+        const last = this.db.listErrandEvents(errand.id, { newest: 50 }).filter(e => ['decided', 'asked', 'sent'].includes(e.kind)).pop();
+        const slot = last?.kind === 'decided' && last.detail?.action === 'accept' ? last.detail.slot : null;
+        return slot?.date && slot?.time ? { date: slot.date, time: slot.time } : null;
     }
 
     // --- doing a step ---
@@ -1742,9 +1839,16 @@ Answer in JSON.`;
             if (approved && !byOwner && approvalId && errand.pending_approval_id !== approvalId) {
                 return { success: false, error: `Errand #${errand.id} moved on since that card; nothing was sent.`, ownerLine: t.movedOn(errand.id) };
             }
-            // The card he approved is used up, whatever happens next.
-            if (approved && approvalId && errand.pending_approval_id === approvalId) this.db.updateErrand(errand.id, { pending_approval_id: null });
+            // The card he approved is used up, whatever happens next; so is
+            // one he answered in chat (it is no longer pending).
+            const card = errand.pending_approval_id && typeof this.db.getPendingConfirmation === 'function' ? this.db.getPendingConfirmation(errand.pending_approval_id) : null;
+            if ((approved && approvalId && errand.pending_approval_id === approvalId) || (card && card.status !== 'pending')) this.db.updateErrand(errand.id, { pending_approval_id: null });
             const out = await this._perform(this.db.getErrand(errand.id), { ...args, action }, { auto: false });
+            // His step on a paused errand failed before anything went out: it stays paused.
+            const after = this.db.getErrand(errand.id);
+            if (errand.state === 'paused' && out && out.success === false && after && !after.closed_at && after.state === 'waiting_contact' && after.sent_count === errand.sent_count) {
+                this.db.updateErrand(errand.id, { state: 'paused' });
+            }
             // His line reads in his language: never the English error.
             if (out && out.success === false && !out.ownerLine) out.ownerLine = t.failed(errand.id);
             return out;
@@ -1805,11 +1909,12 @@ Answer in JSON.`;
             return { success: false, error: `Could not read the chat with ${name}: ${e.message}. Nothing was sent.`, ownerLine: t.failChat(name) };
         }
         if (this._ownerWrote(errand, history)) {
+            const held = this._heldAccept(this.db.getErrand(errand.id) || errand);
             await this._takeover(errand, [], { note: !live });
-            return { success: false, error: `He wrote to ${name} himself, so errand #${errand.id} stopped. Nothing was sent.`, ownerLine: t.takeover(name, errand.id) };
+            return { success: false, error: `He wrote to ${name} himself, so errand #${errand.id} stopped. Nothing was sent.`, ownerLine: this._takeoverLine(errand, held) };
         }
         // His own steps get a little more room than the errand's own work.
-        if (errand.model_calls >= LIMITS.modelCalls * (auto ? 1 : 2)) {
+        if (errand.model_calls >= this._callBudget(errand, { own: !auto })) {
             await this._pause(errand, t.whyCalls(errand.model_calls), { note: !live });
             return { success: false, error: `Errand #${errand.id} used its model calls and is paused. Nothing was sent.`, ownerLine: t.paused(name, errand.id, t.whyCalls(errand.model_calls)) };
         }
@@ -1914,6 +2019,20 @@ Answer in JSON.`;
                 console.warn(`[Errands] sweep of #${errand.id} failed: ${e.message}`);
             }
         }
+        await this._lateNotes(this.clock());
+    }
+
+    /** An end note held back by quiet hours goes out once they are over. */
+    async _lateNotes(now) {
+        if (this._quiet(now)) return;
+        for (const errand of this.db.listErrands({ all: true, limit: 20 })) {
+            if (errand.state !== 'expired') continue;
+            const events = this.db.listErrandEvents(errand.id, { newest: 20 });
+            const due = events.filter(e => e.kind === 'closed' && e.detail?.noteDue).pop();
+            if (!due || events.some(e => e.kind === 'note' && e.detail?.lateNote && e.id > due.id)) continue;
+            this._event(errand.id, 'note', { lateNote: true });
+            await this._notify(errand, String(due.detail.noteDue));
+        }
     }
 
     async _sweepOne(id, now) {
@@ -1931,8 +2050,10 @@ Answer in JSON.`;
             this._withdraw(errand);
             const closed = this._close(errand.id, 'expired', 'reached its end date');
             if (closed) {
-                this._event(errand.id, 'closed', { state: 'expired' });
-                await this._notify(errand, t.expired(name, errand.id, errand.goal === 'book'));
+                // The note can wait for the morning (sweepNotes); the errand cannot stay open.
+                const text = t.expired(name, errand.id, errand.goal === 'book') + (errand.offer ? t.expiredOffer(name, fmtSlot(errand.offer, this.timeZone(), lang)) : '');
+                this._event(errand.id, 'closed', { state: 'expired', ...(quiet ? { noteDue: text } : {}) });
+                if (!quiet) await this._notify(errand, text);
             }
             return;
         }
@@ -1940,6 +2061,8 @@ Answer in JSON.`;
         if (errand.pending_approval_id && typeof this.db.getPendingConfirmation === 'function') {
             const card = this.db.getPendingConfirmation(errand.pending_approval_id);
             const status = card?.status || 'missing';
+            // Approved: his step runs (or ran) through answerErrand; the card is spent.
+            if (status === 'approved') this.db.updateErrand(errand.id, { pending_approval_id: null });
             if (status === 'denied' || status === 'expired' || status === 'missing') {
                 // A newer card for this errand took its place: his word through
                 // the gate in his own chat, or the errand's own. Follow it. A
@@ -1955,7 +2078,11 @@ Answer in JSON.`;
                 if (status === 'expired' && card?.decided_via === 'sweeper' && quiet) return;
                 this.db.updateErrand(errand.id, { pending_approval_id: null, state: 'waiting_owner' });
                 this._event(errand.id, 'owner', { card: errand.pending_approval_id, status });
-                if (status === 'expired' && card?.decided_via === 'sweeper') await this._notify(errand, t.cardExpired(name, errand.id, errand.offer ? fmtSlot(errand.offer, this.timeZone(), lang) : null));
+                if (status === 'expired' && card?.decided_via === 'sweeper') {
+                    // His own step's card (the gate's) names his step, not the contact's old offer.
+                    const question = card.origin_meta?.ownerChat === true && typeof card.origin_meta?.card?.question === 'string' ? card.origin_meta.card.question.replace(/^¿|\?$/g, '') : null;
+                    await this._notify(errand, question ? t.gateExpired(errand.id, question) : t.cardExpired(name, errand.id, errand.offer ? fmtSlot(errand.offer, this.timeZone(), lang) : null));
+                }
                 return;
             }
         }
@@ -1966,27 +2093,33 @@ Answer in JSON.`;
             if (this.buffers.has(errand.id)) return;
             if (this._unread(errand).length > 0) return this._process(errand.id, []);
             const action = errand.next_action;
-            this.db.updateErrand(errand.id, { next_action: null, next_check_at: null });
             if (ownerStep) {
+                this.db.updateErrand(errand.id, { next_action: null, next_check_at: null });
                 const { owner, ...act } = action;
                 return this._perform(this.db.getErrand(errand.id), act, { auto: false, notify: true });
             }
             let history = [];
             try { history = await this._history(errand.contact_jid); } catch { return; }
+            // He answered them himself while the step waited: the note names the slot it held.
             if (this._ownerWrote(errand, history)) return this._takeover(errand);
+            this.db.updateErrand(errand.id, { next_action: null, next_check_at: null });
             const { step, ...args } = action;
             const fresh = this.db.getErrand(errand.id);
             if (!(await this._inScope(fresh, { date: args.date, time: args.time }))) return this._askAccept(fresh, [{ date: args.date, time: args.time }]);
             return this._runAuto(fresh, args, step || null);
         }
-        // No answer for hours: tell him once. Deedee never writes again on her own.
-        const repliedSince = (Date.parse(errand.last_contact_at || 0) || 0) > (Date.parse(errand.last_sent_at || 0) || 0);
-        if (errand.state === 'waiting_contact' && !errand.no_reply_noted && errand.last_sent_at && !repliedSince
-            && now - Date.parse(errand.last_sent_at) >= LIMITS.noReplyMs && !quiet) {
+        // No answer for hours: tell him once. Deedee never writes again on
+        // her own. "Me fijo y te aviso" or small talk is no answer: the wait
+        // counts from their last word.
+        const lastSent = Date.parse(errand.last_sent_at || 0) || 0;
+        const lastWord = Math.max(lastSent, Date.parse(errand.last_contact_at || 0) || 0);
+        const answered = (Date.parse(errand.answered_at || 0) || 0) > lastSent;
+        if (errand.state === 'waiting_contact' && !errand.no_reply_noted && errand.last_sent_at && !answered
+            && now - lastWord >= LIMITS.noReplyMs && !quiet) {
             if (await this._tookOver(errand)) return;
             this.db.updateErrand(errand.id, { no_reply_noted: 1 });
             this._event(errand.id, 'note', { noReply: true });
-            await this._notify(errand, t.noReply(name, errand.id));
+            await this._notify(errand, lastWord > lastSent ? t.noAnswerYet(name, errand.id) : t.noReply(name, errand.id));
             return;
         }
         // A reply that was stored but not read (a failed history read, a restart mid-read).

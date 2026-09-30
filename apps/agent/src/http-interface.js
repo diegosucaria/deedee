@@ -111,7 +111,8 @@ class HttpInterface extends EventEmitter {
         // A frozen payload keeps no id, and the message still went out.
         try { message.sentMessageId = String(res.data.messageId); } catch { /* frozen or sealed */ }
       }
-      if (finalSource === 'whatsapp' && metadata.session === 'user') this._rememberOwnerSend(metadata.chatId, content, res?.data?.messageId);
+      // Text only: a picture or a voice note is base64 and never compared.
+      if (finalSource === 'whatsapp' && metadata.session === 'user' && type === 'text') this._rememberOwnerSend(metadata.chatId, content, res?.data?.messageId);
       return true;
     } catch (error) {
       console.error('[HttpInterface] Send Error:', error.message);

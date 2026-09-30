@@ -760,6 +760,7 @@ class AgentDB {
         slot_owned INTEGER NOT NULL DEFAULT 0,
         time_owned INTEGER NOT NULL DEFAULT 0,
         read_through INTEGER NOT NULL DEFAULT 0,
+        answered_at TEXT,
         lang TEXT,
         request_tainted INTEGER NOT NULL DEFAULT 0,
         grace_until TEXT,
@@ -2873,27 +2874,30 @@ class AgentDB {
   }
 
   /**
-   * The newest role-user row across these chat ids (one person's chat can
-   * carry several ids) that reached the model, or null. A word that only
-   * answered a card or a question (metadata answeredCard, answeredQuestion)
-   * is skipped. `excludeId`: the message being handled now.
+   * Rows of these chat ids (one person's chat can carry several ids) written
+   * at or after `sinceIso`, oldest first: { id, role, timestamp, metadata }.
+   * `excludeId`: the message being handled now. `more` is true when rows
+   * past `limit` were left out.
    */
-  getLatestUserMessage(chatIds = [], { excludeId = null } = {}) {
+  listChatMessagesSince(chatIds = [], sinceIso, { excludeId = null, limit = 50 } = {}) {
     const ids = [...new Set((chatIds || []).filter(Boolean).map(String))];
-    if (ids.length === 0) return null;
-    const rows = this.db.prepare(`
-      SELECT id, chat_id, timestamp, metadata FROM messages
-      WHERE role = 'user' AND chat_id IN (${ids.map(() => '?').join(', ')}) AND id IS NOT ?
+    const since = Date.parse(sinceIso);
+    if (ids.length === 0 || !Number.isFinite(since)) return { rows: [], more: false };
+    const cap = Math.max(1, Math.min(Number(limit) || 50, 200));
+    const newest = this.db.prepare(`
+      SELECT id, role, timestamp, metadata FROM messages
+      WHERE chat_id IN (${ids.map(() => '?').join(', ')}) AND id IS NOT ?
       ORDER BY timestamp DESC, rowid DESC
-      LIMIT 20
-    `).all(...ids, excludeId === null || excludeId === undefined ? null : String(excludeId));
-    for (const row of rows) {
-      let meta = null;
-      try { meta = row.metadata ? JSON.parse(row.metadata) : null; } catch { meta = null; }
-      if (meta && (meta.answeredCard || meta.answeredQuestion)) continue;
-      return { id: row.id, chat_id: row.chat_id, timestamp: row.timestamp };
-    }
-    return null;
+      LIMIT ?
+    `).all(...ids, excludeId === null || excludeId === undefined ? null : String(excludeId), cap + 1);
+    // Times compare as instants, whatever text form a row keeps.
+    const after = newest.filter(r => Date.parse(r.timestamp) >= since);
+    const rows = after.slice(0, cap).reverse().map(r => {
+      let metadata = null;
+      try { metadata = r.metadata ? JSON.parse(r.metadata) : null; } catch { metadata = null; }
+      return { id: r.id, role: r.role, timestamp: r.timestamp, metadata };
+    });
+    return { rows, more: after.length > cap };
   }
 
   /** The newest role-user rows of one chat, newest first: { id, content }. */
@@ -5463,7 +5467,7 @@ class AgentDB {
   updateErrand(id, patch = {}, { closed = false } = {}) {
     const allowed = new Set(['state', 'mode', 'slot', 'window_start', 'window_end', 'offer', 'agreed', 'event_id',
       'pending_approval_id', 'sent_count', 'auto_count', 'model_calls', 'last_sent_at', 'last_contact_at',
-      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'contact_ids', 'slot_owned', 'time_owned', 'grace_until', 'read_through']);
+      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'contact_ids', 'slot_owned', 'time_owned', 'grace_until', 'read_through', 'answered_at']);
     const jsonCols = new Set(['slot', 'offer', 'agreed', 'contact_ids', 'next_action']);
     const sets = [];
     const values = [];
