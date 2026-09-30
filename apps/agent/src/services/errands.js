@@ -269,7 +269,8 @@ const TEXTS = {
         heldStep: (q) => ` Lo tuyo ("${q}") no salió.`,
         stepSlot: (a, sl) => (a === 'accept' ? `aceptar el ${sl}` : `proponer el ${sl}`),
         stepDecline: 'decirle que no',
-        whyNoTime: 'no me diste horario',
+        sayIt: ' Si querés que se lo mande, decime.',
+        whyNoTime: 'no había un horario pedido',
         whyLimit: (id, n) => `el pedido #${id} ya mandó ${n} mensajes por su cuenta`,
         noSlot: (n, id) => `${n} no tiene lugar (pedido #${id}). Decime otro día u horario, o que lo cancele.`,
         unclearSlot: (n, id, asked) => `${n} contestó (pedido #${id}) pero no entendí qué horario${asked ? ` (le había pedido el ${asked})` : ''}. Fijate en el chat.`,
@@ -357,7 +358,8 @@ const TEXTS = {
         heldStep: (q) => ` Your step ("${q}") did not go out.`,
         stepSlot: (a, sl) => (a === 'accept' ? `accept ${sl}` : `propose ${sl}`),
         stepDecline: 'say no',
-        whyNoTime: 'you named no time',
+        sayIt: ' Tell me if you want me to send it.',
+        whyNoTime: 'no time had been asked for',
         whyLimit: (id, n) => `errand #${id} already sent ${n} messages on its own`,
         noSlot: (n, id) => `${n} has no slot (errand #${id}). Tell me another day or time, or to cancel.`,
         unclearSlot: (n, id, asked) => `${n} answered (errand #${id}) but I could not tell which slot${asked ? ` (I had asked for ${asked})` : ''}. Please look at the chat.`,
@@ -1573,12 +1575,14 @@ Answer in JSON.`;
         const t = this._t(errand);
         const name = safeName(errand.contact_name);
         if (form.kind === 'question') return this._askNote(errand, t.asked(name, errand.id, form.summary), { taint: true });
-        // His step waits for these words ("decile gracias"): he hears the
-        // answer, his step is named, and the errand stays open for it.
-        if (errand.next_action?.owner) return this._askNote(errand, t.answered(name, errand.id, form.summary), { taint: true });
+        // The question is answered: the errand ends, so it no longer holds her
+        // chat. A step of his that waited for these words ("decile gracias")
+        // is named; he can still send his own words (sendMessage).
+        const dropped = this._withdraw(errand);
+        const waiting = errand.next_action?.owner ? this._stepName(errand, errand.next_action) : (dropped.own ? (dropped.step || null) : null);
         const closed = this._close(errand.id, 'done', 'answered');
-        if (closed) this._event(errand.id, 'closed', { state: 'done' });
-        await this._notify(errand, t.answered(name, errand.id, form.summary), { taint: true });
+        if (closed) this._event(errand.id, 'closed', { state: 'done', ...(waiting ? { dropped: 'his step' } : {}) });
+        await this._notify(errand, t.answered(name, errand.id, form.summary) + (waiting ? t.heldStep(waiting) + t.sayIt : ''), { taint: true });
         return closed;
     }
 
@@ -1592,8 +1596,10 @@ Answer in JSON.`;
         const gapUntil = (Date.parse(fresh.last_sent_at || 0) || 0) + LIMITS.minGapMs;
         const gapDue = Math.max(now, gapUntil);
         // A gap that ends just before 22:00 may run into quiet hours: the sweep runs a little later.
-        const quietHold = this._quiet(gapDue) || (gapDue > now && this._quiet(gapDue + 2 * SWEEP_MS));
-        const due = quietHold ? this._quietEnd(Math.max(gapDue, gapDue + 2 * SWEEP_MS)) : gapDue;
+        const inQuiet = this._quiet(gapDue);
+        const intoQuiet = !inQuiet && gapDue > now && this._quiet(gapDue + 2 * SWEEP_MS);
+        const quietHold = inQuiet || intoQuiet;
+        const due = inQuiet ? this._quietEnd(gapDue) : intoQuiet ? this._quietEnd(gapDue + 2 * SWEEP_MS) : gapDue;
         // Waiting would lose the slot (a table tonight, or one right after
         // 08:00; the sweep runs a little after the step is due): he decides now.
         const margin = quietHold ? 2 * SWEEP_MS : SWEEP_MS;
@@ -2294,7 +2300,8 @@ Answer in JSON.`;
             try { cards = (typeof this.db.listPendingConfirmations === 'function' ? this.db.listPendingConfirmations() : []).filter(r => r.tool_name === 'answerErrand' && Number(r.args?.id) === e.id); } catch { cards = []; }
             for (const c of cards) {
                 const a = c.args || {};
-                const step = a.action === 'say' ? `say "${clip(a.text, 80)}"` : `${a.action}${a.date ? ` ${a.date}` : ''}${a.time ? ` ${a.time}` : ''}`;
+                // His words in full: a cut text would make a different call, and a new card.
+                const step = a.action === 'say' ? `say ${JSON.stringify(String(a.text || ''))}` : `${a.action}${a.date ? ` ${a.date}` : ''}${a.time ? ` ${a.time}` : ''}`;
                 bits.push(`card ${c.id} waits for his yes: ${step}`);
             }
             if (e.offer) bits.push(`on the table: ${fmtSlot(e.offer, tz)} (date ${e.offer.date}, time ${e.offer.time})`);
@@ -2305,6 +2312,12 @@ Answer in JSON.`;
             bits.push(e.request_tainted ? 'request: set from a card' : `his request: "${clip(e.request, 120)}"`);
             return bits.join('; ');
         });
+    }
+
+    /** True when the errand exists and is closed (the gate refuses its steps). */
+    isClosed(id) {
+        const e = this.db.getErrand(id);
+        return !!(e && e.closed_at);
     }
 
     /** listErrands: for the model. No text the contact wrote. */

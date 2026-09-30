@@ -2085,23 +2085,27 @@ describe('errands', () => {
             const errand = await startBooking();
             clock += 5 * 60e3;
             await contactAnswers(errand, '10,30?', offer('10:30'));
-            const ask = (text, id) => approvals.review({ message: { ...ownerSays(text), id }, toolName: 'answerErrand', args: { id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, historyUntrusted: true, foreignText: true });
-            const first = await ask('decile que mejor a las 11', 'm-11');
+            const ask = (text, id, runId) => approvals.review({ message: { ...ownerSays(text), id }, toolName: 'answerErrand', args: { id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, historyUntrusted: true, foreignText: true, run: { id: runId, previews: new Map() } });
+            const first = await ask('decile que mejor a las 11', 'm-11', 'run-1');
             expect(first.status).toBe('paused');
             // A job note lands after his card; his "sí" goes to the model, which asks for the same step.
             const cardAt = Date.parse(db.getPendingConfirmation(first.approvalId).created_at);
             db.saveMessage({ id: 'job-note', role: 'assistant', content: 'Resumen.', source: 'whatsapp:assistant', chatId: OWNER_LID, timestamp: new Date(cardAt + 1).toISOString(), metadata: { type: 'text' } });
             await new Promise(r => setTimeout(r, 5));
             expect(await approvals.intercept({ ...ownerSays('sí'), id: 'si-1' }, jest.fn())).toBeNull();
-            const again = await ask('sí', 'si-1');
+            const again = await ask('sí', 'si-1', 'run-2');
             expect(again.approvalId).toBe(first.approvalId);
+            // The same run asking twice shows it once.
+            await ask('sí', 'si-1', 'run-2');
             const shown = deliver.mock.calls.filter(c => c[0] === 'approval' && c[3].metadata?.approval?.id === first.approvalId);
             expect(shown.length).toBe(2);
-            // The card is the newest thing he reads again.
+            // That run's own reply after the card does not count.
+            await new Promise(r => setTimeout(r, 5));
+            db.saveMessage({ id: 'r2-reply', role: 'assistant', content: 'Te la mostré de nuevo.', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date().toISOString(), metadata: { model: 'm', turnRunId: 'run-2' } });
             expect(await approvals.intercept({ ...ownerSays('sí'), id: 'si-2' }, jest.fn())).toBeTruthy();
         });
 
-        test('on an ask errand, her answer while his "decile gracias" waits names his step and keeps the errand open', async () => {
+        test('on an ask errand, her answer while his "decile gracias" waits closes it, names his step, and a later step there gets no card', async () => {
             drafts.push({ text: 'venís el sábado?', date: '', time: '' });
             const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale si viene el sábado' });
             clock += 5 * 60e3;
@@ -2111,8 +2115,13 @@ describe('errands', () => {
             expect(res.deferred).toBe(true);
             forms.push({ kind: 'answer', slots: [], summary: 'Says yes, she comes', tellOwner: false });
             await service.flush(out.errandId);
-            expect(db.getErrand(out.errandId).closed_at).toBeNull();
-            expect(notes().pop().content).toMatch(/contestó tu pregunta .*Lo tuyo \("gracias!"\) no salió\./);
+            // The errand ends, so it no longer holds her chat.
+            expect(db.getErrand(out.errandId).state).toBe('done');
+            expect(notes().pop().content).toMatch(/contestó tu pregunta .*Lo tuyo \("gracias!"\) no salió\. Si querés que se lo mande, decime\./);
+            const res2 = await approvals.review({ message: ownerSays('dale, mandale gracias'), toolName: 'answerErrand', args: { id: out.errandId, action: 'say', text: 'gracias!' }, historyUntrusted: true, foreignText: true });
+            expect(res2).toMatchObject({ run: false, status: 'error' });
+            expect(res2.result.error).toMatch(/use sendMessage with session 'user'/);
+            expect(pendingCards()).toHaveLength(0);
         });
 
         test('a pause names his step that did not go out', async () => {
@@ -2141,6 +2150,53 @@ describe('errands', () => {
             await contactAnswers(db.getErrand(out.errandId), 'dale', { kind: 'confirm', slots: [{ date: '2026-10-01', time: '08:10' }], summary: 'Confirms.', tellOwner: false });
             expect(db.getErrand(out.errandId).next_action).toBeNull();
             expect(lastCard()).toMatch(/es tarde y a esta hora no contesto por mi cuenta/);
+        });
+
+        test('an ask errand that closes on her answer names his step still waiting on its card', async () => {
+            drafts.push({ text: 'venís el sábado?', date: '', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale si viene el sábado' });
+            const res = await approvals.review({ message: ownerSays('decile que a las 8'), toolName: 'answerErrand', args: { id: out.errandId, action: 'say', text: 'a las 8' }, historyUntrusted: true, foreignText: true });
+            expect(res.status).toBe('paused');
+            clock += 5 * 60e3;
+            await contactAnswers(db.getErrand(out.errandId), 'sí voy', { kind: 'answer', slots: [], summary: 'She comes', tellOwner: false });
+            expect(db.getErrand(out.errandId).state).toBe('done');
+            expect(db.getPendingConfirmation(res.approvalId).status).toBe('expired');
+            expect(notes().pop().content).toMatch(/Lo tuyo \("a las 8"\) no salió\. Si querés que se lo mande, decime\./);
+        });
+
+        test('the turn context gives a card\'s words in full, so the model repeats exactly that step', async () => {
+            const errand = await startBooking();
+            const long = 'che al final no voy a poder ir el jueves porque me surgió un viaje de trabajo, te aviso cuando vuelva así coordinamos otro día';
+            await approvals.review({ message: ownerSays('decile'), toolName: 'answerErrand', args: { id: errand.id, action: 'say', text: long }, historyUntrusted: true, foreignText: true });
+            expect(service.turnContextLines()[0]).toContain(JSON.stringify(long));
+        });
+
+        test('another chat asking for the same step never shows his card again', async () => {
+            const errand = await startBooking();
+            const args = { id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' };
+            const first = await approvals.review({ message: { ...ownerSays('mejor a las 11'), id: 'o-1' }, toolName: 'answerErrand', args, historyUntrusted: true, foreignText: true, run: { id: 'run-a', previews: new Map() } });
+            const before = deliver.mock.calls.filter(c => c[0] === 'approval').length;
+            // A person allowed to chat with Deedee: not his typing.
+            const other = { id: 'x-1', role: 'user', source: 'whatsapp', content: 'decile', metadata: { chatId: `${OTHER}@s.whatsapp.net` } };
+            await approvals.review({ message: other, toolName: 'answerErrand', args, historyUntrusted: true, foreignText: true, run: { id: 'run-b', previews: new Map() } });
+            expect(deliver.mock.calls.filter(c => c[0] === 'approval').length).toBe(before);
+            expect(db.getPendingConfirmation(first.approvalId).status).toBe('pending');
+        });
+
+        test('in a busy chat, a card shown again still counts from its latest showing', async () => {
+            const card = await approvals.request({ message: { source: 'whatsapp', role: 'user', content: 'x', metadata: { chatId: OWNER_LID } }, toolName: 'forgetFact', args: { key: 'k' }, reason: 'r', extraMeta: { cardRunId: 'run-c' } });
+            const base = Date.parse(card ? db.getPendingConfirmation(card.id).created_at : 0);
+            for (let i = 0; i < 60; i++) db.saveMessage({ id: `busy-${i}`, role: i % 2 ? 'user' : 'assistant', content: 'x', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(base + 1 + i).toISOString(), metadata: {} });
+            db.saveMessage({ id: 'again-1', role: 'assistant', content: 'card', source: 'whatsapp', chatId: OWNER_CHAT, timestamp: new Date(base + 100).toISOString(), metadata: { approval: { id: card.id, status: 'pending' }, shownRunId: 'run-d' } });
+            expect(await approvals.intercept({ ...ownerSays('sí'), id: 'busy-yes' }, jest.fn())).toBeTruthy();
+        });
+
+        test('her yes just before 08:00 goes out at 08:00 that morning, not the next day', async () => {
+            const errand = await startBooking();
+            clock = at('2026-10-06', '07:58') + 30e3;
+            db.updateErrand(errand.id, { last_sent_at: new Date(clock - 1000).toISOString() });
+            await contactAnswers(errand, 'dale te espero', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            expect(db.getErrand(errand.id).next_check_at).toBe(new Date(at('2026-10-06', '08:00')).toISOString());
         });
 
         test('the same words he writes long after a refused send are his own', async () => {
