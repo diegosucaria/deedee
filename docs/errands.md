@@ -85,9 +85,14 @@ missed calls and edits do not. News or
 a photo in the same burst as an answer reaches him in a note of its own.
 Her yes that waits for 08:00 stays in view (`held_yes`): the model's context
 says so, every note that drops it names it, and words of his to her
-meanwhile do not drop it silently. Her "no tengo lugar", her newer offer, or
-a step of his that picks another slot ends it. A window over several days
-means those hours on each day. While a step he asked for waits for the contact's
+meanwhile do not drop it silently. Her "no tengo lugar", her "me fijo" (he is
+told), her newer offer, his "no" to its card, or a step of his that picks
+another slot ends it, and her "me fijo" takes that slot off the table. A
+window whose start and end hour are the same means any time on its days. A
+window over several days means those hours on each day; hours that pass
+midnight end the morning after its last night. One span into the next day
+that ends after 06:00 ("jueves a la tarde o viernes a la mañana") shows both
+ends in full. While a step he asked for waits for the contact's
 new words to be read, or waits on a card of his (or that card lapsed or was
 dropped, and nothing went out since), the errand accepts nothing on its own;
 a card, note or pause that drops his step names it. An `ask` errand ends on her answer,
@@ -146,7 +151,7 @@ After the model writes, code:
 | All messages | 10 per errand |
 | Gap between its own messages | 1 minute |
 | Quiet hours | 22:00 to 08:00: a step waits until 08:00 |
-| No answer | he hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word (from 08:00 when that came at night); Deedee never writes again on her own |
+| No answer | he hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word (four hours of her day: the night does not count); Deedee never writes again on her own |
 | Life | until the slot's day, 7 days at most; an end in quiet hours moves to 21:55 (a late slot keeps its evening); past its end an errand closes at once, and a note held by quiet hours goes out at 08:00. He hears at the start when the errand ends before the day |
 | Model calls | 20 per errand, 40 for his own steps and once he answers a paused errand |
 | Voice notes | 60 seconds to transcribe, then it counts as unreadable |

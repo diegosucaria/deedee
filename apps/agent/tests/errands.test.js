@@ -2757,7 +2757,10 @@ describe('errands', () => {
             await contactAnswers(errand, 'me fijo bien y te confirmo', { kind: 'later', slots: [], summary: 'Will check.', tellOwner: false });
             expect(db.getErrand(errand.id).held_yes).toBeNull();
             db.updateErrand(errand.id, { held_yes: { date: '2026-10-08', time: '10:00' } });
-            service.ownerSaidNo(errand.id);
+            // His "no" to a card about something else keeps her yes; a no to the card for her yes ends it.
+            service.ownerSaidNo(errand.id, { action: 'say', text: 'es solo corte' });
+            expect(db.getErrand(errand.id).held_yes).toMatchObject({ date: '2026-10-08', time: '10:00' });
+            service.ownerSaidNo(errand.id, { action: 'accept', date: '2026-10-08', time: '10:00' });
             expect(db.getErrand(errand.id).held_yes).toBeNull();
         });
 
@@ -2804,6 +2807,66 @@ describe('errands', () => {
             expect(service.turnContextLines()[0]).toContain('window: 2026-10-08 to 2026-10-09, 09:00 to 12:00 each day');
             const prompt = generateContent.mock.calls.map(c => c[0].contents[0].parts[0].text).find(t => /What to write now/.test(t));
             expect(prompt).toContain('any day Thu 08/10 to Fri 09/10, 09:00 to 12:00');
+        });
+
+        test('"Thursday, any time" (the same hour at both ends) takes any time that day', async () => {
+            drafts.push({ text: 'Buenas! hay lugar el jueves?', date: '2026-10-08', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves a cualquier hora', windowStart: '2026-10-08T00:00', windowEnd: '2026-10-09T00:00' });
+            clock += 5 * 60e3;
+            const done = await contactAnswers(db.getErrand(out.errandId), 'jueves 10?', offer('10:00'));
+            expect(done.state).toBe('done');
+        });
+
+        test('her "me fijo" right after her yes is told, so no later note surprises him', async () => {
+            const errand = await startBooking();
+            clock = at('2026-10-02', '22:30');
+            await contactAnswers(errand, 'dale, jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            clock = at('2026-10-02', '22:40');
+            await contactAnswers(errand, 'me fijo si tengo el producto y te aviso', { kind: 'later', slots: [], summary: 'Will check.', tellOwner: false });
+            expect(notes().pop().content).toMatch(/Alice me dijo que sí al jue 08\/10 a las 10:00, pero después dijo que se fija y te avisa .*No lo agendé; espero su respuesta\./);
+        });
+
+        test('a first message for a window that passes midnight may name a time in it', async () => {
+            drafts.push({ text: 'hola! tenés mesa tipo 21?', date: '2026-10-08', time: '21:00' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'mesa el jueves de 20 a 24', windowStart: '2026-10-08T20:00', windowEnd: '2026-10-09T00:00' });
+            expect(out.success).toBe(true);
+        });
+
+        test('a send at 21:59 waits four hours of her day, not until 08:00', async () => {
+            clock = at('2026-10-02', '21:59');
+            drafts.push(draftAnswer('request'));
+            await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves', date: '2026-10-08', time: '10:00' });
+            clock = at('2026-10-03', '08:05');
+            await service.sweep();
+            expect(notes().some(n => /todavía no contestó/.test(n.content))).toBe(false);
+            clock = at('2026-10-03', '12:05');
+            await service.sweep();
+            expect(notes().some(n => /todavía no contestó/.test(n.content))).toBe(true);
+        });
+
+        test('a window from one afternoon to the next morning is not read as "de 14:00 a 12:00"', async () => {
+            drafts.push({ text: 'Buenas! tenés lugar el jueves a la tarde o el viernes a la mañana?', date: '2026-10-08', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno jueves a la tarde o viernes a la mañana', windowStart: '2026-10-08T14:00', windowEnd: '2026-10-09T12:00' });
+            expect(service.turnContextLines()[0]).toContain('window: 2026-10-08 14:00 to 2026-10-09 12:00');
+            clock += 5 * 60e3;
+            await contactAnswers(db.getErrand(out.errandId), 'viernes 17?', offer('17:00', '2026-10-09'));
+            expect(lastCard()).toMatch(/fuera de tu rango \(del jue 08\/10 a las 14:00 al vie 09\/10 a las 12:00\)/);
+        });
+
+        test('nights past midnight: the model does not read the morning after as one more night', async () => {
+            drafts.push({ text: 'hola! tenés mesa jueves o viernes a la noche?', date: '2026-10-08', time: '' });
+            await service.start({ contact: CONTACT, goal: 'book', request: 'mesa jueves o viernes de 21 a 1', windowStart: '2026-10-08T21:00', windowEnd: '2026-10-10T01:00' });
+            expect(service.turnContextLines()[0]).toContain('window: 2026-10-08 to 2026-10-09, 21:00 to 01:00 each day (the hours pass midnight)');
+        });
+
+        test('her "me fijo" after her yes takes that slot off the table', async () => {
+            const errand = await startBooking();
+            clock = at('2026-10-02', '23:10');
+            await contactAnswers(errand, 'dale jueves 10 te espero', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            clock = at('2026-10-02', '23:30');
+            await contactAnswers(errand, 'pará que me fijo bien y te aviso', { kind: 'later', slots: [], summary: 'Will check.', tellOwner: false });
+            expect(db.getErrand(errand.id).held_yes).toBeNull();
+            expect(service.turnContextLines()[0]).not.toMatch(/on the table/);
         });
 
         test('"y decile ..." or "y?" ("and tell her ...", "so?") is not a yes', async () => {

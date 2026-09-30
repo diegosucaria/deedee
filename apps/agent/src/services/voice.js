@@ -182,7 +182,9 @@ function inRange(found, range) {
     if (lo === null || hi === null) return true;
     const readings = [found.hour * 60 + found.min];
     if (found.hour < 12) readings.push((found.hour + 12) * 60 + found.min);
-    return readings.some(v => v >= lo && v <= hi);
+    // The same start and end: any time. Hours that pass midnight wrap.
+    if (lo === hi) return true;
+    return readings.some(v => (lo < hi ? (v >= lo && v <= hi) : (v >= lo || v <= hi)));
 }
 
 /** Does a named time match HH:MM? "4:30" matches 16:30: people write the afternoon on a 12-hour clock. */

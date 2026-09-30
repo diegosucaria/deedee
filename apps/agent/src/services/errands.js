@@ -241,7 +241,23 @@ function inWindow(errand, slot) {
     const t2 = errand.window_end.slice(11);
     // Within the range, the daily hours hold; hours that pass midnight
     // ("de 20 a 24", "de 21 a 1") hold each night.
-    return t1 <= t2 ? (slot.time >= t1 && slot.time <= t2) : (slot.time >= t1 || slot.time <= t2);
+    // The same hour at both ends ("Thursday, any time": 00:00 to 00:00 the next day): any time.
+    if (t1 === t2) return true;
+    return t1 < t2 ? (slot.time >= t1 && slot.time <= t2) : (slot.time >= t1 || slot.time <= t2);
+}
+
+/** A span into the next day that ends by this hour is a night out ("de 21 a 1"). */
+const NIGHT_END = '06:00';
+
+/** A window over more than one day (one night that passes midnight is one window). */
+function windowMultiDay(start, end) {
+    const d1 = String(start || '').slice(0, 10);
+    const d2 = String(end || '').slice(0, 10);
+    if (!d1 || !d2 || d1 === d2) return false;
+    const t1 = String(start).slice(11);
+    const t2 = String(end).slice(11);
+    if (t1 === t2 && localDayAfter(d1) === d2) return false;
+    return !(t1 > t2 && localDayAfter(d1) === d2);
 }
 
 /** "jue 08/10 de 09:00 a 12:00": his window, in his language. */
@@ -250,13 +266,38 @@ function fmtWindow(errand, timeZone, lang = 'en') {
     const t1 = errand.window_start.slice(11);
     const t2 = errand.window_end.slice(11);
     const endDate = errand.window_end.slice(0, 10);
+    const anyTime = t1 === t2;
     // Several days: the days, then the hours that hold on each ("jue 08/10 a vie 09/10, de 09:00 a 12:00").
-    const multi = endDate !== errand.window_start.slice(0, 10) && !(t1 > t2 && localDayAfter(errand.window_start.slice(0, 10)) === endDate);
-    if (multi) {
-        const last = fmtSlot({ date: t1 > t2 ? localDayBefore(endDate) : endDate, time: null }, timeZone, lang);
+    if (windowMultiDay(errand.window_start, errand.window_end)) {
+        const last = fmtSlot({ date: t1 >= t2 ? localDayBefore(endDate) : endDate, time: null }, timeZone, lang);
+        if (anyTime) return lang === 'es' ? `${day} a ${last}, a cualquier hora` : `${day} to ${last}, any time`;
         return lang === 'es' ? `${day} a ${last}, de ${t1} a ${t2}` : `${day} to ${last}, ${t1} to ${t2}`;
     }
+    if (anyTime) return lang === 'es' ? `${day}, a cualquier hora` : `${day}, any time`;
+    // One span into the next day that is not a night out ("jueves a la tarde o
+    // viernes a la mañana"): both ends in full, since "de 14:00 a 12:00" reads as nothing.
+    if (endDate !== errand.window_start.slice(0, 10) && t2 > NIGHT_END) {
+        const end = fmtSlot({ date: endDate, time: t2 }, timeZone, lang);
+        const start = fmtSlot({ date: errand.window_start.slice(0, 10), time: t1 }, timeZone, lang);
+        return lang === 'es' ? `del ${start} al ${end}` : `from ${start} to ${end}`;
+    }
     return lang === 'es' ? `${day} de ${t1} a ${t2}` : `${day} from ${t1} to ${t2}`;
+}
+
+/**
+ * The window for the model, dates in full: the first and the last day its
+ * hours start on. A window whose hours pass midnight ends the morning after
+ * its last day, so that morning's night is not in it.
+ */
+function windowForModel(start, end) {
+    const t1 = start.slice(11);
+    const t2 = end.slice(11);
+    if (!windowMultiDay(start, end)) {
+        return start.slice(0, 10) === end.slice(0, 10) ? `${start.replace('T', ' ')} to ${t2}` : `${start.replace('T', ' ')} to ${end.replace('T', ' ')}`;
+    }
+    const last = t1 >= t2 ? localDayBefore(end.slice(0, 10)) : end.slice(0, 10);
+    if (t1 === t2) return `${start.slice(0, 10)} to ${last}, any time`;
+    return `${start.slice(0, 10)} to ${last}, ${t1} to ${t2} each day${t1 > t2 ? ' (the hours pass midnight)' : ''}`;
 }
 
 function localDayAfter(date) {
@@ -316,6 +357,8 @@ const TEXTS = {
         voiceAnswer: (n, id) => `${n} contestó con un audio que no pude entender (pedido #${id}). Escuchalo en el chat; el pedido quedó cerrado.`,
         unreadAnswer: (n, id) => `${n} contestó (pedido #${id}) pero no pude leer la respuesta. Fijate en el chat; el pedido quedó cerrado.`,
         heldAcceptAsk: (n, s) => ` Estaba por aceptarle a ${n} el ${s}; no está en tu calendario. Decime si lo acepto.`,
+        yesThenChecking: (n, s) => ` Antes me había dicho que sí al ${s}; ya no lo doy por hecho.`,
+        yesThenCheckingNote: (n, id, s) => `${n} me dijo que sí al ${s}, pero después dijo que se fija y te avisa (pedido #${id}). No lo agendé; espero su respuesta.`,
         mediaAnswer: (n, id) => `${n} contestó con una foto o un archivo (pedido #${id}). Fijate en el chat; el pedido quedó cerrado.`,
         whyInvolved: 'ya me dijiste algo sobre este pedido, así que te pregunto antes',
         whyStepWaits: 'tenés otro paso pendiente en este pedido',
@@ -412,6 +455,8 @@ const TEXTS = {
         voiceAnswer: (n, id) => `${n} answered with a voice note I could not understand (errand #${id}). Please listen to it in the chat; the errand is closed.`,
         unreadAnswer: (n, id) => `${n} answered (errand #${id}) but I could not read it. Please look at the chat; the errand is closed.`,
         heldAcceptAsk: (n, s) => ` I was about to accept ${s} with ${n}; it is not on your calendar. Tell me whether to accept it.`,
+        yesThenChecking: (n, s) => ` They had said yes to ${s}; I no longer count on it.`,
+        yesThenCheckingNote: (n, id, s) => `${n} said yes to ${s}, then said they will check and tell you (errand #${id}). I did not book it; I am waiting for their answer.`,
         mediaAnswer: (n, id) => `${n} answered with a photo or a file (errand #${id}). Please look at the chat; the errand is closed.`,
         whyInvolved: 'you already weighed in on this errand, so I ask first',
         whyStepWaits: 'a step of yours is still pending on this errand',
@@ -710,6 +755,15 @@ class ErrandService {
     _quiet(ms = this.clock()) {
         const { hour } = localParts(ms, this.timeZone());
         return hour >= LIMITS.quietStartHour || hour < LIMITS.quietEndHour;
+    }
+
+    /** The next start of quiet hours (22:00) after `ms`. */
+    _nextQuietStart(ms) {
+        const tz = this.timeZone();
+        const { date } = localParts(ms, tz);
+        const start = `${String(LIMITS.quietStartHour).padStart(2, '0')}:00`;
+        const today = zonedMs(date, start, tz);
+        return today > ms ? today : zonedMs(localDayAfter(date), start, tz);
     }
 
     /** The next end of quiet hours after `ms`. */
@@ -1137,9 +1191,11 @@ class ErrandService {
                 request,
                 ...(requestTainted ? { requestTainted: true } : {}),
                 ...(goal === 'book' && slot ? {
-                    slotText: windowStart && windowStart.slice(0, 10) !== windowEnd.slice(0, 10)
+                    slotText: windowStart && windowMultiDay(windowStart, windowEnd)
                         ? `any day ${fmtWindow({ window_start: windowStart, window_end: windowEnd }, tz)}`
-                        : `${fmtSlot(slot, tz)}${range ? ` (any time from ${range.start} to ${range.end})` : ''}`
+                        : windowStart && windowEnd.slice(0, 10) !== windowStart.slice(0, 10)
+                            ? `any time ${fmtWindow({ window_start: windowStart, window_end: windowEnd }, tz)}`
+                            : `${fmtSlot(slot, tz)}${range ? ` (any time from ${range.start} to ${range.end})` : ''}`
                 } : {}),
                 ...(goal === 'book' && !range && (!slot || !slot.time) ? { noTime: true } : {}),
                 busy,
@@ -1154,7 +1210,9 @@ class ErrandService {
                 : null;
             const d = await this.voice.draft({
                 ownerName: this._ownerName(), contactName, history, notes: this._notes(person?.id || null), stats, step, brief,
-                now, timeZone: tz, chatId: null, requireTime: range ? null : (slot?.time || null), requireDate: slot?.date || null,
+                now, timeZone: tz, chatId: null, requireTime: range ? null : (slot?.time || null),
+                // A window over several days: any of its days may be named.
+                requireDate: windowStart && windowMultiDay(windowStart, windowEnd) ? null : (slot?.date || null),
                 range, allowMoney: goal !== 'book' && /plata|pag|transfer|cobr|se[ñn]a/i.test(request), check
             });
             calls = d.calls;
@@ -1476,15 +1534,21 @@ class ErrandService {
                 if (!waiting) {
                     // Her earlier answer (and a yes of hers that waited) no longer stands:
                     // the no-answer note counts again.
-                    this.db.updateErrand(id, { answered_at: null, held_yes: null });
-                    return null;
+                    const herYes = this._heldYes(errand);
+                    // Her withdrawn yes is no longer on the table either.
+                    this.db.updateErrand(id, { answered_at: null, held_yes: null, ...(sameSlot(errand.offer, herYes) ? { offer: null } : {}) });
+                    return herYes ? this._notifyOnly(errand, t.yesThenCheckingNote(name, id, fmtSlot(herYes, this.timeZone(), this._lang(errand)))) : null;
                 }
                 // "Me fijo": her earlier answer no longer stands (the no-answer
                 // note counts again), and a step of his that waited stops the
                 // errand from accepting anything by itself.
-                this.db.updateErrand(id, { next_action: null, next_check_at: null, state: 'waiting_contact', answered_at: null, held_yes: null, ...(waiting.owner ? { auto_ok: 0 } : {}) });
+                const herYes = this._heldYes({ next_action: waiting, held_yes: errand.held_yes });
+                const withdrawn = sameSlot(errand.offer, herYes) || (waiting.action === 'accept' && sameSlot(errand.offer, waiting));
+                this.db.updateErrand(id, { next_action: null, next_check_at: null, state: 'waiting_contact', answered_at: null, held_yes: null, ...(withdrawn ? { offer: null } : {}), ...(waiting.owner ? { auto_ok: 0 } : {}) });
                 this._event(id, 'decided', { dropped: true, why: 'later' });
-                return waiting.owner ? this._notifyOnly(errand, t.checking(name, id, this._stepName(errand, waiting))) : null;
+                if (waiting.owner) return this._notifyOnly(errand, t.checking(name, id, this._stepName(errand, waiting)) + (herYes ? t.yesThenChecking(name, fmtSlot(herYes, this.timeZone(), this._lang(errand))) : ''));
+                // Her yes, then "me fijo": he hears it, so no later note surprises him.
+                return herYes ? this._notifyOnly(errand, t.yesThenCheckingNote(name, id, fmtSlot(herYes, this.timeZone(), this._lang(errand)))) : null;
             }
             // Small talk. A step he approved that waited for these words to be read goes ahead now.
             if (waiting?.owner) {
@@ -1575,7 +1639,8 @@ class ErrandService {
         }).join('\n');
         const asked = errand.agreed ? `The slot already booked: ${errand.agreed.date} at ${errand.agreed.time}.`
             : errand.slot ? `The slot on the table from OWNER's side: ${errand.slot.date}${errand.slot.time ? ` at ${errand.slot.time}` : ' (no time named)'}.` : '';
-        const windowLine = errand.window_start ? `OWNER accepts any slot from ${errand.window_start} to ${errand.window_end}.` : '';
+        const windowLine = !errand.window_start ? ''
+            : `OWNER accepts any slot ${windowMultiDay(errand.window_start, errand.window_end) ? 'on the days ' : 'from '}${windowForModel(errand.window_start, errand.window_end)}.`;
         const goalLine = errand.goal === 'book' ? 'OWNER wants to book a slot with CONTACT.' : 'OWNER asked CONTACT a question and wants the answer.';
         // A request written after reading someone else's text is data too.
         const requestLine = errand.request_tainted
@@ -2261,9 +2326,12 @@ Answer in JSON.`;
         const said = clip(d.parts.join(' '), 120);
         if (!out.ok) {
             // The slot this very step accepted is the yes that did not go out.
+            // A no or another slot of his overrides her yes; an accept keeps its own slot in view.
+            const overrides = args.action === 'decline' || args.action === 'propose';
             const yes = (args.action === 'accept' && slot) ? slot
-                : (this._heldYes(current) || (args.heldYes && validDate(args.heldYes.date) && normTime(args.heldYes.time) ? { date: args.heldYes.date, time: normTime(args.heldYes.time) } : null));
-            if (yes) this.db.updateErrand(current.id, { held_yes: yes });
+                : overrides ? null
+                    : (this._heldYes(current) || (args.heldYes && validDate(args.heldYes.date) && normTime(args.heldYes.time) ? { date: args.heldYes.date, time: normTime(args.heldYes.time) } : null));
+            this.db.updateErrand(current.id, { held_yes: yes });
             await this._pause(current, t.whyRefused, { note: !live });
             return { success: false, error: `WhatsApp did not take the message to ${name}. Errand #${errand.id} is paused. Do not retry it before checking the chat.`, ownerLine: t.paused(name, errand.id, t.whyRefused) + (yes ? t.heldAcceptNote(name, fmtSlot(yes, tz, lang)) : '') };
         }
@@ -2389,7 +2457,7 @@ Answer in JSON.`;
             const card = this.db.getPendingConfirmation(errand.pending_approval_id);
             const status = card?.status || 'missing';
             // His "no" is a decision of his: the errand acts on nothing by itself after it.
-            if (status === 'denied') this.db.updateErrand(errand.id, { auto_ok: 0, auto_why: 'his', held_yes: null });
+            if (status === 'denied') this.ownerSaidNo(errand.id, card?.args || null);
             if (status === 'denied' || status === 'expired' || status === 'missing') {
                 // A newer card for this errand took its place: his word through
                 // the gate in his own chat, or the errand's own. Follow it. A
@@ -2443,9 +2511,12 @@ Answer in JSON.`;
         const lastWordAt = Math.max(lastSent, Date.parse(errand.last_contact_at || 0) || 0);
         // A message at night: the four hours count from the morning, when she can answer.
         const lastWord = lastWordAt && this._quiet(lastWordAt) ? this._quietEnd(lastWordAt) : lastWordAt;
+        // Four hours of her day: a wait that runs into the night resumes at 08:00.
+        let noReplyDue = lastWord + LIMITS.noReplyMs;
+        if (lastWord && !this._quiet(lastWord) && this._quiet(noReplyDue - 1)) noReplyDue = this._quietEnd(noReplyDue - 1) + (noReplyDue - this._nextQuietStart(lastWord));
         const answered = (Date.parse(errand.answered_at || 0) || 0) > lastSent;
         if (errand.state === 'waiting_contact' && !errand.no_reply_noted && errand.last_sent_at && !answered
-            && now - lastWord >= LIMITS.noReplyMs && !quiet) {
+            && now >= noReplyDue && !quiet) {
             if (await this._tookOver(errand)) return;
             this.db.updateErrand(errand.id, { no_reply_noted: 1 });
             this._event(errand.id, 'note', { noReply: true });
@@ -2540,21 +2611,19 @@ Answer in JSON.`;
             const read = this.db.listErrandEvents(e.id, { newest: 30 }).filter(ev => ev.kind === 'read' && ev.detail?.slots?.length).pop();
             if (read && read.detail.slots.length > 1) bits.push(`all slots offered: ${read.detail.slots.map(s => `${s.date} ${s.time}`).join(', ')}`);
             if (e.slot) bits.push(`asked for: ${fmtSlot(e.slot, tz)}`);
-            if (e.window_start) {
-                const multi = e.window_start.slice(0, 10) !== e.window_end.slice(0, 10);
-                bits.push(multi
-                    ? `window: ${e.window_start.slice(0, 10)} to ${e.window_end.slice(0, 10)}, ${e.window_start.slice(11)} to ${e.window_end.slice(11)} each day`
-                    : `window: ${e.window_start.replace('T', ' ')} to ${e.window_end.slice(11)}`);
-            }
+            if (e.window_start) bits.push(`window: ${windowForModel(e.window_start, e.window_end)}`);
             bits.push(e.request_tainted ? 'request: set from a card' : `his request: "${clip(e.request, 120)}"`);
             return bits.join('; ');
         });
     }
 
     /** He said no to a card of this errand: from now on it acts on nothing by itself. */
-    ownerSaidNo(id) {
+    ownerSaidNo(id, cardArgs = null) {
         const e = this.db.getErrand(id);
-        if (e && !e.closed_at) this.db.updateErrand(e.id, { auto_ok: 0, auto_why: 'his', held_yes: null });
+        if (!e || e.closed_at) return;
+        // His "no" to the card for her yes ends it; a no to another step leaves it.
+        const aboutHerYes = cardArgs?.action === 'accept' && e.held_yes && sameSlot({ date: cardArgs.date, time: normTime(cardArgs.time) }, e.held_yes);
+        this.db.updateErrand(e.id, { auto_ok: 0, auto_why: 'his', ...(aboutHerYes ? { held_yes: null } : {}) });
     }
 
     /** True when the errand exists and is closed (the gate refuses its steps). */

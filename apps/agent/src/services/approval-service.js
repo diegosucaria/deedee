@@ -1900,7 +1900,7 @@ class ApprovalService {
             const errandId = row.tool_name === 'answerErrand' ? Number(row.args?.id) : NaN;
             // His "no" to an errand's card is a decision: the errand acts on nothing by itself after it.
             if (Number.isFinite(errandId)) {
-                try { this.agent?.errands?.ownerSaidNo?.(errandId); } catch { /* the sweep sees the denial too */ }
+                try { this.agent?.errands?.ownerSaidNo?.(errandId, row.args || null); } catch { /* the sweep sees the denial too */ }
             }
             const words = String(message?.content || '').trim();
             // A slash command ("/cancel <id>") answers the card only.
