@@ -1111,12 +1111,13 @@ describe('errands', () => {
             expect(inserted).toHaveLength(0);
         });
 
-        test('a step that waited past quiet hours does not accept a slot that is now too close', async () => {
+        test('a slot too close to wait out quiet hours is never accepted on its own: it comes to him at once', async () => {
             drafts.push({ text: 'Buenas! hay lugar mañana temprano?', date: '2026-10-01', time: '' });
             const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno mañana temprano', windowStart: '2026-10-01T07:00', windowEnd: '2026-10-01T09:00' });
             clock = at('2026-09-30', '23:00');
             await contactAnswers(db.getErrand(out.errandId), 'mañana 8:05', { kind: 'offer', slots: [{ date: '2026-10-01', time: '08:05' }], summary: 'Offers 8:05.', tellOwner: false });
-            expect(db.getErrand(out.errandId).next_action).toBeTruthy();
+            expect(db.getErrand(out.errandId).next_action).toBeNull();
+            expect(deliver.mock.calls.filter(c => c[0] === 'approval').pop()[3].content).toMatch(/es tarde y a esta hora no contesto por mi cuenta/);
             clock = at('2026-10-01', '08:00');
             await service.sweep();
             expect(sends).toHaveLength(1);
@@ -1690,7 +1691,7 @@ describe('errands', () => {
             clock += 5 * 60e3;
             await contactAnswers(errand, 'cuánto era?', { kind: 'question', slots: [], summary: 'Asks the price', tellOwner: false });
             expect(db.getPendingConfirmation(res.approvalId).status).toBe('expired');
-            expect(notes().pop().content).toMatch(/Alice preguntó algo .*No mandé lo tuyo todavía: decime si sigo\./);
+            expect(notes().pop().content).toMatch(/Alice preguntó algo .*Lo tuyo \("llego 10 minutos tarde"\) no salió\. Decime si lo mando igual\./);
         });
 
         test('"/cancel <id>" on an errand card answers the card only; the errand stays', async () => {
@@ -1922,6 +1923,61 @@ describe('errands', () => {
             const res = await service.answer({ id: errand.id, action: 'accept', date: '2026-10-08', time: '10:30' }, { approved: true, approvalId: card.id });
             expect(res.success).toBe(true);
             expect(db.getErrand(errand.id).state).toBe('done');
+        });
+
+        test('a table tonight that she confirms after 22:00 comes to him at once, and his "sí" books it', async () => {
+            clock = at('2026-10-05', '21:00');
+            drafts.push({ text: 'hola! tenés mesa hoy 22:30?', date: '2026-10-05', time: '22:30' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'mesa hoy a las 22:30', date: '2026-10-05', time: '22:30' });
+            clock = at('2026-10-05', '22:05');
+            await contactAnswers(db.getErrand(out.errandId), 'sí, 22:30 dale', { kind: 'confirm', slots: [{ date: '2026-10-05', time: '22:30' }], summary: 'Confirms.', tellOwner: false });
+            expect(db.getErrand(out.errandId).next_action).toBeNull();
+            expect(lastCard()).toMatch(/es tarde y a esta hora no contesto por mi cuenta/);
+            await approvals.decide(pendingCards()[0].id, 'approved', { via: 'test' });
+            expect(db.getErrand(out.errandId).state).toBe('done');
+            expect(inserted).toHaveLength(1);
+        });
+
+        test('a voice note it cannot read, sent with a readable yes, stops the errand from answering on its own', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            agent.impersonationService.transcribeAudio.mockResolvedValueOnce('dale, el jueves a las 10 te espero').mockResolvedValueOnce(null);
+            const voice = () => ({ ...contactWrites(''), parts: [{ inlineData: { mimeType: 'audio/ogg', data: 'AAAA' } }] });
+            service.bufferMs = 60e3;
+            service.claim(voice(), { contactString: CONTACT });
+            service.claim(voice(), { contactString: CONTACT });
+            forms.push({ kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            await service.flush(errand.id);
+            expect(sends).toHaveLength(1);
+            expect(lastCard()).toMatch(/también mandó un audio que no pude entender/);
+            // The model reads the lost voice note as such, not as an empty line.
+            const prompt = generateContent.mock.calls.map(c => c[0].contents[0].parts[0].text).find(t => /You read the newest WhatsApp messages/.test(t));
+            expect(prompt).toContain('[a voice note that could not be transcribed]');
+        });
+
+        test('a card that drops his step names it, and asks one thing only', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', offer('10:30'));
+            const res = await approvals.review({ message: ownerSays('mejor a las 11'), toolName: 'answerErrand', args: { id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, historyUntrusted: true, foreignText: true });
+            expect(res.status).toBe('paused');
+            clock += 60e3;
+            await contactAnswers(errand, 'o 10:30 o 11:30', { kind: 'offer', slots: [{ date: '2026-10-08', time: '10:30' }, { date: '2026-10-08', time: '11:30' }], summary: 'Offers two.', tellOwner: false });
+            const card = lastCard();
+            expect(card).toContain('Lo tuyo ("Le propongo a Alice el jue 08/10 a las 11:00") no salió.');
+            expect(card).not.toMatch(/decime si sigo/);
+        });
+
+        test('the end note says her offer waited for him only while its card still waited', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', offer('10:30'));
+            await approvals.decide(pendingCards()[0].id, 'denied', { via: 'test' });
+            await service.sweep();
+            db.updateErrand(errand.id, { expires_at: new Date(clock + 60e3).toISOString() });
+            clock += 2 * 60e3;
+            await service.sweep();
+            expect(notes().pop().content).toBe(`El pedido #${errand.id} con Alice terminó sin turno.`);
         });
 
         test('the same words he writes long after a refused send are his own', async () => {

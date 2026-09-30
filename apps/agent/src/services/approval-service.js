@@ -1035,7 +1035,9 @@ class ApprovalService {
                 retire = [...same, ...older.filter(r => !same.some(x => x.id === r.id))];
             }
             // The errand's own step replaces a step he asked for: its card says his did not go out.
-            const dropped = kind === 'errand' && retire.some(r => r.origin_meta?.ownerChat === true);
+            const his = kind === 'errand' ? retire.find(r => r.origin_meta?.ownerChat === true) : null;
+            const dropped = !his ? false
+                : (his.args?.action === 'say' && his.args?.text ? String(his.args.text).slice(0, 120) : (String(his.origin_meta?.card?.question || '').replace(/^¿|\?$/g, '').trim() || true));
             card = this._errandCard(toolName, args, whyKey, message, { dropped });
             preview = card ? `${card.question} ${card.detail}` : errandPreview(toolName, args);
             if (kind === 'chat') extraMeta = { ownerChat: true };

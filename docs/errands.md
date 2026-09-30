@@ -68,7 +68,13 @@ It never writes the message itself.
 
 Notes and cards call an errand a "pedido" in Spanish. Notes that can wait
 never go out between 22:00 and 08:00. A card or a note about the contact's
-reply goes out at once, at any hour: the slot may not wait.
+reply goes out at once, at any hour: the slot may not wait. A step inside
+his scope that would have to wait for 08:00 past its own slot (a table
+tonight) comes to him as a card at once instead.
+
+A voice note it cannot read never lets the errand answer on its own, even
+when other messages in the same burst say yes: the step comes to him as a
+card or a note.
 
 A paused errand keeps the chat, so his watcher does not book what the
 errand may still book. When the contact writes to a paused errand, he hears

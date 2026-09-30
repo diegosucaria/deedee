@@ -185,7 +185,9 @@ Code enforces these, not the prompt.
    word. When her number cannot be known (her session is down), no errand
    starts. The resolver's guess by the last digits counts only for the
    same line.
-2. **The contact's text is data.** A model with no tools reads it and fills
+2. **The contact's text is data.** A voice note it cannot transcribe is
+   named as such to the reader, and never lets a step go out on its own. A
+   model with no tools reads it and fills
    a fixed JSON form (`offer`, `confirm`, `decline`, `question`, `answer`,
    `other`, with slots). Code checks the form: real dates, in the future,
    within the errand's life.
@@ -224,7 +226,7 @@ Code enforces these, not the prompt.
 | Messages it sends on its own per errand | 4 (one message may be 2 short parts); then every step asks |
 | All messages per errand | 10; then it pauses |
 | Gap between its own messages | at least 1 minute |
-| Quiet hours | 22:00-08:00 local: nothing goes out on its own and no note that can wait is sent; a step waits until 08:00. A card or note about the contact's reply goes out at once: the slot may not wait |
+| Quiet hours | 22:00-08:00 local: nothing goes out on its own and no note that can wait is sent; a step waits until 08:00, unless the slot would pass first (then he gets a card at once). A card or note about the contact's reply goes out at once: the slot may not wait |
 | No answer from the contact | the owner hears after 4 hours; "me fijo" or small talk is no answer, so the wait counts from their last word; Deedee never writes again on her own |
 | Life of an errand | until the slot's day, 7 days at most; a new day he proposes moves it. An end in quiet hours moves to 21:55, and past its end an errand closes at once, so it raises no cards at night |
 | Voice notes | 60 seconds to transcribe, then unreadable |
