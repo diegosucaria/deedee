@@ -280,11 +280,13 @@ there, no `askUser` question is open there, and the card is still the
 question he is answering (`_stillAsking`): nothing came in that chat
 after it but the reply of the very run that raised it (`cardRunId`,
 `turnRunId`), a reply about the card (`aboutApproval`), a line that says
-another card is settled, an `askUser` question he answered, and his words
-that only answered a card or a question (marked `answeredCard`,
-`answeredQuestion`). Anything else may be what his word answers: his words
-to the model and the reply to them, a job's note (it may ask something), a
-question that lapsed, another card. So after he asks for a draft and
+another card is settled (`approvalLine`), an `askUser` question he
+answered, the run's own "Still working..." lines, and his words that only
+answered a card or a question (marked `answeredCard`, `answeredQuestion`).
+Anything else may be what his word answers: his words to the model and the
+reply to them (a run resumed after another card included), a job's note (it
+may ask something; on Telegram the delivery ledger shows it), a question
+that lapsed, another card. So after he asks for a draft and
 Deedee shows it, "dale, mandalo" answers the draft, never a job's card from
 the morning. A card that lands after Deedee's question is the newest
 question, so a bare yes answers it. When his bare yes or no reaches no card

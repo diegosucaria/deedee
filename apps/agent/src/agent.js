@@ -417,7 +417,9 @@ class Agent {
         metadata: {
           type: t, imagePath: payload.imagePath || null, ...(jobTaint.length > 0 ? { jobTaint: jobTaint.slice(0, 20).map(String) } : {}),
           // An errand's note asks him something: a bare yes after it is not for an older card.
-          ...(payload.metadata?.errandId !== undefined && payload.metadata?.errandId !== null ? { errandId: payload.metadata.errandId } : {})
+          ...(payload.metadata?.errandId !== undefined && payload.metadata?.errandId !== null ? { errandId: payload.metadata.errandId } : {}),
+          // "Still working..." asks nothing; it names its run (ApprovalService._stillAsking).
+          ...(payload.isProgress ? { progress: true, ...(payload.metadata?.turnRunId ? { turnRunId: payload.metadata.turnRunId } : {}) } : {})
         }
       });
     } catch (e) {
@@ -2560,7 +2562,7 @@ class Agent {
           if (thinkText) {
             const updateMsg = createAssistantMessage(`Still working... (${thinkText})`);
             updateMsg.isProgress = true;
-            updateMsg.metadata = { chatId: message.metadata?.chatId };
+            updateMsg.metadata = { chatId: message.metadata?.chatId, turnRunId: approvalRun?.id || null };
             updateMsg.source = message.source;
             await activeSendCallback(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
           }
@@ -2723,7 +2725,7 @@ class Agent {
           if (thinkText) {
             const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
             thinkingMsg.isProgress = true;
-            thinkingMsg.metadata = { chatId: message.metadata?.chatId };
+            thinkingMsg.metadata = { chatId: message.metadata?.chatId, turnRunId: approvalRun?.id || null };
             thinkingMsg.source = message.source;
             await activeSendCallback(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
           }
@@ -3171,9 +3173,10 @@ class Agent {
             this.db.saveMessage(createAssistantMessage('Audio sent.'));
           } else {
             const reply = createAssistantMessage(`✅ Action ${lastTool.name} completed.`);
-            // Said for the model, which gave no answer of its own.
+            // Said for the model, which gave no answer of its own. It ends
+            // this run, like a model reply (ApprovalService._stillAsking).
             reply.isImplicit = true;
-            reply.metadata = { chatId: message.metadata?.chatId };
+            reply.metadata = { chatId: message.metadata?.chatId, ...(approvalRun?.id ? { turnRunId: approvalRun.id } : {}) };
             reply.source = message.source;
 
             // Save implicit reply

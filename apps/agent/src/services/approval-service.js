@@ -1037,7 +1037,7 @@ class ApprovalService {
             // The errand's own step replaces a step he asked for: its card says his did not go out.
             const his = kind === 'errand' ? retire.find(r => r.origin_meta?.ownerChat === true) : null;
             const dropped = !his ? false
-                : (his.args?.action === 'say' && his.args?.text ? String(his.args.text).slice(0, 120) : (String(his.origin_meta?.card?.question || '').replace(/^¿|\?$/g, '').trim() || true));
+                : (his.args?.action === 'say' && his.args?.text ? truncate(String(his.args.text).replace(/\s+/g, ' ').trim(), 120) : (String(his.origin_meta?.card?.question || '').replace(/^¿|\?$/g, '').trim() || true));
             card = this._errandCard(toolName, args, whyKey, message, { dropped });
             preview = card ? `${card.question} ${card.detail}` : errandPreview(toolName, args);
             if (kind === 'chat') extraMeta = { ownerChat: true };
@@ -1350,7 +1350,7 @@ class ApprovalService {
      * @param {{ message: object, toolName: string, args: object, reason: string, preview?: string|null }} p
      * @returns {Promise<{ paused: boolean, id?: string, result: object }>}
      */
-    async askOwner({ message, toolName, args, reason, preview = null, card = null }) {
+    async askOwner({ message, toolName, args, reason, preview = null, card = null, runId = null }) {
         const deny = this.rules.denyCheck(toolName, args, this.settings().deny);
         if (deny.denied) {
             return { paused: false, result: { error: `Blocked by the owner's deny-list (pattern "${deny.pattern}"). Nothing was sent.` } };
@@ -1364,7 +1364,7 @@ class ApprovalService {
         });
         return this.request({
             message, toolName, args, reason, taintSources: taintSources.length ? taintSources : null,
-            guardianDecisionId: row?.id || null, preview, card
+            guardianDecisionId: row?.id || null, preview, card, ...(runId ? { extraMeta: { cardRunId: String(runId) } } : {})
         });
     }
 
@@ -1718,7 +1718,7 @@ class ApprovalService {
         if (asking === false || (asking === null && pending[0].origin_meta?.errandId !== undefined)) {
             // The model hears that a card waits here, so it can tell him how to answer it.
             if (decisionWord(text, { toolName: pending[0].tool_name })) {
-                this._undecided.set(String(chatId), { id: pending[0].id, at: Date.now(), messageId: message?.id || null });
+                this._undecided.set(String(chatId), { id: pending[0].id, at: Date.now(), message });
             }
             return null;
         }
@@ -1754,6 +1754,9 @@ class ApprovalService {
             }
             const { rows, more } = this.db.listChatMessagesSince([row.reply_chat_id, chatId, ...ownerIds], row.created_at, { excludeId: message?.id || null });
             if (more) return false;
+            // A Telegram chat keeps no copy of a job's note; the delivery ledger does.
+            if (splitChannel(row.reply_channel).channel !== 'whatsapp' && typeof this.db.listOutboxSince === 'function'
+                && this.db.listOutboxSince([row.reply_chat_id, chatId], row.created_at).length > 0) return false;
             const runId = row.origin_meta?.cardRunId || null;
             for (const m of rows) {
                 const meta = m.metadata || {};
@@ -1762,8 +1765,11 @@ class ApprovalService {
                     return false;
                 }
                 if (meta.approval?.id === row.id || meta.aboutApproval === row.id) continue;
-                // A settled card's line ("No longer needed", a result) asks nothing.
-                if (meta.approval && meta.approval.status && meta.approval.status !== 'pending') continue;
+                // A settled card's own line ("No longer needed", a result) asks
+                // nothing. A model reply that resumed after a card is not one.
+                if (meta.approvalLine && !meta.model) continue;
+                // "Still working..." from the run that raised the card.
+                if (meta.progress && (!meta.turnRunId || meta.turnRunId === runId)) continue;
                 if (runId && meta.turnRunId === runId) continue;
                 if (meta.question?.id && typeof this.db.getQuestionStatus === 'function' && this.db.getQuestionStatus(meta.question.id) === 'answered') continue;
                 return false;
@@ -1784,7 +1790,8 @@ class ApprovalService {
         const entry = chatId ? this._undecided.get(String(chatId)) : null;
         if (!entry) return null;
         this._undecided.delete(String(chatId));
-        if (Date.now() - entry.at > 2 * 60e3 || entry.messageId !== (message?.id || null)) return null;
+        // The very message whose word missed the card (web messages carry no id).
+        if (Date.now() - entry.at > 2 * 60e3 || entry.message !== message) return null;
         const row = this.hasStore() ? this.db.getPendingConfirmation(entry.id) : null;
         return row && row.status === 'pending' ? { id: row.id, toolName: row.tool_name } : null;
     }
@@ -1941,7 +1948,8 @@ class ApprovalService {
     async _deliverTo(target, text, row) {
         const outgoing = createAssistantMessage(text);
         outgoing.source = target.channel;
-        outgoing.metadata = { chatId: target.chatId, approval: { id: row.id, status: row.status, toolName: row.tool_name } };
+        // approvalLine: a line about a settled card, which asks him nothing (see _stillAsking).
+        outgoing.metadata = { chatId: target.chatId, approval: { id: row.id, status: row.status, toolName: row.tool_name }, approvalLine: true };
         const channel = splitChannel(target.channel).channel;
         let owner = false;
         try { owner = this._delivery().isOwnerTarget(channel, target.chatId); } catch { owner = false; }

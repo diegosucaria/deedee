@@ -23,7 +23,8 @@ class ErrandsExecutor extends BaseExecutor {
                 // not even with an approval card.
                 if (!ownerTyped) return { success: false, error: 'An errand starts only from the owner\'s own chat.' };
                 // A run that read someone else's text marks the request it writes.
-                return errands.start(a, { approved, originMessage: context?.message || null, taint: context?.untrustedTaint || [] });
+                // runId: the first-message card belongs to this run, so its own reply after it leaves "sí" for it.
+                return errands.start(a, { approved, originMessage: context?.message || null, taint: context?.untrustedTaint || [], runId: context?.approvalRunId || null });
             case 'answerErrand':
                 return errands.answer(a, {
                     byOwner: ownerTyped,

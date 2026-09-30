@@ -74,7 +74,10 @@ tonight) comes to him as a card at once instead.
 
 A voice note it cannot read never lets the errand answer on its own, even
 when other messages in the same burst say yes: the step comes to him as a
-card or a note.
+card or a note. News or a photo in the same burst as an answer reaches him
+in a note of its own. While a step he asked for waits for the contact's
+new words to be read, the errand accepts nothing on its own; a card or note
+that drops his step names it.
 
 A paused errand keeps the chat, so his watcher does not book what the
 errand may still book. When the contact writes to a paused errand, he hears

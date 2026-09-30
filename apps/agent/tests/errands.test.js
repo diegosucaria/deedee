@@ -1095,7 +1095,7 @@ describe('errands', () => {
             const after = db.getErrand(errand.id);
             expect(after.next_action).toBeNull();
             expect(after.state).toBe('waiting_owner');
-            expect(notes().some(n => /No mandé lo tuyo todavía/.test(n.content))).toBe(true);
+            expect(notes().some(n => n.content.includes('Lo tuyo ("aceptar el jue 08/10 a las 10:30") no salió.'))).toBe(true);
         });
 
         test('"let me check" drops a waiting thanks-and-book', async () => {
@@ -1691,7 +1691,7 @@ describe('errands', () => {
             clock += 5 * 60e3;
             await contactAnswers(errand, 'cuánto era?', { kind: 'question', slots: [], summary: 'Asks the price', tellOwner: false });
             expect(db.getPendingConfirmation(res.approvalId).status).toBe('expired');
-            expect(notes().pop().content).toMatch(/Alice preguntó algo .*Lo tuyo \("llego 10 minutos tarde"\) no salió\. Decime si lo mando igual\./);
+            expect(notes().pop().content).toMatch(/Alice preguntó algo .*Lo tuyo \("llego 10 minutos tarde"\) no salió\.$/);
         });
 
         test('"/cancel <id>" on an errand card answers the card only; the errand stays', async () => {
@@ -1890,7 +1890,7 @@ describe('errands', () => {
             db.closePendingQuestion('q-1', 'answered', 'no');
             db.saveMessage({ id: 'q-row', role: 'assistant', content: '¿Archivo las promos?', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(t).toISOString(), metadata: { question: { id: 'q-1' } } });
             db.saveMessage({ id: 'q-ans', role: 'user', content: 'no', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(t + 1000).toISOString(), metadata: { answeredQuestion: 'q-1' } });
-            db.saveMessage({ id: 'gone', role: 'assistant', content: 'No longer needed (old): x.', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(t + 2000).toISOString(), metadata: { approval: { id: 'old', status: 'expired' } } });
+            db.saveMessage({ id: 'gone', role: 'assistant', content: 'No longer needed (old): x.', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(t + 2000).toISOString(), metadata: { approval: { id: 'old', status: 'expired' }, approvalLine: true } });
             expect(await approvals.intercept({ ...ownerSays('sí'), id: 'yes-q' }, jest.fn())).toBeTruthy();
             expect(db.getPendingConfirmation(card.id).status).toBe('approved');
         });
@@ -1978,6 +1978,90 @@ describe('errands', () => {
             clock += 2 * 60e3;
             await service.sweep();
             expect(notes().pop().content).toBe(`El pedido #${errand.id} con Alice terminó sin turno.`);
+        });
+
+        test('an old card\'s resumed reply after it is a question of its own: a bare yes does not reach another card', async () => {
+            const card = await approvals.request({ message: { source: 'scheduler', metadata: { jobName: 'facturas', chatId: 'scheduled_facturas' } }, toolName: 'sendEmail', args: { to: 'user@example.com', subject: 'x' }, reason: 'r' });
+            db.saveMessage({ id: 'resumed-1', role: 'assistant', content: 'Listo. ¿Te agendo un recordatorio?', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(Date.now() + 5000).toISOString(), metadata: { model: 'm', turnRunId: 'run-other', approval: { id: 'other-card', status: 'approved' } } });
+            expect(await approvals.intercept({ ...ownerSays('ok'), id: 'yes-r' }, jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+        });
+
+        test('on Telegram, a job note after a card also leaves the word to the model', async () => {
+            process.env.ALLOWED_TELEGRAM_IDS = '777';
+            try {
+                const card = await approvals.request({ message: { source: 'telegram', role: 'user', content: 'x', metadata: { chatId: '777' } }, toolName: 'forgetFact', args: { key: 'k' }, reason: 'r' });
+                db.enqueueOutbox({ kind: 'job_notification', channel: 'telegram', target: '777', payload: { content: '¿Querés que la pague?' }, status: 'sent', createdAt: new Date(Date.now() + 5000).toISOString() });
+                expect(await approvals.intercept({ id: 'tg-yes', role: 'user', source: 'telegram', content: 'dale', metadata: { chatId: '777' } }, jest.fn())).toBeNull();
+                expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+            } finally { delete process.env.ALLOWED_TELEGRAM_IDS; }
+        });
+
+        test('"Still working..." from the run that raised a card does not stop "sí" from deciding it', async () => {
+            const card = await approvals.request({ message: { source: 'whatsapp', role: 'user', content: 'x', metadata: { chatId: OWNER_LID } }, toolName: 'forgetFact', args: { key: 'k' }, reason: 'r', extraMeta: { cardRunId: 'run-p' } });
+            db.saveMessage({ id: 'prog-1', role: 'assistant', content: 'Still working... (browsing)', source: 'whatsapp:assistant', chatId: OWNER_LID, timestamp: new Date(Date.now() + 5000).toISOString(), metadata: { type: 'text', progress: true, turnRunId: 'run-p' } });
+            expect(await approvals.intercept({ ...ownerSays('sí'), id: 'yes-p' }, jest.fn())).toBeTruthy();
+            expect(db.getPendingConfirmation(card.id).status).toBe('approved');
+        });
+
+        test('a lost voice note\'s card still says when his calendar is busy', async () => {
+            const errand = await startBooking();
+            calendarItems = [{ id: 'M', summary: 'Reunión', start: { dateTime: '2026-10-08T10:30:00-03:00' }, end: { dateTime: '2026-10-08T11:30:00-03:00' } }];
+            clock += 5 * 60e3;
+            agent.impersonationService.transcribeAudio.mockResolvedValueOnce(null);
+            service.bufferMs = 60e3;
+            service.claim(contactWrites('10:30?'), { contactString: CONTACT });
+            service.claim({ ...contactWrites(''), parts: [{ inlineData: { mimeType: 'audio/ogg', data: 'AAAA' } }] }, { contactString: CONTACT });
+            forms.push(offer('10:30'));
+            await service.flush(errand.id);
+            expect(lastCard()).toMatch(/también mandó un audio que no pude entender, y tenés algo en el calendario a esa hora/);
+        });
+
+        test('a slot right after 08:00, or one held only by the gap, comes to him with the true reason', async () => {
+            drafts.push({ text: 'Buenas! hay lugar mañana temprano?', date: '2026-10-01', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno mañana temprano', windowStart: '2026-10-01T07:00', windowEnd: '2026-10-01T09:00' });
+            clock = at('2026-09-30', '23:00');
+            await contactAnswers(db.getErrand(out.errandId), 'mañana 8:15', offer('08:15', '2026-10-01'));
+            expect(lastCard()).toMatch(/es tarde y a esta hora no contesto por mi cuenta/);
+        });
+
+        test('while his step waits for her words, her yes is not accepted over it, and the card names his step', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, '10,30?', offer('10:30'));
+            service.bufferMs = 60e3;
+            clock += 1000;
+            service.claim(contactWrites('te espero a las 10 igual'), { contactString: CONTACT });
+            drafts.push({ text: 'y a las 11?', date: '2026-10-08', time: '11:00' });
+            const res = await service.answer({ id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, { byOwner: true });
+            expect(res.deferred).toBe(true);
+            forms.push({ kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms 10.', tellOwner: false });
+            await service.flush(errand.id);
+            expect(sends).toHaveLength(1);
+            expect(inserted).toHaveLength(0);
+            expect(lastCard()).toContain('Lo tuyo ("proponer el jue 08/10 a las 11:00") no salió.');
+        });
+
+        test('news in the same message as her yes still reaches him', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'dale, el jueves a las 10. ojo que ahora estoy en el local de al lado', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms; she moved next door', tellOwner: true });
+            expect(db.getErrand(errand.id).state).toBe('done');
+            const n = notes().find(x => /también escribió/.test(x.content));
+            expect(n.content).toContain('Confirms; she moved next door.');
+            expect(n.metadata.jobTaint).toBeTruthy();
+        });
+
+        test('the first-message card and its own run\'s reply: "sí" still decides it', async () => {
+            chat = [];
+            drafts.push(draftAnswer('request'));
+            const executor = new ErrandsExecutor({ agent });
+            await executor.execute('startErrand', { contact: CONTACT, goal: 'book', request: 'turno el jueves', date: '2026-10-08', time: '10:00' },
+                { message: { ...ownerSays('pedile turno el jueves a las 10'), id: 'start-1' }, ownerTyped: true, approvalRunId: 'run-start' });
+            const card = pendingCards()[0];
+            expect(card.origin_meta.cardRunId).toBe('run-start');
+            db.saveMessage({ id: 'impl-1', role: 'assistant', content: '✅ Action startErrand completed.', source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(Date.now() + 5000).toISOString(), metadata: { turnRunId: 'run-start' } });
+            expect(await approvals.intercept({ ...ownerSays('sí'), id: 'yes-s' }, jest.fn())).toBeTruthy();
         });
 
         test('the same words he writes long after a refused send are his own', async () => {

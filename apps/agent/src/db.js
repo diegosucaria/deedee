@@ -4439,6 +4439,23 @@ class AgentDB {
     return this.getOutboxRow(rowId);
   }
 
+  /**
+   * Notes of these kinds delivered (or waiting) to any of these targets since
+   * `sinceIso`: { id, kind, created_at }. For chats whose notes the message
+   * history does not keep (Telegram).
+   */
+  listOutboxSince(targets = [], sinceIso, { kinds = ['job_notification'] } = {}) {
+    const ids = [...new Set((targets || []).filter(Boolean).map(String))];
+    const since = Date.parse(sinceIso);
+    if (ids.length === 0 || kinds.length === 0 || !Number.isFinite(since)) return [];
+    return this.db.prepare(`
+      SELECT id, kind, created_at FROM notification_outbox
+      WHERE target IN (${ids.map(() => '?').join(', ')}) AND kind IN (${kinds.map(() => '?').join(', ')})
+        AND status != 'dead'
+      ORDER BY created_at DESC LIMIT 50
+    `).all(...ids, ...kinds).filter(r => Date.parse(r.created_at) >= since);
+  }
+
   getOutboxRow(id) {
     return this._mapOutboxRow(this.db.prepare('SELECT * FROM notification_outbox WHERE id = ?').get(id));
   }

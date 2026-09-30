@@ -269,7 +269,11 @@ function getTurnContext({ dateString, activeGoals, skillsContext, vaultContext, 
         lines.push(`ACTIVE GOALS (your in-flight multi-session work):\n${activeGoals ? activeGoals : 'None.'}`);
         if (errandRules) lines.push(ERRAND_RULES);
         if (waitingCard && waitingCard.id) {
-                lines.push(`A CARD WAITS IN THIS CHAT: ${waitingCard.id} (${waitingCard.toolName}). His short yes or no did not decide it, because other messages came after it. If his message answers that card, tell him to reply /confirm ${waitingCard.id} or /cancel ${waitingCard.id}. You cannot approve it yourself. If it answers your own last question, go on as usual.`);
+                // An errand's card is his choice about an open errand: his word in his chat does that step.
+                const how = waitingCard.toolName === 'answerErrand'
+                        ? `If his message answers that card, do its step with 'answerErrand' (the open errands list it), or tell him to reply /confirm ${waitingCard.id}.`
+                        : `If his message answers that card, tell him to reply /confirm ${waitingCard.id} or /cancel ${waitingCard.id}. You cannot approve it yourself.`;
+                lines.push(`A CARD WAITS IN THIS CHAT: ${waitingCard.id} (${waitingCard.toolName}). His short yes or no did not decide it, because other messages came after it. ${how} If it answers your own last question, go on as usual.`);
         }
         if (Array.isArray(openErrands) && openErrands.length > 0) {
                 lines.push(`OPEN ERRANDS (people you write to as the owner; his answers about them go to 'answerErrand'):\n${openErrands.map(l => `- ${l}`).join('\n')}`);
