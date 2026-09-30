@@ -45,7 +45,7 @@ const THINKING_DEFAULTS = {
     FLASH: {
         '*': 'MINIMAL',
         chat: 'LOW', tool_loop: 'LOW', job: 'LOW', subagent: 'LOW', watcher: 'LOW', coding: 'LOW',
-        wardrobe: 'LOW', impersonation: 'LOW',
+        wardrobe: 'LOW', impersonation: 'LOW', errand: 'LOW',
         // Moved off PRO by the job-scoping work; they keep the level they had there.
         dream: 'LOW', pruning: 'LOW',
         summarization: 'MINIMAL', title: 'MINIMAL', scoper: 'MINIMAL', people_enrich: 'MINIMAL', cron_helper: 'MINIMAL',

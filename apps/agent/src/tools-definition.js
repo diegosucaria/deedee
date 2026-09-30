@@ -437,6 +437,57 @@ const toolDefinitions = [
         }
       },
       {
+        name: "startErrand",
+        category: "communication",
+        description: "Do something for the owner with one person over WhatsApp, writing from his own account in his voice: book a slot ('book'), ask a question and tell him the answer ('ask'), or pass on a message ('tell'). Use it whenever he asks you to write to someone for him; never write that message yourself. The errand writes it from his chat with that person, waits for the answer, asks him only when a choice is his, and adds an agreed slot to his calendar. Find the person with searchContacts first and pass the exact number or id; if several people fit, ask him which one. send=false only drafts the first message.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            contact: { type: "STRING", description: "The person's phone number, WhatsApp ID or People id, from searchContacts or searchPeople. Never a name." },
+            goal: { type: "STRING", description: "'book', 'ask' or 'tell'." },
+            request: { type: "STRING", description: "What he wants, in his own words (e.g. 'turno con el dentista el martes a la tarde')." },
+            date: { type: "STRING", description: "book: the day he wants, YYYY-MM-DD." },
+            time: { type: "STRING", description: "book: the time he wants, HH:MM (24 h). Leave it out when he named none: the errand asks for his usual time with that person." },
+            windowStart: { type: "STRING", description: "book, only when he says any time in a range is fine: its start, YYYY-MM-DDTHH:MM local time." },
+            windowEnd: { type: "STRING", description: "book: the end of that range, YYYY-MM-DDTHH:MM local time. Inside it the errand accepts an offer on its own when his calendar is free." },
+            eventTitle: { type: "STRING", description: "book: the calendar event title (e.g. 'Dentista - Alice')." },
+            location: { type: "STRING", description: "book: the event location, if he gave one." },
+            durationMinutes: { type: "NUMBER", description: "book: the event length in minutes. Default 60." },
+            send: { type: "BOOLEAN", description: "false: only draft the first message and show it to him; nothing is sent. Default true." },
+            text: { type: "STRING", description: "Only after he approved a draft you showed him: that exact text." }
+          },
+          required: ["contact", "goal", "request"]
+        }
+      },
+      {
+        name: "answerErrand",
+        category: "communication",
+        description: "The owner's answer on an open errand (listed in the TURN CONTEXT): 'accept' a slot, 'propose' another slot, 'decline', 'say' something else to the person, or 'cancel' the errand without writing. The errand writes the message in his voice.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "NUMBER", description: "The errand id." },
+            action: { type: "STRING", description: "'accept', 'propose', 'decline', 'say' or 'cancel'." },
+            date: { type: "STRING", description: "accept or propose: YYYY-MM-DD. accept defaults to the slot on the table." },
+            time: { type: "STRING", description: "accept or propose: HH:MM (24 h)." },
+            text: { type: "STRING", description: "say: what to tell them, in his words." }
+          },
+          required: ["id", "action"]
+        }
+      },
+      {
+        name: "listErrands",
+        category: "communication",
+        description: "List the open errands with their state and slots. all=true adds recent closed ones.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            all: { type: "BOOLEAN", description: "Include recent closed errands." }
+          },
+          required: []
+        }
+      },
+      {
         name: "searchContacts",
         category: "communication",
         description: "Search for a contact's phone number by name. Use this to find who to text. Returns a list of matches with names and phone numbers.",

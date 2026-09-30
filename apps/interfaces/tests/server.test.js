@@ -211,6 +211,32 @@ describe('Interfaces API Tests', () => {
     });
   });
 
+  describe('WhatsApp sends for errands', () => {
+    const send = (body) => request(app).post('/send').set('Authorization', 'Bearer valid-token').send(body);
+
+    test('a send that must leave from the owner\'s account never falls back to the assistant\'s number', async () => {
+      const serverModule = require('../src/server');
+      app = serverModule.app;
+      const assistant = { sendMessage: jest.fn().mockResolvedValue({ duplicate: false, messageId: 'A1' }) };
+      serverModule.whatsappSessions.assistant = assistant;
+      delete serverModule.whatsappSessions.user;
+      const res = await send({ id: 'e-1', source: 'whatsapp', content: 'hola', metadata: { chatId: '15550100@s.whatsapp.net', session: 'user', strictSession: true } });
+      expect(res.statusCode).toBe(500);
+      expect(assistant.sendMessage).not.toHaveBeenCalled();
+    });
+
+    test('the WhatsApp id of a sent message comes back to the agent', async () => {
+      const serverModule = require('../src/server');
+      app = serverModule.app;
+      const user = { sendMessage: jest.fn().mockResolvedValue({ duplicate: false, messageId: 'WAID-7' }) };
+      serverModule.whatsappSessions.user = user;
+      const res = await send({ id: 'e-2', source: 'whatsapp', content: 'hola', metadata: { chatId: '15550100@s.whatsapp.net', session: 'user', strictSession: true } });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({ success: true, messageId: 'WAID-7' });
+      expect(user.sendMessage).toHaveBeenCalledWith('15550100@s.whatsapp.net', 'hola', { type: 'text', caption: null, id: 'e-2' });
+    });
+  });
+
   describe('Session Management', () => {
     test('GET /sessions should forward to Agent', async () => {
       mockAxios.get.mockResolvedValue({ data: { sessions: [] } });

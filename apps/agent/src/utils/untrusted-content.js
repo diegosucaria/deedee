@@ -61,6 +61,8 @@ const INTERNAL_TRUSTED = Object.freeze(new Set([
     'generateImage', 'cityWeatherImage', 'lookupDevice', 'learnDevice', 'listDeviceAliases', 'deleteDeviceAlias',
     'sendMessage', 'searchContacts', 'listPeople', 'getPerson', 'searchPeople', 'updatePerson', 'deletePerson',
     'addWatcher', 'replyWithAudio',
+    // Errands return the owner's words, checked slots, People names and our own drafts (services/errands.js).
+    'startErrand', 'answerErrand', 'listErrands',
     'createVault', 'deleteVault', 'listVaults', 'addToVault', 'readVaultPage', 'writeVaultPage', 'listVaultFiles',
     'setSessionTopic', 'saveNoteToVault', 'ingestDocument', 'reindexEmbeddings',
     'add_vinyl', 'list_vinyls', 'get_vinyl', 'search_vinyls', 'list_crate_tracks', 'recommend_vinyl',
@@ -521,6 +523,9 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
             // A message to the owner himself is how jobs and watchers report.
             return isOwnerTarget(a) ? null : 'send a message';
         case 'sendSlackMessage': return 'send a Slack message';
+        // An errand writes to a person from the owner's own account.
+        case 'startErrand': return 'start an errand that writes to someone as the owner';
+        case 'answerErrand': return a.action === 'cancel' ? null : 'send a message as the owner on an errand';
         // A changed number redirects later messages "to" this contact.
         // Metadata holds the contact's writing style, which autopilot drafts
         // and partner greetings follow when they write as the owner.

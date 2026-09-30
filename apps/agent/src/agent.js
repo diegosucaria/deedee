@@ -41,6 +41,7 @@ const { SkillService } = require('./services/skill-service');
 const { MemoryPruningService } = require('./services/memory-pruning');
 const { DreamService } = require('./services/dream-service');
 const { PartnerGreetingService } = require('./services/partner-greeting');
+const { ErrandService } = require('./services/errands');
 const { SubAgentService } = require('./services/subagent-service');
 const { AskUserService } = require('./services/ask-user');
 const { BrowserLive } = require('./services/browser-live');
@@ -226,6 +227,9 @@ class Agent {
     // Owner approvals: paused tool calls persist in the DB and reach the owner
     // through the delivery ledger (services/approval-service.js).
     this.approvals = new ApprovalService(this, { rules: this.confirmationManager });
+    // Errands: one task with one contact, written from the owner's own
+    // account in his voice (services/errands.js, specs/050-errands.md).
+    this.errands = new ErrandService(this);
     this.browserLive = new BrowserLive(this);
     this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
     this.notifications = new NotificationService(this.db, this.interface);
@@ -280,6 +284,7 @@ class Agent {
     }
     if (this.delivery) this.delivery.stop();
     if (this.approvals) this.approvals.stop();
+    if (this.errands) this.errands.stop();
     if (this.browserLive) {
       try { this.browserLive.close(); } catch (e) { console.warn('[Agent] browserLive close failed:', e.message); }
     }
@@ -735,6 +740,7 @@ class Agent {
     // retrying refused sends every minute.
     this.delivery.start();
     this.approvals.start();
+    this.errands.start();
 
     // Check for xAI config
     if (settings['provider:xai']?.apiKey) {
@@ -902,6 +908,7 @@ class Agent {
       const { chatId, status } = message.metadata || {};
       if (chatId && status) {
         this.impersonationService.handlePresenceUpdate(chatId, status);
+        try { this.errands?.handlePresence(chatId, status); } catch (e) { console.warn('[Agent] Errand presence failed:', e.message); }
       }
       return;
     }
@@ -1531,6 +1538,20 @@ class Agent {
         const senderLid = String(message.metadata?.lid || '').replace(/\D/g, '');
         const groupName = message.metadata?.groupName;
         const msgContent = message.content?.toLowerCase() || '';
+
+        // An open errand takes its contact's messages first (services/errands.js).
+        // Its watchers and Autopilot then skip them, so nothing answers or
+        // books twice. The errand reads them with a model that has no tools.
+        if (message.source === 'whatsapp:user' && !isFromMe && !groupName && this.errands) {
+          let claimed = false;
+          try { claimed = this.errands.claim(message, { contactString, senderLid }); } catch (e) {
+            console.warn(`${logPrefix} Errand claim failed: ${e.message}`);
+          }
+          if (claimed) {
+            console.log(`${logPrefix} Message from ${contactString} goes to its open errand.`);
+            return executionSummary;
+          }
+        }
 
         // Fetch active watchers (skip for fromMe — outgoing media only needs extraction)
         const watchers = isFromMe ? [] : this.db.getWatchers('active');
@@ -2215,13 +2236,20 @@ class Agent {
       );
       // Time, goals, skills, vault and location change per message, so they go
       // in the user turn and the system instruction stays cacheable.
+      // Open errands, in his own chat only: a bare "sí" or "decile a las 11"
+      // then finds its errand. Names from People and checked slots only.
+      let openErrands = null;
+      if (!isLightweight && this.errands) {
+        try { if (await this._ownerTyped(message)) openErrands = this.errands.turnContextLines(); } catch (e) { openErrands = null; }
+      }
       const turnContext = isLightweight ? '' : getTurnContext({
         dateString: timeString,
         activeGoals,
         skillsContext,
         vaultContext,
         location: message.metadata?.location,
-        browserSecretNames: hasBrowserTools ? browserSecretNames : null
+        browserSecretNames: hasBrowserTools ? browserSecretNames : null,
+        openErrands
       });
 
       console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens)${isLightweight ? ' (lightweight)' : ''}.`);
@@ -2232,6 +2260,7 @@ class Agent {
         systemInstruction += `\n
         \n === IMPERSONATION & TONE MATCHING ===
           IF you are asked to draft a message for the user, or if you are replying via the 'user' (whatsapp:user) session:
+        0. **Errands first**: to write to someone for him, use 'startErrand' (send=false for a draft he wants to see first). It writes in his voice from his chat with that person.
         1. **His own messages**: in that chat his messages are the ones 'readChatHistory' marks "Me"; "Them" is the contact. Mirror him, never the contact.
         2. **Match Tone**: Mimic his style, brevity, capitalization (lowercase?), and emoji usage.
         3. **Be Natural**: Do not sound like an AI. Use "I", not "Deedee".

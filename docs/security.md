@@ -376,6 +376,34 @@ Still open (Batch 6): an exact allowlist for `runShellCommand` and network
 tools instead of pattern checks, and a separate unprivileged uid for the shell
 child, so file modes and `/proc` stop a read that a text rule misses.
 
+### Errands
+
+An errand writes to one person from the owner's own WhatsApp
+(`services/errands.js`, `docs/errands.md`). It adds no new kind of card:
+
+- **Start.** `startErrand` passes the gate like any tool call. In his own
+  clean chat his request is his approval, and the first message goes out
+  with no card. Only his own chat may start one (`ownerTyped`): a job, a
+  watcher, a sub-agent or a contact's chat is refused, even with a card. If
+  he never wrote to that person, a card for `startErrand` asks first.
+- **His choices** (another slot, a question, a refusal) come as a card for
+  `answerErrand` through `ApprovalService.askOwner`: no rule and no guardian,
+  the deny-list still applies. A card for an older offer cannot answer a
+  newer one: the errand withdraws it (`ApprovalService.withdraw`) and checks
+  the approval id when it runs.
+- **Steps inside his scope** (the contact confirms the slot he asked for, or
+  offers a free slot inside his window) run through `review()` with a
+  `grant`. The errand service vouches for the step with a random one-time
+  token the model never sees (`grantCovers`), bound to the errand, the
+  action and the slot. The step then runs like his own word: stored as
+  `owner_instructed`, decided by `owner_grant`. The deny-list, the floor and
+  his always-ask list still hold it. `startErrand` and `answerErrand` count
+  as "Message a contact" on that list.
+- **After reading a contact's text** a run asks before `startErrand` and
+  before any `answerErrand` but a cancel (`taintedAction`).
+- **Notes to the owner** hold only checked slots and People names. A note
+  that must quote the contact carries the `jobTaint` mark.
+
 ## Approval guardian
 
 A paused call used to have two outcomes: run, or ask the owner. The

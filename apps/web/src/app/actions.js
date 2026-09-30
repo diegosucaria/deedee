@@ -2296,6 +2296,50 @@ export async function analyzeContactStyle(contactId) {
     }
 }
 
+// Autopilot → Errands (specs/050-errands.md). Like getPartnerGreetingState,
+// the reads report a failed load, so the tab never takes an unreachable
+// agent for "no errands".
+export async function getErrands({ all = false } = {}) {
+    await requireActionSession();
+    try {
+        const data = await fetchAPI(`/v1/autopilot/errands${all ? '?all=1' : ''}`);
+        return {
+            ok: true,
+            enabled: data?.enabled !== false,
+            limits: data?.limits || null,
+            errands: Array.isArray(data?.errands) ? data.errands : [],
+        };
+    } catch (error) {
+        return { ok: false, error: apiErrorMessage(error) };
+    }
+}
+
+export async function getErrand(id) {
+    await requireActionSession();
+    const key = String(id ?? '').trim();
+    if (!key) return { ok: false, error: 'No errand id.' };
+    try {
+        const data = await fetchAPI(`/v1/autopilot/errands/${encodeURIComponent(key)}`);
+        return { ok: true, errand: data?.errand || null, events: Array.isArray(data?.events) ? data.events : [] };
+    } catch (error) {
+        return { ok: false, error: apiErrorMessage(error) };
+    }
+}
+
+export async function cancelErrand(id) {
+    await requireActionSession();
+    const key = String(id ?? '').trim();
+    if (!key) return { success: false, error: 'No errand id.' };
+    try {
+        await fetchAPI(`/v1/autopilot/errands/${encodeURIComponent(key)}/cancel`, { method: 'POST' });
+        revalidatePath('/autopilot');
+        return { success: true };
+    } catch (error) {
+        // The agent says why ("Errand #3 is already done.").
+        return { success: false, error: apiErrorMessage(error) };
+    }
+}
+
 // --- Vault Embeddings ---
 
 export async function getVaultEmbeddings(vaultId) {

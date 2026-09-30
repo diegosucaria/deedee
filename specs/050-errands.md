@@ -1,0 +1,223 @@
+# Errands
+
+**Status: built in PR "feat(errands)".** The owner agreed the design, the
+approval model and the limits on 2026-09-30.
+
+## 1. What the owner gets
+
+He asks in his own chat, and Deedee does it from his WhatsApp, in his voice:
+
+- "Pedile turno a Alice para el jueves" (book a slot)
+- "Preguntale a Bob si viene el sábado" (ask a question)
+- "Decile a Carol que llego 10 minutos tarde" (pass on a message)
+
+Deedee writes to that one person, waits for the answer, asks him only when
+a choice is his, and puts an agreed slot on his calendar.
+
+Three goals:
+
+- `book`: agree a time slot with a person (a barber, a clinic that books by
+  WhatsApp) and add it to the owner's calendar.
+- `ask`: ask one question and tell the owner the answer.
+- `tell`: pass on a message. Nothing to wait for.
+
+Two modes, for `book` only:
+
+- `ask` (default): Deedee accepts, on her own, only the slot the owner asked
+  for. Any other slot is his choice.
+- `window`: the owner gives a window ("any free slot Thursday 9 to 12").
+  Deedee accepts an offer inside it on her own when his calendar is free.
+
+`send: false` only drafts the first message and shows it. Nothing goes out.
+
+## 2. Where it sits
+
+- **Watchers listen.** A contact writes, Deedee reacts. They never write as
+  the owner.
+- **Autopilot talks as the owner.** It drafts a reply to whatever comes in.
+  It has no goal and no tools.
+- **An errand gets one thing done.** It writes as the owner, to one person,
+  for one goal, inside his limits. Then it ends.
+
+An errand is its own service, `apps/agent/src/services/errands.js`, next to
+Autopilot's `impersonation.js`, with a tab in Autopilot. It takes a
+contact's message at the same point in `agent.js` where watchers and
+Autopilot take it, and before them. While an errand is open for a chat, that
+chat's watchers and Autopilot skip the contact's messages, so nothing books
+a slot twice.
+
+It is not a watcher. A watcher run is a full agent run with every tool,
+started by a contact's text: the most power on the least trusted input. An
+errand's model calls have no tools. They read and write text; code decides
+and acts.
+
+## 3. The flow
+
+```
+owner (his chat): "pedile turno a Alice para el jueves"
+  startErrand          contact fixed, goal, slot or window, end date
+  voice                reads the chat: his style, his usual time
+  calendar             is he free then?
+  first message        goes out; he gets a note with the exact text
+contact answers (text or voice note)
+  claim                the errand takes the message first
+  read                 a model with no tools fills a fixed form
+  decide (code)        inside his scope -> act; else -> ask him
+  act                  reply in his voice, add the event, tell him
+```
+
+States:
+
+| State | Meaning |
+|---|---|
+| `waiting_contact` | A message went out; waiting for the contact |
+| `waiting_owner` | A choice is his: a card or a question waits for him |
+| `paused` | He wrote in that chat himself, or a limit was hit. Nothing happens until he says so |
+| `done`, `cancelled`, `expired`, `failed` | Closed |
+
+A `tell` errand closes as soon as its message goes out.
+
+## 4. The voice
+
+`apps/agent/src/services/voice.js` writes every errand message. The same
+module can serve Autopilot and the greetings later.
+
+What it reads:
+
+1. The last 60 messages of that chat, both sides, from `/whatsapp/history`
+   (the owner's own session). The owner's lines are the examples.
+2. His notes on this person (Autopilot → Style, `people.metadata.style_profile`)
+   and his global notes (`user_style_profile`).
+3. His style numbers (`owner_style_stats`): computed by the interfaces
+   service over his own one-to-one texts. Numbers only, no text: how often a
+   question opens with `¿`, how often a message ends with a period, message
+   length, how many short messages he sends in a row, emoji and laughter.
+4. The step to write: ask for a slot, accept one, propose another, decline,
+   thank, ask a question, pass on a message.
+
+A Flash call with no tools returns `{ text, slot }`. Then code:
+
+- drops an opening `¿` or `¡` and a final period when he almost never uses
+  them (under 2 in 100 of his messages);
+- runs the checks in section 6;
+- on a failed check, asks the model once more with the reasons; if it fails
+  again, the owner gets the draft and nothing goes out.
+
+When the owner gave no time, the voice asks for the time he usually books
+with that person, as the chat shows it, and a time his calendar has free.
+The slot it asked for is stored: a contact who confirms that slot is inside
+the owner's scope.
+
+## 5. Approvals: the built-in ones
+
+Errands add no new kind of card. They use the approval service as it is.
+
+- **Start.** `startErrand` is a tool call in the owner's chat and passes the
+  gate like any other. His request in his own chat, with nothing a third
+  party wrote in the history, is his approval: it runs, and the first
+  message goes out with no card. Otherwise it asks once. The first message
+  to someone he has never written to also asks first.
+- **Who may start one.** Only the owner, from his own chat or the web.
+  Jobs, watchers, sub-agents and contacts cannot. `startErrand` and
+  `answerErrand` count as "Message a contact" on his always-ask list.
+- **His choices.** A slot other than the one he asked for (ask mode), a
+  question from the contact, a refusal, an unclear answer or a voice note
+  Deedee cannot read. Deedee asks with a card for `answerErrand`. Its "What"
+  line says exactly what she will send and book. "sí" runs it, "no" sends
+  nothing, and other words go to the model, which calls `answerErrand`.
+- **Steps inside his scope.** The contact confirms the slot he asked for,
+  or, in window mode, offers a slot inside the window that is free on his
+  calendar. The errand runs `answerErrand` through the same gate with an
+  errand grant. The approval service asks the errand service to check the
+  grant (errand open, step and slot inside the scope, limits not hit) and
+  records the decision as `owner_grant`. The deny-list, the floor and his
+  always-ask list still win.
+- **The guardian** does not decide errand steps. A step is either inside
+  the scope he set (it runs) or his choice (a card).
+
+## 6. Security and limits
+
+Code enforces these, not the prompt.
+
+1. **Scope is fixed at the start:** one contact, one goal, a slot or a
+   window, an end date. Only the owner changes it. The model never picks
+   the recipient of an errand message: code takes it from the errand row.
+2. **The contact's text is data.** A model with no tools reads it and fills
+   a fixed JSON form (`offer`, `confirm`, `decline`, `question`, `answer`,
+   `other`, with slots). Code checks the form: real dates, in the future,
+   within the errand's life.
+3. **Notes to the owner hold no text the contact wrote**, only facts code
+   checked (a slot, the contact's name from People). A note that must quote
+   the contact (a question, an `ask` answer) carries the `jobTaint` mark, so
+   his next word in that chat does not cover messages on its own.
+4. **Every outgoing text passes checks:** at most 160 characters and 2
+   lines; no link, email, phone number, money amount or `@`; no words aimed
+   at a model ("ignore", "instrucciones", "prompt", "Deedee", "IA"); an
+   accepted or proposed slot must appear as its time; no brackets.
+5. **Loops:** the errand stores what it sent and never reads its own sends
+   as the contact's replies.
+6. **The owner takes over:** before each send the errand reads the chat.
+   If he wrote there himself since its last step, it pauses and tells him.
+7. **Off switches:** `ERRANDS=0` (read on every call) turns the tools, the
+   message hook and the sweep off. Each errand can be cancelled in chat or
+   in the tab. `communication_dry_run` makes errands draft only.
+8. **A log of every step** (`errand_events`): what came in (a short
+   excerpt), the form, the decision, the text sent, the calendar result.
+
+| Limit | Value |
+|---|---|
+| Open errands at once | 3; one per contact |
+| Messages it sends on its own per errand | 4 (one message may be 2 short parts); then every step asks |
+| All messages per errand | 10; then it pauses |
+| Gap between its own messages | at least 1 minute |
+| Quiet hours | 22:00-08:00 local: nothing goes out on its own; a step waits until 08:00 |
+| No answer from the contact | the owner hears after 4 hours; Deedee never writes again on her own |
+| Life of an errand | until the booked slot, 7 days at most |
+| Model calls per errand | 20; then it pauses and tells him |
+| Message length | 160 characters, 2 lines |
+
+Messages the owner decides (a card he approves, his own words through
+`answerErrand`) go out at any hour and do not count toward the 4.
+
+## 7. The calendar
+
+Code, not the model, adds the event: the owner's primary calendar, no
+guests, so no card is needed (`isOwnCalendarEvent`). The title comes from
+`startErrand` (`eventTitle`, else "Turno - <name>"), with the location and
+length the owner gave. Before it adds one, it looks for an event with the
+same title that day and skips if one exists. The event id goes on the errand.
+
+## 8. Tools
+
+- `startErrand({ contact, goal, request, date?, time?, windowStart?, windowEnd?, eventTitle?, location?, durationMinutes?, send? })`
+- `answerErrand({ id, action, date?, time?, text? })`, action one of
+  `accept`, `propose`, `decline`, `say`, `cancel`
+- `listErrands({ all? })`
+
+`contact` must be a phone number, a WhatsApp ID or a People id, never a
+name: the model finds it with `searchContacts` first. All three tools hold
+only the owner's words and our own text: trusted
+(`utils/untrusted-content.js`). A run that read untrusted content asks
+before `startErrand` and `answerErrand`.
+
+The turn context lists open errands (id, person, goal, state, the slot on
+the table), so a bare "sí" or "decile a las 11" finds its errand.
+
+## 9. Data
+
+- `errands`: id, contact (JIDs, name), goal, mode, request, slot, window,
+  proposed slot, state, counters, event id, times, the pending card id.
+- `errand_events`: errand id, time, kind, short detail.
+- `agent_settings.owner_style_stats`: the numbers from section 4, refreshed
+  once a day.
+
+## 10. The tab
+
+Autopilot → Errands: open and recent errands, each with its steps, and a
+Cancel button. It updates live over the socket (`errands:update`).
+
+## 11. Not in this version
+
+Groups, email and Slack, moving or cancelling an existing booking, several
+people in one errand, reminders to the contact, phone calls, and starting
+an errand from a job or a watcher.

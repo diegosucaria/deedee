@@ -170,7 +170,9 @@ const CATEGORIES = Object.freeze({
     },
     send_message: {
         label: 'Message a contact (WhatsApp, Telegram, Slack)',
-        match: (name) => name === 'sendMessage' || name === 'sendSlackMessage'
+        // Errands write to a person as the owner (services/errands.js); cancelling one writes nothing.
+        match: (name, args) => name === 'sendMessage' || name === 'sendSlackMessage' || name === 'startErrand'
+            || (name === 'answerErrand' && args?.action !== 'cancel')
     },
     send_email: {
         label: 'Send an email',

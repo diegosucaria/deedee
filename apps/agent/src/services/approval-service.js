@@ -390,6 +390,8 @@ function isUnattendedRun(message) {
     const meta = message?.metadata || {};
     const source = String(message?.source || '');
     if (String(message?.content || '').startsWith('SYSTEM_WATCHER_ALERT')) return true;
+    // An errand's own step (services/errands.js): the contact wrote, nobody typed.
+    if (meta.errandId !== undefined && meta.errandId !== null) return true;
     if (meta.jobName) return true;
     if (source === 'scheduler' || source === 'system') return true;
     return isSyntheticChatId(meta.chatId);
@@ -403,6 +405,7 @@ function describeOrigin(message) {
         return `a watcher run on a ${source.split(':')[0] || 'chat'} message`;
     }
     if (meta.jobName) return `the scheduled job "${meta.jobName}"`;
+    if (meta.errandId !== undefined && meta.errandId !== null) return `errand #${meta.errandId}`;
     if (source === 'scheduler' || String(meta.chatId || '').startsWith('system_')) return 'a system job';
     if (source === 'subagent' || meta.isSubAgent) return 'a sub-agent';
     if (source) return `the ${source} chat`;
@@ -415,6 +418,7 @@ function sourceKind(message) {
     const source = String(message?.source || '');
     if (meta.isSubAgent || source === 'subagent') return 'subagent';
     if (String(message?.content || '').startsWith('SYSTEM_WATCHER_ALERT')) return 'watcher';
+    if (meta.errandId !== undefined && meta.errandId !== null) return 'errand';
     if (meta.jobName || source === 'scheduler') return 'job';
     if (source === 'system' || isSyntheticChatId(meta.chatId)) return 'system';
     return 'chat';
@@ -785,7 +789,7 @@ class ApprovalService {
      *   messages, a watcher alert, a tainted row). Only `false` allows the owner's word.
      * @returns {Promise<{ run: true, decisionId?: string } | { run: false, status: 'error'|'paused', result: object, decisionId?: string }>}
      */
-    async review({ message, toolName, args, taint = null, serverName = null, run = null, sendCallback = null, historyUntrusted = null, foreignText = null }) {
+    async review({ message, toolName, args, taint = null, serverName = null, run = null, sendCallback = null, historyUntrusted = null, foreignText = null, grant = null }) {
         const settings = this.settings();
         const meta = message?.metadata || {};
         const kind = sourceKind(message);
@@ -835,10 +839,24 @@ class ApprovalService {
 
         // Text other people wrote sits in this chat: his word does not carry here.
         const ownerAsked = foreignText === false && await this._ownerConsent(message, taint);
-        const cover = ownerAsked ? consentCover(guard.rule, { floorHit, historyUntrusted }) : 'none';
+        // An errand's own step inside the scope the owner set when he started
+        // it (services/errands.js). Code picked the step, and the errand
+        // service vouches for it with a one-time token the model never sees.
+        // His word from the start covers it like his word in his chat: the
+        // deny-list, the floor and his always-ask list still hold it.
+        let granted = false;
+        if (!ownerAsked && grant && typeof this.agent.errands?.grantCovers === 'function') {
+            try { granted = this.agent.errands.grantCovers(grant, toolName, args) === true; } catch { granted = false; }
+        }
+        const cover = ownerAsked ? consentCover(guard.rule, { floorHit, historyUntrusted })
+            : granted ? consentCover(guard.rule, { floorHit, historyUntrusted: false }) : 'none';
         if (cover === 'run') {
-            const row = this._record({ ...withHits, outcome: 'owner_instructed', decidedBy: 'owner', reason: 'The owner asked for it in his own chat.' });
-            console.log(`[Approvals] ${toolName} runs without a card: the owner asked for it in his chat.`);
+            const row = granted
+                ? this._record({ ...withHits, outcome: 'owner_instructed', decidedBy: 'owner_grant', reason: `A step of errand #${grant.errandId}, inside the scope the owner set when he started it.` })
+                : this._record({ ...withHits, outcome: 'owner_instructed', decidedBy: 'owner', reason: 'The owner asked for it in his own chat.' });
+            console.log(granted
+                ? `[Approvals] ${toolName} runs without a card: errand #${grant.errandId} stays inside the owner's scope.`
+                : `[Approvals] ${toolName} runs without a card: the owner asked for it in his chat.`);
             return { run: true, decisionId: row?.id };
         }
 
@@ -936,7 +954,7 @@ class ApprovalService {
                 console.warn('[Guardian] decision update failed:', e.message);
             }
         }
-        return { run: false, status: paused.paused ? 'paused' : 'error', result: paused.result, decisionId: row?.id };
+        return { run: false, status: paused.paused ? 'paused' : 'error', result: paused.result, decisionId: row?.id, ...(paused.id ? { approvalId: paused.id } : {}) };
     }
 
     /**
@@ -1190,6 +1208,53 @@ class ApprovalService {
     }
 
     // --- asking ---
+
+    /**
+     * Ask the owner to decide a call that is his choice, not a safety
+     * question: an errand's next step (services/errands.js). No rule and no
+     * guardian: the deny-list still refuses it, and he gets one card. The
+     * decision is recorded like any other.
+     * @param {{ message: object, toolName: string, args: object, reason: string, preview?: string|null }} p
+     * @returns {Promise<{ paused: boolean, id?: string, result: object }>}
+     */
+    async askOwner({ message, toolName, args, reason, preview = null }) {
+        const deny = this.rules.denyCheck(toolName, args, this.settings().deny);
+        if (deny.denied) {
+            return { paused: false, result: { error: `Blocked by the owner's deny-list (pattern "${deny.pattern}"). Nothing was sent.` } };
+        }
+        const meta = message?.metadata || {};
+        const taintSources = Array.isArray(meta.untrustedTaint) ? meta.untrustedTaint.map(String) : [];
+        const row = this._record({
+            runId: null, chatId: meta.chatId ? String(meta.chatId) : null, source: message?.source || null,
+            sourceKind: sourceKind(message), jobName: meta.jobName || null, toolName, target: describeTarget(toolName, args),
+            taintSources, mode: this.settings().mode, outcome: 'escalated', decidedBy: 'owner', reason: truncate(reason, 300)
+        });
+        return this.request({
+            message, toolName, args, reason, taintSources: taintSources.length ? taintSources : null,
+            guardianDecisionId: row?.id || null, preview
+        });
+    }
+
+    /**
+     * Take back a waiting card: its question no longer stands (an errand
+     * moved on). A later "yes" must not run it. Marked expired; the chat
+     * that holds it is told.
+     */
+    withdraw(id, why = 'it no longer applies') {
+        if (!id || !this.hasStore()) return false;
+        let done = null;
+        try { done = this.db.decidePendingConfirmation(id, 'expired', { via: 'withdrawn' }); } catch (e) {
+            console.warn(`[Approvals] could not withdraw ${id}: ${e.message}`);
+            return false;
+        }
+        if (!done) return false;
+        console.log(`[Approvals] ${id} (${done.tool_name}) withdrawn: ${why}.`);
+        this._broadcast({ id, status: 'expired', chatId: done.reply_chat_id, toolName: done.tool_name });
+        const target = { channel: done.reply_channel || 'whatsapp', chatId: done.reply_chat_id };
+        this._deliverTo(target, `No longer needed (${id}): ${why}.`, done)
+            .catch(e => console.warn(`[Approvals] could not close the card ${id}: ${e.message}`));
+        return true;
+    }
 
     /**
      * Pause a tool call until the owner answers.

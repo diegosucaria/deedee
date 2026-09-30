@@ -63,7 +63,7 @@ class HttpInterface extends EventEmitter {
         }
       }
 
-      await axios.post(`${this.interfacesUrl}/send`, {
+      const res = await axios.post(`${this.interfacesUrl}/send`, {
         // The message id travels with the send so a retry of the same message
         // (delivery ledger) is recognized and not sent twice.
         id: message.id || null,
@@ -80,6 +80,10 @@ class HttpInterface extends EventEmitter {
         },
         timeout: SEND_TIMEOUT_MS
       });
+      // The WhatsApp id of what went out, on the caller's own object: an
+      // errand tells its messages from the ones the owner types himself.
+      // The return value stays a boolean for every other caller.
+      if (res?.data?.messageId && message && typeof message === 'object') message.sentMessageId = String(res.data.messageId);
       return true;
     } catch (error) {
       console.error('[HttpInterface] Send Error:', error.message);

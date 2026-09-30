@@ -1,4 +1,5 @@
 const { createUserMessage } = require('@deedee/shared/src/types');
+const { styleStats } = require('@deedee/shared/src/style-stats');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
@@ -1276,20 +1277,23 @@ class WhatsAppService {
             const type = options.type || 'text';
             console.log(`${this.logPrefix} Sending ${type} to ${targetJid}`);
 
+            let sent = null;
             if (type === 'text') {
-                await this.sock.sendMessage(targetJid, { text: content });
+                sent = await this.sock.sendMessage(targetJid, { text: content });
             } else if (type === 'audio') {
                 const rawBuffer = Buffer.from(content, 'base64');
                 const opusBuffer = await convertToOpus(rawBuffer);
-                await this.sock.sendMessage(targetJid, { audio: opusBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+                sent = await this.sock.sendMessage(targetJid, { audio: opusBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
             } else if (type === 'image') {
                 const buffer = Buffer.from(content, 'base64');
                 const imagePayload = { image: buffer };
                 if (options.caption) imagePayload.caption = options.caption;
-                await this.sock.sendMessage(targetJid, imagePayload);
+                sent = await this.sock.sendMessage(targetJid, imagePayload);
             }
             this.sentIds.add(options.id);
-            return { duplicate: false };
+            // The WhatsApp id of what went out: an errand tells its own messages
+            // from the ones the owner types himself (agent services/errands.js).
+            return { duplicate: false, messageId: sent?.key?.id || null };
 
         } catch (e) {
             console.error(`${this.logPrefix} Send Failed:`, e.message);
@@ -1580,9 +1584,29 @@ class WhatsAppService {
             return {
                 role: fromMe ? 'assistant' : 'user',
                 content,
-                timestamp: r.timestamp * 1000 // Use DB timestamp
+                timestamp: r.timestamp * 1000, // Use DB timestamp
+                id: m.key?.id || null,
+                fromMe: !!fromMe
             };
         });
+    }
+
+    /**
+     * Style numbers of the owner's own one-to-one texts (@deedee/shared
+     * style-stats): numbers only, no text. Reads the newest rows by rowid,
+     * never the whole table.
+     */
+    getOwnStyleStats({ rows = 40000 } = {}) {
+        if (!this.store?.db) return { n: 0 };
+        const max = this.store.db.prepare('SELECT max(rowid) AS m FROM messages').get()?.m || 0;
+        const list = this.store.db.prepare(`
+            SELECT remote_jid, timestamp, content FROM messages
+            WHERE rowid > ? AND from_me = 1 AND content IS NOT NULL AND content != ''
+        `).all(Math.max(0, max - rows));
+        const own = list
+            .filter(r => !String(r.remote_jid).endsWith('@g.us') && !/broadcast|newsletter/.test(String(r.remote_jid)))
+            .map(r => ({ text: r.content, ts: Number(r.timestamp) * 1000, chat: r.remote_jid }));
+        return styleStats(own);
     }
 
     async getProfilePicture(jid) {
