@@ -265,6 +265,8 @@ const TEXTS = {
         whySoon: 'empieza muy pronto',
         whyNight: 'entre las 22 y las 8 no contesto por mi cuenta',
         voiceAnswer: (n, id) => `${n} contestó con un audio que no pude entender (pedido #${id}). Escuchalo en el chat; el pedido quedó cerrado.`,
+        unreadAnswer: (n, id) => `${n} contestó (pedido #${id}) pero no pude leer la respuesta. Fijate en el chat; el pedido quedó cerrado.`,
+        heldAcceptAsk: (n, s) => ` Estaba por aceptarle a ${n} el ${s}; no está en tu calendario. Decime si lo acepto.`,
         mediaAnswer: (n, id) => `${n} contestó con una foto o un archivo (pedido #${id}). Fijate en el chat; el pedido quedó cerrado.`,
         whyInvolved: 'ya me dijiste algo sobre este pedido, así que te pregunto antes',
         whyVoice: 'también mandó un audio que no pude entender',
@@ -357,6 +359,8 @@ const TEXTS = {
         whySoon: 'it starts very soon',
         whyNight: 'I do not answer on my own between 22:00 and 08:00',
         voiceAnswer: (n, id) => `${n} answered with a voice note I could not understand (errand #${id}). Please listen to it in the chat; the errand is closed.`,
+        unreadAnswer: (n, id) => `${n} answered (errand #${id}) but I could not read it. Please look at the chat; the errand is closed.`,
+        heldAcceptAsk: (n, s) => ` I was about to accept ${s} with ${n}; it is not on your calendar. Tell me whether to accept it.`,
         mediaAnswer: (n, id) => `${n} answered with a photo or a file (errand #${id}). Please look at the chat; the errand is closed.`,
         whyInvolved: 'you already weighed in on this errand, so I ask first',
         whyVoice: 'they also sent a voice note I could not understand',
@@ -1378,11 +1382,27 @@ class ErrandService {
         const t = this._t(errand);
         const name = safeName(errand.contact_name);
         const waiting = errand.next_action;
-        if (!form) {
-            this._event(id, 'read', { failed: true });
-            return this._askNote(errand, t.unread(name, id));
+        if (!form) this._event(id, 'read', { failed: true });
+        else this._event(id, 'read', { kind: form.kind, slots: form.slots, summary: form.summary, tellOwner: form.tellOwner });
+        // An ask errand answered with a photo, a voice note it could not read,
+        // or words the reader could not take in: that is her answer, only he
+        // can take it in. The errand ends, so her chat is his watchers' again
+        // and a follow-up question starts an errand of its own. Not on a
+        // question of hers or a "me fijo".
+        const onlyHim = !form || unread.some(u => u.unreadable || u.media);
+        if (errand.goal === 'ask' && onlyHim && !(form && ['question', 'later'].includes(form.kind))) {
+            // A step of his that waited is named, and a card of his is withdrawn.
+            const dropped = this._withdraw(errand);
+            const mine = waiting?.owner ? this._stepName(errand, waiting) : (dropped.own ? dropped.step : null);
+            const closed = this._close(id, 'done', 'answered');
+            if (closed) this._event(id, 'closed', { state: 'done', ...(mine ? { dropped: 'his step' } : {}) });
+            const head = !form ? t.unreadAnswer(name, id) : unread.some(u => u.unreadable) ? t.voiceAnswer(name, id) : t.mediaAnswer(name, id);
+            // What it did read of her answer (a caption, the words beside the voice note) still reaches him.
+            const read = form && form.kind === 'answer' && form.summary ? ` ${t.understood(form.summary)}` : '';
+            await this._notify(errand, head + read + (mine ? t.heldStep(mine) + t.sayIt : ''), { taint: !!read });
+            return closed;
         }
-        this._event(id, 'read', { kind: form.kind, slots: form.slots, summary: form.summary, tellOwner: form.tellOwner });
+        if (!form) return this._askNote(errand, t.unread(name, id));
         // An answer to what the errand asked (not "me fijo", not small talk): the no-reply note stops.
         if (form.kind !== 'other' && form.kind !== 'later') errand = this.db.updateErrand(id, { answered_at: errand.last_contact_at }) || errand;
         if (form.kind === 'other' || form.kind === 'later') {
@@ -1416,17 +1436,8 @@ class ErrandService {
         // first, so a card for the answer stays the newest thing he reads.
         const extra = form.tellOwner && errand.goal === 'book' && ['offer', 'confirm', 'decline'].includes(form.kind)
             ? { text: t.also(name, id, form.summary), taint: true }
-            : unread.some(u => u.media) ? { text: t.media(name, id), taint: false } : null;
+            : errand.goal === 'book' && unread.some(u => u.media) ? { text: t.media(name, id), taint: false } : null;
         if (extra) await this._notifyOnly(errand, extra.text, { taint: extra.taint });
-        // An ask errand answered with a photo or a voice note it could not
-        // read: that is her answer, only he can take it in. The errand ends,
-        // so her chat is his watchers' again and a new question can start.
-        if (errand.goal === 'ask' && unread.some(u => u.unreadable || u.media) && !['question', 'later'].includes(form.kind)) {
-            const closed = this._close(id, 'done', 'answered');
-            if (closed) this._event(id, 'closed', { state: 'done' });
-            await this._notify(errand, unread.some(u => u.unreadable) ? t.voiceAnswer(name, id) : t.mediaAnswer(name, id));
-            return closed;
-        }
         // A voice note it could not read came with the words it did read: it
         // may say something else, so nothing goes out on its own.
         if (unread.some(u => u.unreadable)) {
@@ -1572,9 +1583,10 @@ Answer in JSON.`;
 
     /** Inside the scope he set: the slot he asked for (his day, a free time), or a free slot inside his window. */
     async _inScope(errand, slot) {
-        // Once he was asked, or stepped in (a card, a note, his "no", a step
-        // of his held), the errand acts on nothing by itself until a slot of
-        // his goes out again (auto_ok, see _stopAuto).
+        // Once he decided otherwise (his "no" to a card, words of his to her,
+        // a step of his on hold, a pause) or she said she has no room, the
+        // errand acts on nothing by itself until a slot he proposed goes out
+        // (auto_ok).
         if (!errand.auto_ok) return false;
         if (zonedMs(slot.date, slot.time, this.timeZone()) < this.clock() + MIN_LEAD_MS) return false;
         if (errand.mode === 'window' && errand.window_start && errand.window_end) {
@@ -1612,7 +1624,12 @@ Answer in JSON.`;
             }
             return this._askAccept(errand, slots);
         }
-        if (form.kind === 'decline') return this._askNote(errand, t.noSlot(name, errand.id));
+        // Her "no tengo lugar" ends the plan from her side: a later "se me
+        // liberó" asks him (he may have made other plans), never books by itself.
+        if (form.kind === 'decline') {
+            this.db.updateErrand(errand.id, { auto_ok: 0 });
+            return this._askNote(this.db.getErrand(errand.id) || errand, t.noSlot(name, errand.id));
+        }
         if (form.kind === 'question') return this._askNote(errand, t.asked(name, errand.id, form.summary), { taint: true });
         if (form.kind === 'answer') return this._askNote(errand, t.answeredBook(name, errand.id, form.summary), { taint: true });
         return this._askNote(errand, t.unclearSlot(name, errand.id, errand.slot ? fmtSlot(errand.slot, this.timeZone(), lang) : null));
@@ -1718,7 +1735,7 @@ Answer in JSON.`;
         if (errand.mode === 'window' && errand.window_start && errand.window_end) {
             const at = `${slot.date}T${slot.time}`;
             if (at < errand.window_start || at > errand.window_end) return plus(t.whyOutside(fmtWindow(errand, tz, lang)));
-            return cal || (errand.auto_ok ? t.whyCalendar : t.whyInvolved);
+            return cal || t.whyInvolved;
         }
         // He already weighed in (a card, a note, words of his): that is why it asks.
         if (!errand.auto_ok && (!errand.slot?.time || sameSlot(slot, errand.slot))) return cal || t.whyInvolved;
@@ -1899,7 +1916,7 @@ Answer in JSON.`;
             held = mine ? t.heldStep(mine) : t.held(true);
         } else if (waiting?.action === 'accept' && validDate(waiting.date) && normTime(waiting.time)) {
             // Her yes that waited (quiet hours, the gap) is not lost from view.
-            held = t.heldAcceptNote(safeName(errand.contact_name), fmtSlot({ date: waiting.date, time: normTime(waiting.time) }, this.timeZone(), this._lang(errand)));
+            held = t.heldAcceptAsk(safeName(errand.contact_name), fmtSlot({ date: waiting.date, time: normTime(waiting.time) }, this.timeZone(), this._lang(errand)));
         } else if (waiting) {
             held = t.held(false);
         }
@@ -2031,6 +2048,9 @@ Answer in JSON.`;
             // one he answered in chat (it is no longer pending).
             const card = errand.pending_approval_id && typeof this.db.getPendingConfirmation === 'function' ? this.db.getPendingConfirmation(errand.pending_approval_id) : null;
             if ((approved && approvalId && errand.pending_approval_id === approvalId) || (card && card.status !== 'pending')) this.db.updateErrand(errand.id, { pending_approval_id: null });
+            // A step of his is a decision of his, whether or not it goes out: the
+            // errand acts on nothing by itself until a slot he proposed goes out.
+            if (action !== 'cancel') this.db.updateErrand(errand.id, { auto_ok: 0 });
             const out = await this._perform(this.db.getErrand(errand.id), { ...args, action }, { auto: false });
             // His step on a paused errand failed before anything went out: it stays paused.
             const after = this.db.getErrand(errand.id);
@@ -2174,32 +2194,10 @@ Answer in JSON.`;
         }
         // An ask errand she already answered ends with his follow-up: it no
         // longer holds her chat, and no "has not answered" note can follow.
-        // Her answer, or a reply of hers only he could read (a voice note, a
-        // photo, one the reader failed on): his follow-up ends the errand.
-        // Her question back or "me fijo" does not.
-        const events = errand.goal === 'ask' ? this.db.listErrandEvents(errand.id, { newest: 100 }) : [];
-        // His follow-up just went out (the newest 'sent'): look since the errand wrote before it.
-        const sends = events.filter(e => e.kind === 'sent').map(e => e.id);
-        const lastSentAt = sends.length >= 2 ? sends[sends.length - 2] : 0;
-        const since = events.filter(e => e.id > lastSentAt);
-        const lastRead = since.filter(e => e.kind === 'read').pop();
-        // Anything since the errand last wrote: an answer, a read that failed,
-        // or a photo or voice note only he could take in, unless her latest
-        // words were a question back or "me fijo".
-        const answered = !!lastRead && !['question', 'later'].includes(lastRead.detail?.kind)
-            && since.some(e => (e.kind === 'read' && (e.detail?.kind === 'answer' || e.detail?.failed))
-                || (e.kind === 'received' && (e.detail?.unreadable || e.detail?.media)));
-        if (args.action === 'say' && errand.goal === 'ask' && answered) {
-            const closed = this._close(errand.id, 'done', 'answered');
-            if (closed) this._event(errand.id, 'closed', { state: 'done' });
-            const line = t.told(name, said);
-            if (notify) await this._notify(errand, line);
-            return { success: true, errandId: errand.id, info: line, ownerLine: line };
-        }
         // propose or say: back to waiting for them. After a free-form "say"
         // the slot on the table is no longer known.
         const moved = args.action === 'propose'
-            ? { slot, slot_owned: 1, time_owned: 1, auto_ok: 1, mode: 'ask', expires_at: new Date(this._endMs(Date.parse(errand.created_at), slot.date, zonedMs(slot.date, slot.time, tz))).toISOString() }
+            ? { slot, slot_owned: 1, time_owned: 1, auto_ok: 1, mode: 'ask', window_start: null, window_end: null, expires_at: new Date(this._endMs(Date.parse(errand.created_at), slot.date, zonedMs(slot.date, slot.time, tz))).toISOString() }
             // His own words: the errand does nothing by itself until a slot of his goes out.
             : { slot: null, slot_owned: 0, time_owned: 0, auto_ok: 0 };
         this.db.updateErrand(errand.id, { state: 'waiting_contact', offer: null, next_action: null, next_check_at: null, ...moved });

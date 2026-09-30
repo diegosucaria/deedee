@@ -49,10 +49,11 @@ It never writes the message itself.
    - the contact confirms the slot he asked for on his day, or (window
      mode) offers a slot inside his window, and his calendar is free then:
      Deedee answers on her own and books. Only until he decides otherwise:
-     after his "no" to a card, words of his to her (`say`), a step of his on
-     hold, or a pause, the errand acts on nothing by itself (`auto_ok`) until
-     a slot he proposed goes out. A card or a note he has not answered yet
-     does not change this: her later yes to his own slot still books;
+     after his "no" to a card, any step of his (even one that failed to go
+     out), a step of his on hold, a pause, or her own "no tengo lugar", the errand acts on nothing
+     by itself (`auto_ok`) until a slot he proposed goes out. A card or a note
+     he has not answered yet does not change this: her later yes to his own
+     slot still books;
    - any other slot: a card for `answerErrand`, "sí" accepts it. The card
      says why it asks: his calendar is busy then, the slot is outside his
      window, or the day or time was one the draft picked, not he;
@@ -83,9 +84,9 @@ in a note of its own. While a step he asked for waits for the contact's
 new words to be read, or waits on a card of his (or that card lapsed or was
 dropped, and nothing went out since), the errand accepts nothing on its own;
 a card, note or pause that drops his step names it. An `ask` errand ends on her answer,
-a photo or a voice note it could not read included (never on a question of
-hers or a "me fijo"), so it no longer holds her chat, and a follow-up
-question starts an errand of its own; a step of his that waited is named, and his own
+a photo, a voice note it could not read or a reply the reader could not
+take in included (never on a question of hers or a "me fijo"), so it no
+longer holds her chat, and a follow-up question starts an errand of its own; a step of his that waited is named, and his own
 words can still go to her with `sendMessage`. A step on a closed errand gets
 no card. News or a photo goes out before the card it came with, so the card
 stays the newest question.

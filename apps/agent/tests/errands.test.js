@@ -2419,6 +2419,69 @@ describe('errands', () => {
             expect(inserted).toHaveLength(0);
         });
 
+        test('an ask errand answered only by a photo ends at once, and a follow-up question can start its own errand', async () => {
+            drafts.push({ text: 'qué horarios tenés el sábado?', date: '', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale qué horarios tiene el sábado' });
+            clock += 5 * 60e3;
+            // On the device the reader sees only "[Image]", and fills "other".
+            forms.push({ kind: 'other', slots: [], summary: 'A photo.', tellOwner: false });
+            service.claim({ ...contactWrites('[Image]'), parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }] }, { contactString: CONTACT });
+            await service.flush(out.errandId);
+            expect(db.getErrand(out.errandId).state).toBe('done');
+            expect(notes().filter(n => /foto/.test(n.content))).toHaveLength(1);
+            drafts.push({ text: 'y el domingo abrís?', date: '', time: '' });
+            const next = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale si el domingo abre' });
+            expect(next.success).toBe(true);
+        });
+
+        test('an ask errand whose reply the reader could not read ends at once and says so', async () => {
+            drafts.push({ text: 'abrís el sábado?', date: '', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale si abre el sábado' });
+            clock += 5 * 60e3;
+            generateContent.mockImplementationOnce(async () => { throw new Error('model down'); });
+            service.claim(contactWrites('sí, de 9 a 13'), { contactString: CONTACT });
+            await service.flush(out.errandId);
+            expect(db.getErrand(out.errandId).state).toBe('done');
+            expect(notes().pop().content).toMatch(/no pude leer la respuesta. Fijate en el chat; el pedido quedó cerrado\./);
+        });
+
+        test('her "no tengo lugar", then "se me liberó": he is asked, it never books by itself', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'no tengo lugar esta semana', { kind: 'decline', slots: [], summary: 'No room.', tellOwner: false });
+            clock += 3 * 3600e3;
+            await contactAnswers(errand, 'se me liberó, jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Now free at 10.', tellOwner: false });
+            expect(sends).toHaveLength(1);
+            expect(inserted).toHaveLength(0);
+        });
+
+        test('his step that fails before it goes out still stops the errand from booking his old time', async () => {
+            const errand = await startBooking();
+            drafts.push({ text: 'mirá www.example.com', date: '', time: '' }, { text: 'mirá www.example.com', date: '', time: '' });
+            const res = await service.answer({ id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, { byOwner: true });
+            expect(res.success).toBe(false);
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'dale, jueves 10', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms 10.', tellOwner: false });
+            expect(sends).toHaveLength(1);
+            expect(inserted).toHaveLength(0);
+        });
+
+        test('an ask errand closed by a photo names his step that waited, and withdraws his card', async () => {
+            drafts.push({ text: 'qué modelo tenés?', date: '', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'ask', request: 'preguntale qué modelo tiene' });
+            const card = await approvals.review({ message: ownerSays('y en azul tenés?'), toolName: 'answerErrand', args: { id: out.errandId, action: 'say', text: 'y en azul tenés?' }, historyUntrusted: true, foreignText: true });
+            expect(card.status).toBe('paused');
+            clock += 5 * 60e3;
+            forms.push({ kind: 'answer', slots: [], summary: 'This one, the X200', tellOwner: false });
+            service.claim({ ...contactWrites('este, el X200'), parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }] }, { contactString: CONTACT });
+            await service.flush(out.errandId);
+            expect(db.getErrand(out.errandId).state).toBe('done');
+            expect(db.getPendingConfirmation(card.approvalId).status).toBe('expired');
+            const note = notes().pop();
+            expect(note.content).toMatch(/Lo que sí entendí: This one, the X200\. Lo tuyo \("y en azul tenés\?"\) no salió\. Si querés que se lo mande, decime\./);
+            expect(note.metadata.jobTaint).toBeTruthy();
+        });
+
         test('"y decile ..." or "y?" ("and tell her ...", "so?") is not a yes', async () => {
             const card = await approvals.request({ message: { source: 'whatsapp', role: 'user', content: 'x', metadata: { chatId: OWNER_LID } }, toolName: 'forgetFact', args: { key: 'k' }, reason: 'r' });
             expect(await approvals.intercept({ ...ownerSays('y decile'), id: 'y-1' }, jest.fn())).toBeNull();

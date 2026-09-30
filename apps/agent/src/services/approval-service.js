@@ -880,7 +880,7 @@ class ApprovalService {
             }
             // A closed errand takes no step: no card that could never run.
             if (toolName === 'answerErrand' && args?.action !== 'cancel' && typeof this.agent.errands?.isClosed === 'function' && this.agent.errands.isClosed(args?.id)) {
-                return { run: false, status: 'error', result: { error: `Errand #${args?.id} is closed. To pass on his exact words to that person now, use sendMessage with session 'user'.` } };
+                return { run: false, status: 'error', result: { error: `Errand #${args?.id} is closed. For a new question to that person, start a new errand (startErrand, goal ask). To pass on his exact words only, use sendMessage with session 'user'.` } };
             }
         }
 
