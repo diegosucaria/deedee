@@ -77,7 +77,7 @@ const ID_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const ID_LENGTH = 6;
 const MIN_PREFIX = 3;
 
-const APPROVE_WORDS = new Set(['yes', 'y', 'si', 'sí', 'ok', 'okay', 'dale', 'approve', 'approved', 'confirm', 'confirmed', 'proceed', 'go ahead', 'adelante']);
+const APPROVE_WORDS = new Set(['yes', 'si', 'sí', 'ok', 'okay', 'dale', 'approve', 'approved', 'confirm', 'confirmed', 'proceed', 'go ahead', 'adelante']);
 const DENY_WORDS = new Set(['no', 'n', 'cancel', 'cancelar', 'deny', 'denied', 'nope', 'reject', 'rechazar']);
 
 const SECRET_KEY_RE = /pass|secret|token|api[_-]?key|auth|cookie|credential|otp/i;
@@ -147,7 +147,8 @@ function normalizeWord(text) {
 // A bare "y" is yes, but "y decile..." is Spanish for "and tell her...": not in the core.
 const APPROVE_CORE = new Set(['yes', 'si', 'sí', 'ok', 'okay', 'dale', 'approve', 'approved', 'confirm', 'confirmed', 'confirmo',
     'confirmado', 'proceed', 'adelante', 'hacelo', 'hazlo', 'yep', 'yeah', 'sure', 'claro', '👍', '👌', '✅']);
-const APPROVE_FILLER = new Set(['please', 'pls', 'por', 'favor', 'porfa', 'go', 'ahead', 'do', 'it', 'just', 'nomas', 'nomás',
+// "y" ("and") only joins words: "dale y agendalo" is yes, "y decile" is not.
+const APPROVE_FILLER = new Set(['y', 'please', 'pls', 'por', 'favor', 'porfa', 'go', 'ahead', 'do', 'it', 'just', 'nomas', 'nomás',
     'reservalo', 'resérvalo', 'reservala', 'resérvala', 'reserva', 'reservá', 'bookealo', 'agendalo', 'agéndalo',
     'mandalo', 'mándalo', 'envialo', 'envíalo', 'borralo', 'bórralo', 'pagalo', 'págalo',
     'mandale', 'mandáselo', 'mandaselo', 'decile', 'decíselo', 'deciselo', 'escribile']);
@@ -1722,6 +1723,8 @@ class ApprovalService {
         if (!chatId || message.metadata?.isSubAgent) return null;
         const text = typeof message.content === 'string' ? message.content.trim() : '';
         if (!text || text.startsWith('/') || text.length > 80) return null;
+        // A question ("y?", "dale?") asks something; it answers no card.
+        if (/[?¿]/.test(text)) return null;
         // Cheap test first: no card can take a reply that is not a yes or no word.
         if (!decisionWord(text) && !decisionWord(text, { toolName: 'cancel' })) return null;
 
@@ -1895,6 +1898,10 @@ class ApprovalService {
             // "cancelar" on an errand's card: he wants the errand gone, not
             // only this step (the card's own "no" text would ask him to say so).
             const errandId = row.tool_name === 'answerErrand' ? Number(row.args?.id) : NaN;
+            // His "no" to an errand's card is a decision: the errand acts on nothing by itself after it.
+            if (Number.isFinite(errandId)) {
+                try { this.agent?.errands?.ownerSaidNo?.(errandId); } catch { /* the sweep sees the denial too */ }
+            }
             const words = String(message?.content || '').trim();
             // A slash command ("/cancel <id>") answers the card only.
             if (Number.isFinite(errandId) && !words.startsWith('/') && CANCEL_ERRAND_RE.test(words) && typeof this.agent?.errands?.cancelFromCard === 'function') {

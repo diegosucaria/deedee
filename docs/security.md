@@ -268,7 +268,7 @@ buttons; the dashboard bell gets a notification.
 work from any of the owner's chats (web, his Telegram, his WhatsApp);
 the Approvals tab of the Brain page (`/brain?tab=approvals`; `/approvals`
 redirects there) lists every pending row. A plain reply of at most five words
-counts when every word is on a short list and one says yes (`yes`, `si`,
+counts when it asks nothing (no "?") and every word is on a short list and one says yes (`yes`, `si`,
 `ok`, `dale`, `confirmo`, `👍`, with fillers such as `por favor`,
 `reservalo` or `mandale`) or no (`no`, `nope`, `cancel`, `cancelar`, with fillers such as
 `gracias` or `dejalo`). "ok gracias" or "yes, send it tomorrow" go to the
