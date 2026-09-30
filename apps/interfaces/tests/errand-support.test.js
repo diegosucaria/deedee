@@ -52,6 +52,16 @@ describe('errand support in the WhatsApp service', () => {
         expect(wa.getChatHistory(jid, 10)[0].content).toBe('[Media: documentWithCaptionMessage]');
     });
 
+    test('a message in a chat with disappearing messages reads as what it wraps', () => {
+        const jid = '15550100@s.whatsapp.net';
+        store.db.prepare('INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data) VALUES (?, ?, ?, ?, ?, ?)').run('E1', jid, 0, 4000, '',
+            JSON.stringify({ key: { remoteJid: jid, id: 'E1', fromMe: false }, messageTimestamp: 4000, message: { ephemeralMessage: { message: { extendedTextMessage: { text: 'dale, jueves 10' } } } } }));
+        store.db.prepare('INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data) VALUES (?, ?, ?, ?, ?, ?)').run('E2', jid, 0, 4001, '',
+            JSON.stringify({ key: { remoteJid: jid, id: 'E2', fromMe: false }, messageTimestamp: 4001, message: { ephemeralMessage: { message: { documentMessage: { fileName: 'x.pdf' } } } } }));
+        const rows = wa.getChatHistory(jid, 10);
+        expect(rows.map(r => r.content)).toEqual(['dale, jueves 10', '[Media: documentMessage]']);
+    });
+
     test('style numbers come from his own one-to-one texts only, and hold no text', () => {
         for (let i = 0; i < 30; i++) insert(`O${i}`, '15550100@s.whatsapp.net', true, 2000 + i * 200, i % 3 === 0 ? 'tenes turno el jueves?' : 'dale');
         insert('G1', '120000000000001@g.us', true, 9000, '¿Esto es un grupo?');

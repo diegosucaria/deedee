@@ -1569,19 +1569,22 @@ class WhatsAppService {
 
         return rows.reverse().map(r => {
             const m = JSON.parse(r.data);
+            // A chat with disappearing messages wraps each one; read what is inside.
+            const outer = m.message || {};
+            const body = outer.ephemeralMessage?.message || outer.viewOnceMessage?.message || outer.viewOnceMessageV2?.message || outer;
 
             // Simplify for agent consumption
-            let content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+            let content = body.conversation || body.extendedTextMessage?.text || '';
             // The message's own kind, not a key WhatsApp adds beside it
             // (messageContextInfo comes first on most messages from a phone).
-            const msgType = Object.keys(m.message || {}).find(k => !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k))
-                || Object.keys(m.message || {})[0];
+            const msgType = Object.keys(body).find(k => !['messageContextInfo', 'senderKeyDistributionMessage'].includes(k))
+                || Object.keys(body)[0];
 
             if (!content) {
-                if (m.message?.audioMessage) content = '[Audio Message]';
-                else if (m.message?.imageMessage) content = `[Image: ${m.message.imageMessage.caption || ''}]`;
-                else if (m.message?.videoMessage) content = `[Video: ${m.message.videoMessage.caption || ''}]`;
-                else if (m.message?.stickerMessage) content = '[Sticker]';
+                if (body.audioMessage) content = '[Audio Message]';
+                else if (body.imageMessage) content = `[Image: ${body.imageMessage.caption || ''}]`;
+                else if (body.videoMessage) content = `[Video: ${body.videoMessage.caption || ''}]`;
+                else if (body.stickerMessage) content = '[Sticker]';
                 else content = `[Media: ${msgType}]`;
             }
 

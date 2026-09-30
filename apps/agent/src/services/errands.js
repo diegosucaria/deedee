@@ -229,6 +229,18 @@ function fmtSlots(slots, timeZone, lang = 'en') {
     }));
 }
 
+/**
+ * Is the slot inside his window? The window's hours hold on each day of its
+ * range: "Thursday or Friday, 9 to 12" never takes Thursday 17:00.
+ */
+function inWindow(errand, slot) {
+    if (!errand?.window_start || !errand?.window_end || !slot?.date || !slot?.time) return false;
+    const [d1, t1] = errand.window_start.split('T');
+    const [d2, t2] = errand.window_end.split('T');
+    if (slot.date < d1 || slot.date > d2) return false;
+    return t1 <= t2 ? (slot.time >= t1 && slot.time <= t2) : `${slot.date}T${slot.time}` >= errand.window_start && `${slot.date}T${slot.time}` <= errand.window_end;
+}
+
 /** "jue 08/10 de 09:00 a 12:00": his window, in his language. */
 function fmtWindow(errand, timeZone, lang = 'en') {
     const day = fmtSlot({ date: errand.window_start.slice(0, 10), time: null }, timeZone, lang);
@@ -1616,8 +1628,7 @@ Answer in JSON.`;
         if (!errand.auto_ok) return false;
         if (zonedMs(slot.date, slot.time, this.timeZone()) < this.clock() + MIN_LEAD_MS) return false;
         if (errand.mode === 'window' && errand.window_start && errand.window_end) {
-            const at = `${slot.date}T${slot.time}`;
-            if (at < errand.window_start || at > errand.window_end) return false;
+            if (!inWindow(errand, slot)) return false;
             return this._isFree(errand.duration_min, slot, { errand });
         }
         if (!errand.slot_owned || !sameSlot(slot, errand.slot)) return false;
@@ -1654,7 +1665,9 @@ Answer in JSON.`;
         // liberó" asks him (he may have made other plans), never books by itself.
         if (form.kind === 'decline') {
             // Her earlier yes that waited for 08:00 no longer stands.
-            this.db.updateErrand(errand.id, { auto_ok: 0, auto_why: 'her_no', offer: null, ...(errand.next_action?.owner ? {} : { next_action: null, next_check_at: null }) });
+            // Her yes she now withdrew goes everywhere: its own record, and the copy riding on his step.
+            const mineStep = errand.next_action?.owner ? (({ heldYes, ...rest }) => rest)(errand.next_action) : null;
+            this.db.updateErrand(errand.id, { auto_ok: 0, auto_why: 'her_no', offer: null, held_yes: null, ...(mineStep ? { next_action: mineStep } : { next_action: null, next_check_at: null }) });
             return this._askNote(this.db.getErrand(errand.id) || errand, t.noSlot(name, errand.id));
         }
         if (form.kind === 'question') return this._askNote(errand, t.asked(name, errand.id, form.summary), { taint: true });
@@ -1698,7 +1711,9 @@ Answer in JSON.`;
             return this._askAccept(fresh, [{ date: args.date, time: args.time }], quietHold ? this._t(fresh).whyNight : this._t(fresh).whySoon);
         }
         if (due > now) {
-            this.db.updateErrand(fresh.id, { next_action: { ...args, step }, next_check_at: new Date(due).toISOString(), offer: { date: args.date, time: args.time } });
+            // Her yes is kept on its own too (held_yes): notes and his steps may clear next_action.
+            const yes = args.action === 'accept' ? { date: args.date, time: args.time } : null;
+            this.db.updateErrand(fresh.id, { next_action: { ...args, step }, next_check_at: new Date(due).toISOString(), offer: { date: args.date, time: args.time }, ...(yes ? { held_yes: yes } : {}) });
             this._event(fresh.id, 'decided', { action: args.action, step, slot: { date: args.date, time: args.time }, waitsUntil: new Date(due).toISOString() });
             return null;
         }
@@ -1760,8 +1775,7 @@ Answer in JSON.`;
         const cal = free === 'busy' ? t.whyBusy : free === 'unknown' ? t.whyCalendar : null;
         const plus = (base) => (cal ? t.whyAnd(base, cal) : base);
         if (errand.mode === 'window' && errand.window_start && errand.window_end) {
-            const at = `${slot.date}T${slot.time}`;
-            if (at < errand.window_start || at > errand.window_end) return plus(t.whyOutside(fmtWindow(errand, tz, lang)));
+            if (!inWindow(errand, slot)) return plus(t.whyOutside(fmtWindow(errand, tz, lang)));
             return cal || (errand.next_action?.owner || this._hisPendingCard(errand) ? t.whyStepWaits : errand.auto_why === 'her_no' ? t.whyHerNo : t.whyInvolved);
         }
         // A step of his still waits: that is why it asks.
@@ -1881,7 +1895,9 @@ Answer in JSON.`;
             card: { question: t.cardQuestion(name, fmtSlot(best, tz, lang)), detail, lang, denied: t.cardDenied(name) }
         });
         const updated = this.db.updateErrand(errand.id, {
-            state: 'waiting_owner', offer: best, pending_approval_id: res.id || null, next_action: null, next_check_at: null
+            state: 'waiting_owner', offer: best, pending_approval_id: res.id || null, next_action: null, next_check_at: null,
+            // A newer offer of hers replaces her held yes (the card named it).
+            ...(heldYes ? { held_yes: null } : {})
         });
         this._event(errand.id, 'asked', { card: res.id || null, slots, offer: best });
         return updated;
@@ -1926,7 +1942,7 @@ Answer in JSON.`;
      */
     _heldYes(errand) {
         const n = errand?.next_action;
-        const yes = n && !n.owner && n.action === 'accept' ? n : n?.heldYes;
+        const yes = n && !n.owner && n.action === 'accept' ? n : (n?.heldYes || errand?.held_yes);
         return yes && validDate(yes.date) && normTime(yes.time) ? { date: yes.date, time: normTime(yes.time) } : null;
     }
 
@@ -2020,8 +2036,9 @@ Answer in JSON.`;
         const name = safeName(errand.contact_name);
         // What did not go out: his step (named), or a slot it was about to accept.
         const mine = waiting?.owner ? this._stepName(errand, waiting) : (dropped.own ? dropped.step : null);
-        const held = mine ? null : this._heldAccept(updated || errand);
-        const tail = mine ? t.heldStep(mine) : held ? t.heldAcceptNote(name, fmtSlot(held, this.timeZone(), this._lang(errand))) : (dropped.own || waiting?.owner) ? t.notSent : '';
+        const held = this._heldYes({ next_action: waiting, held_yes: (updated || errand).held_yes }) || this._heldAccept(updated || errand);
+        const tail = (mine ? t.heldStep(mine) : (!held && (dropped.own || waiting?.owner)) ? t.notSent : '')
+            + (held ? t.heldAcceptNote(name, fmtSlot(held, this.timeZone(), this._lang(errand))) : '');
         if (note) await this._notify(errand, t.paused(name, errand.id, why) + tail);
         return updated;
     }
@@ -2194,8 +2211,11 @@ Answer in JSON.`;
                 await this._pause(errand, t.whyDraft);
                 return { success: false, error: 'No good message; paused.' };
             }
-            if (notify) await this._notify(errand, t.failDraft(name));
-            return { success: false, error: `I could not write a good message (${d.problems.join('; ')}). Nothing was sent.`, ownerLine: t.failDraft(name) };
+            const yes = this._heldYes(errand) || (args.heldYes && validDate(args.heldYes.date) && normTime(args.heldYes.time) ? { date: args.heldYes.date, time: normTime(args.heldYes.time) } : null);
+            const line = t.failDraft(name) + (yes ? t.heldAcceptNote(name, fmtSlot(yes, tz, lang)) : '');
+            if (yes) this.db.updateErrand(errand.id, { held_yes: yes });
+            if (notify) await this._notify(errand, line);
+            return { success: false, error: `I could not write a good message (${d.problems.join('; ')}). Nothing was sent.`, ownerLine: line };
         }
         if (this._dryRun()) {
             this._event(errand.id, 'refused', { step: voiceStep, dryRun: true });
@@ -2216,8 +2236,10 @@ Answer in JSON.`;
         const out = await this._send(current, d.parts, { auto });
         const said = clip(d.parts.join(' '), 120);
         if (!out.ok) {
+            const yes = this._heldYes(current) || (args.heldYes && validDate(args.heldYes.date) && normTime(args.heldYes.time) ? { date: args.heldYes.date, time: normTime(args.heldYes.time) } : null);
+            if (yes) this.db.updateErrand(current.id, { held_yes: yes });
             await this._pause(current, t.whyRefused, { note: !live });
-            return { success: false, error: `WhatsApp did not take the message to ${name}. Errand #${errand.id} is paused. Do not retry it before checking the chat.`, ownerLine: t.paused(name, errand.id, t.whyRefused) };
+            return { success: false, error: `WhatsApp did not take the message to ${name}. Errand #${errand.id} is paused. Do not retry it before checking the chat.`, ownerLine: t.paused(name, errand.id, t.whyRefused) + (yes ? t.heldAcceptNote(name, fmtSlot(yes, tz, lang)) : '') };
         }
 
         if (args.action === 'accept') {
@@ -2244,13 +2266,11 @@ Answer in JSON.`;
         // longer holds her chat, and no "has not answered" note can follow.
         // Her yes that waited for 08:00 (an automatic accept) is not dropped
         // without a word: his line says it is not on his calendar and asks.
-        const pendingYes = errand.next_action && !errand.next_action.owner && errand.next_action.action === 'accept' ? errand.next_action : args.heldYes;
-        const heldYes = args.action === 'say' && pendingYes && validDate(pendingYes.date) && normTime(pendingYes.time)
-            ? { date: pendingYes.date, time: normTime(pendingYes.time) } : null;
+        const heldYes = args.action === 'say' ? (this._heldYes(errand) || (args.heldYes && validDate(args.heldYes.date) && normTime(args.heldYes.time) ? { date: args.heldYes.date, time: normTime(args.heldYes.time) } : null)) : null;
         // propose or say: back to waiting for them. After a free-form "say"
         // the slot on the table is no longer known.
         const moved = args.action === 'propose'
-            ? { slot, slot_owned: 1, time_owned: 1, auto_ok: 1, mode: 'ask', window_start: null, window_end: null, expires_at: new Date(this._endMs(Date.parse(errand.created_at), slot.date, zonedMs(slot.date, slot.time, tz))).toISOString() }
+            ? { slot, slot_owned: 1, time_owned: 1, auto_ok: 1, mode: 'ask', window_start: null, window_end: null, held_yes: null, expires_at: new Date(this._endMs(Date.parse(errand.created_at), slot.date, zonedMs(slot.date, slot.time, tz))).toISOString() }
             // His own words: the errand does nothing by itself until a slot of his goes out.
             : { slot: null, slot_owned: 0, time_owned: 0, auto_ok: 0 };
         this.db.updateErrand(errand.id, { state: heldYes ? 'waiting_owner' : 'waiting_contact', offer: heldYes, next_action: null, next_check_at: null, ...moved });
@@ -2271,9 +2291,13 @@ Answer in JSON.`;
         const due = this.clock() + (auto ? LIMITS.minGapMs : 0);
         // Her yes that waited for 08:00 rides along with his step, so it is not lost when his step runs.
         const prev = errand.next_action;
-        const heldYes = !auto && prev && !prev.owner && prev.action === 'accept' && prev.date && prev.time
-            ? { date: prev.date, time: prev.time } : (!auto ? (prev?.heldYes || args.heldYes || null) : null);
+        const found = !auto && prev && !prev.owner && prev.action === 'accept' && prev.date && prev.time
+            ? { date: prev.date, time: prev.time } : (!auto ? (prev?.heldYes || errand.held_yes || args.heldYes || null) : null);
+        // A step of his that overrides her yes (another slot, a no) ends it; words or accepting that slot keep it.
+        const keeps = found && (args.action === 'say' || (args.action === 'accept' && sameSlot({ date: args.date, time: normTime(args.time) }, { date: found.date, time: normTime(found.time) })));
+        const heldYes = keeps ? found : null;
         this.db.updateErrand(errand.id, {
+            ...(found && !keeps ? { held_yes: null } : {}),
             next_action: auto ? { ...args, step } : { ...args, owner: true, ...(heldYes ? { heldYes } : {}) },
             next_check_at: new Date(due).toISOString(),
             // His own step waits: nothing is accepted over it.
@@ -2430,7 +2454,9 @@ Answer in JSON.`;
         let history = [];
         try { history = await this._history(errand.contact_jid, 20); } catch { return; }
         if (this._ownerWrote(errand, history)) return this._takeover(errand);
-        const after = Math.max(Date.parse(errand.last_contact_at || 0) || 0, Date.parse(errand.created_at) || 0);
+        // A file or pin she sent just before her words carries an older time
+        // than the hook's arrival stamp: look ten minutes back (known() dedupes).
+        const after = Math.max((Date.parse(errand.last_contact_at || 0) || 0) - 10 * 60e3, Date.parse(errand.created_at) || 0);
         const norm = (x) => String(x || '').replace(/\s+/g, ' ').trim();
         const seen = this.db.listErrandEvents(errand.id, { newest: 300 })
             .filter(e => e.kind === 'received' && e.detail)
@@ -2439,8 +2465,8 @@ Answer in JSON.`;
             const content = norm(m.content);
             // Files, pins and contact cards never come through the hook: only
             // the catch-up's own stored copy (same line, same time) knows one.
-            if (/^\[Media: /.test(content)) return seen.some(s => s.ts === Number(m.timestamp) && s.text === content);
-            const isMedia = /^\[(?:Audio|Image|Video|Sticker)/.test(content);
+            if (/^\[(?:Media: |Video)/.test(content)) return seen.some(s => s.ts === Number(m.timestamp) && s.text === content);
+            const isMedia = /^\[(?:Audio|Image|Sticker)/.test(content);
             return seen.some(s => Math.abs(s.ts - Number(m.timestamp)) < 10 * 60e3
                 && (isMedia ? (s.media || s.text.startsWith(content)) : (s.text === content || (content && s.text.startsWith(content)))));
         };
@@ -2479,8 +2505,9 @@ Answer in JSON.`;
             }
             if (e.offer) bits.push(`on the table: ${fmtSlot(e.offer, tz)} (date ${e.offer.date}, time ${e.offer.time})`);
             const held = this._heldYes(e);
-            if (held && !e.next_action?.owner) bits.push(`they agreed to ${held.date} ${held.time}; the reply and the booking go out by themselves at ${e.next_check_at ? localParts(Date.parse(e.next_check_at), tz).time : 'the next check'}`);
-            else if (held) bits.push(`they agreed to ${held.date} ${held.time}; it is not booked, and a step of his waits`);
+            const selfRun = e.next_action && !e.next_action.owner && e.next_action.action === 'accept';
+            if (held && selfRun) bits.push(`they agreed to ${held.date} ${held.time}; the reply and the booking go out by themselves at ${e.next_check_at ? localParts(Date.parse(e.next_check_at), tz).time : 'the next check'}`);
+            else if (held) bits.push(`they agreed to ${held.date} ${held.time}; it is not booked yet: accepting it is his call`);
             const read = this.db.listErrandEvents(e.id, { newest: 30 }).filter(ev => ev.kind === 'read' && ev.detail?.slots?.length).pop();
             if (read && read.detail.slots.length > 1) bits.push(`all slots offered: ${read.detail.slots.map(s => `${s.date} ${s.time}`).join(', ')}`);
             if (e.slot) bits.push(`asked for: ${fmtSlot(e.slot, tz)}`);

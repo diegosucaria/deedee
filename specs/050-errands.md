@@ -27,6 +27,7 @@ Two modes, for `book` only:
   for. Any other slot is his choice.
 - `window`: the owner gives a window ("any free slot Thursday 9 to 12").
   Deedee accepts an offer inside it on her own when his calendar is free.
+  A window over several days means those hours on each day.
 
 `send: false` only drafts the first message and shows it. Nothing goes out.
 
@@ -297,7 +298,7 @@ own.
 
 ## 12. Review
 
-Sixteen review rounds (security, the owner's real flows replayed message by
+Seventeen review rounds (security, the owner's real flows replayed message by
 message, regressions, and a check that each fix held) found real faults.
 Each fix has a test named after the fault in
 `apps/agent/tests/errands.test.js` ("review round one", "review round

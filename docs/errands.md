@@ -83,8 +83,11 @@ card or a note (a voice note whose audio never arrived counts too). A file,
 a location or a contact card she sends counts as her answer; reactions,
 missed calls and edits do not. News or
 a photo in the same burst as an answer reaches him in a note of its own.
-Her yes that waits for 08:00 stays in view: the model's context says so,
-and words of his to her meanwhile do not drop it silently. While a step he asked for waits for the contact's
+Her yes that waits for 08:00 stays in view (`held_yes`): the model's context
+says so, every note that drops it names it, and words of his to her
+meanwhile do not drop it silently. Her "no tengo lugar", her newer offer, or
+a step of his that picks another slot ends it. A window over several days
+means those hours on each day. While a step he asked for waits for the contact's
 new words to be read, or waits on a card of his (or that card lapsed or was
 dropped, and nothing went out since), the errand accepts nothing on its own;
 a card, note or pause that drops his step names it. An `ask` errand ends on her answer,
