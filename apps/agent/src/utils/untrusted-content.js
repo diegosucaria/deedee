@@ -530,11 +530,14 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
         // Metadata holds the contact's writing style, which autopilot drafts
         // and partner greetings follow when they write as the owner.
         // Errands trust a People name as the owner's own word for who
-        // someone is, so a new name asks too.
+        // someone is, so a new name asks too. So do a relationship and notes:
+        // searchPeople finds a row by them, and his "mi peluquero" must not
+        // lead to the row a contact chose.
         case 'updatePerson': {
             const u = asObject(a.updates) || {};
             if (u.phone !== undefined) return "change a contact's phone number";
             if (u.name !== undefined) return 'rename a contact';
+            if (u.relationship !== undefined || u.notes !== undefined) return 'change who a contact is (relationship or notes)';
             return u.metadata !== undefined ? "change a contact's saved profile" : null;
         }
         // A plain GET (curl/wget, no pipe, redirect, upload or output file)
