@@ -271,6 +271,40 @@ class DeliveryService {
     }
 
     /**
+     * Take a waiting row out of line: it must not go out any more (a card
+     * whose question is settled). It is marked dead, with no "undelivered"
+     * alert: nothing failed.
+     * @param {string} id
+     * @param {string} why
+     * @returns {boolean} true when a waiting row was retired
+     */
+    retire(id, why) {
+        try {
+            if (!id || !this.hasLedger() || typeof this.db.getOutboxRow !== 'function' || typeof this.db.deadLetterOutbox !== 'function') return false;
+            const row = this.db.getOutboxRow(id);
+            if (!row || (row.status !== 'pending' && row.status !== 'failed')) return false;
+            this.db.deadLetterOutbox(row.id, why);
+            console.log(`[Delivery] ${row.kind} row ${row.id} retired before it went out: ${why}.`);
+            return true;
+        } catch (err) {
+            console.warn('[Delivery] Could not retire a queued row:', err.message);
+            return false;
+        }
+    }
+
+    /**
+     * An approval card whose question is settled: answered, withdrawn,
+     * replaced or expired. Sent late, it would ask for a yes that lands on
+     * whatever card asks now. Lines about a settled card still go out.
+     */
+    _settledCard(row) {
+        if (row.kind !== 'approval' || row.payload?.metadata?.approval?.status !== 'pending') return false;
+        const id = /^approval:(.+)$/.exec(String(row.origin || ''))?.[1];
+        if (!id || typeof this.db.getPendingConfirmation !== 'function') return false;
+        try { return this.db.getPendingConfirmation(id)?.status !== 'pending'; } catch { return false; }
+    }
+
+    /**
      * Send one notification: immediate attempt, ledger row, retries.
      * @param {string} kind - reply|reminder|job_notification|system_alert|ask_user|watcher
      * @param {string} channel - whatsapp|telegram|web|slack (a ':session' suffix is allowed)
@@ -397,6 +431,11 @@ class DeliveryService {
         }
         this._inFlight.add(row.id);
         try {
+            if (this._settledCard(row)) {
+                const dead = this.db.deadLetterOutbox(row.id, 'the card no longer waits for an answer');
+                console.log(`[Delivery] Card row ${row.id} not sent: its question is settled.`);
+                return { delivered: false, id: row.id, status: 'dead', retired: true, error: dead?.last_error };
+            }
             if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) {
                 const dead = this.db.deadLetterOutbox(row.id, 'expired before delivery');
                 this._notifyDead(dead);

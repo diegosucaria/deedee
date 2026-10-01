@@ -56,6 +56,54 @@ const SWEEP_MS = 60e3;
 // How long a check step's summary still describes the booking it checked.
 const PREVIEW_TTL_MS = 30 * 60e3;
 const PREVIEW_MAX = 50;
+// How long a queued message can still go out after it was made, when the
+// ledger does not say (its retries take about 2.5 h).
+const LATE_DELIVERY_MS = 3 * 3600e3;
+// Cards whose delivery time is known only from deliver() (no ledger row).
+const CARD_SENT_MAX = 500;
+
+/**
+ * The id of a card's own message, which is also its delivery row: one per
+ * card, made from the row, so a reader finds the delivery from the card alone.
+ */
+function cardMessageId(row) {
+    return `card-${row.id}-${Date.parse(row.created_at) || 0}`;
+}
+
+/** The call writes to someone (guardian-policy's send_message category). */
+function writesToSomeone(toolName, args) {
+    const name = String(toolName || '');
+    if (name === 'sendMessage' || name === 'sendSlackMessage') return true;
+    if (name === 'startErrand') return args?.send !== false;
+    if (name === 'answerErrand') return String(args?.action || '') !== 'cancel';
+    return false;
+}
+
+function slotTime(value) {
+    const m = /^(\d{1,2}):(\d{2})/.exec(String(value ?? '').trim());
+    return m ? `${m[1].padStart(2, '0')}:${m[2]}` : String(value ?? '').trim();
+}
+
+/** The same step of the same errand: same id and action, and the same slot or words. */
+function sameErrandStep(a, b) {
+    const x = a || {};
+    const y = b || {};
+    const action = String(x.action || '');
+    if (Number(x.id) !== Number(y.id) || action !== String(y.action || '')) return false;
+    if (action === 'accept' || action === 'propose') {
+        return String(x.date ?? '').trim() === String(y.date ?? '').trim() && slotTime(x.time) === slotTime(y.time);
+    }
+    if (action === 'say') {
+        const words = (t) => String(t ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+        return words(x.text) === words(y.text);
+    }
+    return true;
+}
+
+/** What the model hears when a card already asks for the very call it made. */
+function sameStepInfo(id) {
+    return `This exact step already waits on card ${id}; calling it again does not answer the card. Do not call it again. Tell him, in his language, to reply /confirm ${id} to do it, or /cancel ${id} to drop it.`;
+}
 
 /**
  * The arguments a stored summary was written for, without `confirm`. The
@@ -538,6 +586,8 @@ class ApprovalService {
         this._recentPreviews = new Map();
         // chat id -> the card his bare yes or no just did not reach (undecidedCard).
         this._undecided = new Map();
+        // card id -> when deliver() said it went out, for a card with no ledger row.
+        this._cardSent = new Map();
     }
 
     /** Remember what a two-step check step said it would do. */
@@ -715,6 +765,40 @@ class ApprovalService {
         }
     }
 
+    /** A waiting card for this very step of this errand, in any chat. */
+    _pendingErrandStep(args) {
+        if (!this.hasStore()) return null;
+        try {
+            return this.db.listPendingConfirmations().find(r => r.tool_name === 'answerErrand' && sameErrandStep(r.args, args)) || null;
+        } catch (e) {
+            console.warn('[Approvals] pending lookup failed:', e.message);
+            return null;
+        }
+    }
+
+    /**
+     * His own message is a bare yes or no, a card waits in this chat, and the
+     * call is that card's own action or writes to someone. Then the word may
+     * be his answer to the card, which intercept() did not take: the call must
+     * not run on it. Words that say what to do ("cancel it") carry their own
+     * meaning and are not bare. Returns { card, same } or null.
+     */
+    async _cardHisWordMissed(message, kind, toolName, args, rule) {
+        if (kind !== 'chat' || continuationOf(message)) return null;
+        const text = typeof message?.content === 'string' ? message.content.trim() : '';
+        if (!text || text.startsWith('/') || text.length > 80) return null;
+        if (!decisionWord(text)) return null;
+        let waiting = [];
+        try { waiting = await this.pendingHere(message); } catch { waiting = []; }
+        if (waiting.length === 0) return null;
+        const key = stepKey(toolName, args);
+        const same = waiting.find(r => r.tool_name === toolName
+            && (toolName === 'answerErrand' ? sameErrandStep(r.args, args) : stepKey(r.tool_name, r.args) === key));
+        if (same) return { card: same, same: true };
+        if (!writesToSomeone(toolName, args) && !OUTWARD_RULES.has(String(rule || ''))) return null;
+        return { card: waiting[waiting.length - 1], same: false };
+    }
+
     /**
      * The action is running, or a newer card asks for it: an older waiting
      * card must not run it a second time on a later "ok". It is marked expired.
@@ -724,6 +808,7 @@ class ApprovalService {
             try {
                 const done = this.db.decidePendingConfirmation(r.id, 'expired', { via: 'superseded' });
                 if (!done) continue;
+                this._retireCard(done);
                 console.log(`[Approvals] ${r.id} (${r.tool_name}) superseded: ${why}.`);
                 this._broadcast({ id: r.id, status: 'expired', chatId: r.reply_chat_id, toolName: r.tool_name });
                 // The card sits in a chat he reads: say it is settled, or it keeps
@@ -902,6 +987,21 @@ class ApprovalService {
         }
         if (guard.preview) return { run: true };
 
+        // His bare yes or no while a card waits in this chat, and no card took
+        // it (intercept): it may be meant for that card. It never runs the
+        // card's own action and never writes to anyone, asked or not. Only
+        // the card's id does that.
+        const missed = await this._cardHisWordMissed(message, kind, toolName, args, guard.rule);
+        if (missed) {
+            const row = this._record({
+                ...base, outcome: 'escalated_duplicate', decidedBy: 'owner', approvalId: missed.card.id,
+                reason: 'His short yes or no did not decide the card that waits in his chat.'
+            });
+            const info = missed.same ? sameStepInfo(missed.card.id)
+                : `Nothing ran: his short yes or no did not decide card ${missed.card.id}, and it does not stand for this call. Do not call it again on that answer. If he meant the card, tell him, in his language, to reply /confirm ${missed.card.id} or /cancel ${missed.card.id}. If he meant something else, ask him to say it in his own words.`;
+            return { run: false, status: 'paused', decisionId: row?.id, approvalId: missed.card.id, result: { info } };
+        }
+
         let hits = { floor: [], additions: [] };
         try {
             hits = matchAlwaysAsk(toolName, args, { alwaysAsk: settings.always_ask, reason: guard.message || '', rule: guard.rule || '', serverName });
@@ -932,6 +1032,16 @@ class ApprovalService {
         }
         const cover = ownerAsked ? consentCover(guard.rule, { floorHit, historyUntrusted })
             : granted ? consentCover(guard.rule, { floorHit, historyUntrusted: false }) : 'none';
+        // His word on an errand while its card for that very step waits: the
+        // card is how he answers it. Running the step here would send it
+        // without the card, on whatever word the model read as a yes.
+        if (cover === 'run' && ownerAsked && toolName === 'answerErrand') {
+            const card = this._pendingErrandStep(args);
+            if (card) {
+                const row = this._record({ ...withHits, outcome: 'escalated_duplicate', decidedBy: 'owner', approvalId: card.id, reason: 'A card for this errand step already waits for him.' });
+                return { run: false, status: 'paused', decisionId: row?.id, approvalId: card.id, result: { info: sameStepInfo(card.id) } };
+            }
+        }
         if (cover === 'run') {
             const row = granted
                 ? this._record({ ...withHits, outcome: 'owner_instructed', decidedBy: 'owner_grant', reason: `A step of errand #${grant.errandId}, inside the scope the owner set when he started it.` })
@@ -975,7 +1085,7 @@ class ApprovalService {
                 // card can do it, so he gets its id.
                 const newRun = !!run?.id && run.id !== existing.origin_meta?.cardRunId;
                 if (kind === 'chat' && !continuationOf(message) && (newRun || (await this._stillAsking(existing, message)) === false) && (await this._ownerTypedRun(message, kind))) {
-                    return { run: false, status: 'paused', decisionId: row?.id, approvalId: existing.id, result: { info: `This exact step already waits on card ${existing.id}; calling it again does not answer the card. Do not call it again. Tell him, in his language, to reply /confirm ${existing.id} to do it, or /cancel ${existing.id} to drop it.` } };
+                    return { run: false, status: 'paused', decisionId: row?.id, approvalId: existing.id, result: { info: sameStepInfo(existing.id) } };
                 }
                 // Our own rule text, never the stored card reason: that one can
                 // carry the guardian's words, which quote what a third party wrote.
@@ -1401,6 +1511,9 @@ class ApprovalService {
             return false;
         }
         if (!done) return false;
+        // Still queued, it would reach him after the card that replaced it,
+        // and his yes to it would decide that newer card.
+        this._retireCard(done);
         console.log(`[Approvals] ${id} (${done.tool_name}) withdrawn: ${why}.`);
         this._broadcast({ id, status: 'expired', chatId: done.reply_chat_id, toolName: done.tool_name });
         // Quiet: a newer card or a note already tells him what changed.
@@ -1500,6 +1613,8 @@ class ApprovalService {
             }
         }
         const outgoing = createAssistantMessage(this.buildCard(row, { others, origin: describeOrigin(message), ttlMs }));
+        // Its delivery row carries this id: a bare yes reads there whether the card reached him.
+        outgoing.id = cardMessageId(row);
         outgoing.source = route.replyChannel;
         outgoing.metadata = {
             chatId: route.replyChatId,
@@ -1518,6 +1633,12 @@ class ApprovalService {
             immediateFallback: route.mode === 'deferred'
         });
         const delivered = !!outcome.delivered;
+        // No ledger row to read later (a test's delivery, a full disk): keep
+        // the time it went out here. Through the other channel it is not in this chat.
+        if (delivered && !outcome.fallback) {
+            this._cardSent.set(row.id, Date.now());
+            while (this._cardSent.size > CARD_SENT_MAX) this._cardSent.delete(this._cardSent.keys().next().value);
+        }
         if (!delivered && !outcome.queued) {
             console.error(`[Approvals] Card for ${row.id} (${toolName}) could not be delivered: ${outcome.error || outcome.status}`);
         } else if (!delivered) {
@@ -1734,7 +1855,9 @@ class ApprovalService {
         // card only while the card is still that question (_stillAsking);
         // otherwise the model reads the word in its context: after he asks
         // for a draft, "dale, mandalo" is about the draft, never a job's card.
-        const asking = await this._stillAsking(pending[0], message);
+        // A card that had not reached this chat before his word did (still
+        // queued, or sent through the other channel) is not what he answers.
+        const asking = this._cardReached(pending[0], message) ? await this._stillAsking(pending[0], message) : false;
         // Unknown history: an errand's card still asks for proof ("dale" is
         // his everyday word); any other card keeps the rule of one card here.
         if (asking === false || (asking === null && pending[0].origin_meta?.errandId !== undefined)) {
@@ -1764,6 +1887,8 @@ class ApprovalService {
      * card or a question. Anything else (his words to the model, a reply to
      * them, a note, a question that lapsed, another card) may be what his
      * word answers. His WhatsApp chat can carry several ids; all count.
+     * Order is delivery order: a message made before the card that the
+     * ledger sent after the card was made counts too.
      * true, false, or null when the history cannot be read.
      */
     async _stillAsking(row, message) {
@@ -1774,7 +1899,11 @@ class ApprovalService {
             if (splitChannel(message?.source).channel === 'whatsapp' || splitChannel(row.reply_channel).channel === 'whatsapp') {
                 try { ownerIds = [...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { ownerIds = []; }
             }
-            const { rows, more } = this.db.listChatMessagesSince([row.reply_chat_id, chatId, ...ownerIds], row.created_at, { excludeId: message?.id || null });
+            const created = Date.parse(row.created_at);
+            if (!Number.isFinite(created)) return null;
+            // A message queued before the card can still go out after it: look back over the ledger's retries.
+            const from = new Date(created - this._lateSpanMs()).toISOString();
+            const { rows, more } = this.db.listChatMessagesSince([row.reply_chat_id, chatId, ...ownerIds], from, { excludeId: message?.id || null, limit: 200 });
             if (more) return false;
             // A Telegram chat keeps no copy of a job's note or a reminder; the
             // delivery ledger does. Anything it took there after the card, but
@@ -1783,6 +1912,7 @@ class ApprovalService {
                 && this.db.listOutboxSince([row.reply_chat_id, chatId], row.created_at).some(d => d.origin !== `approval:${row.id}`)) return false;
             const runId = row.origin_meta?.cardRunId || null;
             for (const m of rows) {
+                if (!this._cameAfter(m, created)) continue;
                 const meta = m.metadata || {};
                 if (m.role === 'user') {
                     if (meta.answeredCard || meta.answeredQuestion) continue;
@@ -1805,9 +1935,63 @@ class ApprovalService {
     }
 
     /**
+     * When the card reached the chat that holds it, in ms, or null while it
+     * has not: its delivery row says, else what deliver() reported. A card
+     * that went out only through the other channel is not in this chat.
+     */
+    _cardSentAt(row) {
+        let out = null;
+        try { out = typeof this.db?.getOutboxRow === 'function' ? this.db.getOutboxRow(cardMessageId(row)) : null; } catch { out = null; }
+        if (out) {
+            if (out.status !== 'sent' || (out.delivered_via && out.delivered_via !== out.channel)) return null;
+            const at = Date.parse(out.sent_at);
+            return Number.isFinite(at) ? at : null;
+        }
+        return this._cardSent.get(row.id) ?? null;
+    }
+
+    /** Did the card reach him before his message came in? A time from his client cannot be later than now. */
+    _cardReached(row, message) {
+        const sentAt = this._cardSentAt(row);
+        if (sentAt === null) return false;
+        const now = Date.now();
+        const came = Date.parse(message?.timestamp);
+        return sentAt <= (Number.isFinite(came) ? Math.min(came, now) : now);
+    }
+
+    /**
+     * Did this chat row come after the card was made? Saved after it, or
+     * saved before it and sent by the ledger after it (a queued reply, a
+     * card that waited): he read it after the card either way.
+     */
+    _cameAfter(m, created) {
+        if (!(Date.parse(m.timestamp) < created)) return true;
+        if (m.role !== 'assistant' || typeof this.db.getOutboxRow !== 'function') return false;
+        const out = this.db.getOutboxRow(m.id);
+        return !!out && out.status === 'sent' && Date.parse(out.sent_at) >= created;
+    }
+
+    _lateSpanMs() {
+        try {
+            const span = this._delivery().retrySpanMs?.();
+            if (Number.isFinite(span) && span > 0) return span;
+        } catch { /* the default below */ }
+        return LATE_DELIVERY_MS;
+    }
+
+    /** A settled card's delivery that still waits in the ledger never goes out. */
+    _retireCard(row) {
+        if (!row?.id) return;
+        this._cardSent.delete(row.id);
+        try { this._delivery().retire?.(cardMessageId(row), 'the card no longer waits for an answer'); } catch (e) {
+            console.warn(`[Approvals] could not retire the delivery of ${row.id}: ${e.message}`);
+        }
+    }
+
+    /**
      * The card his bare yes or no just did not reach (other messages came
-     * after it), for the model's turn context: the model cannot approve it,
-     * but it can tell him how. Read once.
+     * after it, or it had not reached him yet), for the model's turn
+     * context: the model cannot approve it, but it can tell him how. Read once.
      */
     undecidedCard(message) {
         const chatId = message?.metadata?.chatId;
@@ -1891,6 +2075,8 @@ class ApprovalService {
             return { handled: false, error: why, status: existing?.status || 'missing' };
         }
         console.log(`[Approvals] ${row.id} (${row.tool_name}) ${decision} via ${via}.`);
+        // Decided elsewhere (the web, /confirm) while its card still waited in the queue.
+        this._retireCard(row);
         this._broadcast({ id: row.id, status: decision, chatId: row.reply_chat_id, toolName: row.tool_name });
 
         if (decision === 'denied') {
@@ -2034,6 +2220,7 @@ class ApprovalService {
         let rows = [];
         try { rows = this.db.expirePendingConfirmations(); } catch (e) { console.error('[Approvals] sweep failed:', e.message); return []; }
         for (const row of rows) {
+            this._retireCard(row);
             console.log(`[Approvals] ${row.id} (${row.tool_name}) expired without an answer.`);
             this._broadcast({ id: row.id, status: 'expired', chatId: row.reply_chat_id, toolName: row.tool_name });
         }
