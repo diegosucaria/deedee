@@ -1321,6 +1321,13 @@ class ApprovalService {
                 // not leave the errand's message check without his words.
                 const typed = cardTypedText(message);
                 if (typed) extraMeta.typed = typed;
+                // A start keeps his whole typed ask (his earlier line, Deedee's question, this line).
+                if (typed && toolName === 'startErrand' && typeof this.agent?.errands?._typedAsk === 'function') {
+                    try {
+                        const lines = await this.agent.errands._typedAsk(message, { contact: args?.contact });
+                        if (Array.isArray(lines) && lines.length > 0) extraMeta.typedAsk = lines;
+                    } catch { /* the one line is enough */ }
+                }
             }
         }
         const paused = await this.request({
@@ -1718,6 +1725,10 @@ class ApprovalService {
         if (extraMeta?.ownerChat === true) {
             originMeta.ownerChat = true;
             if (typeof extraMeta.typed === 'string' && extraMeta.typed.trim()) originMeta.typed = truncate(extraMeta.typed.trim(), CARD_TYPED_CHARS);
+            if (Array.isArray(extraMeta.typedAsk)) {
+                const lines = extraMeta.typedAsk.filter(x => typeof x === 'string' && x.trim()).slice(-3).map(x => truncate(x.trim(), CARD_TYPED_CHARS));
+                if (lines.length > 0) originMeta.typedAsk = lines;
+            }
         }
         // The run that raised the card: its own reply after the card does not
         // stop a bare yes from deciding it (see _stillAsking).

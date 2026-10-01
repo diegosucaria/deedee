@@ -221,11 +221,15 @@ Code enforces these, not the prompt.
    filter only; they are not extended further.
 4b. **The message check reads the meaning, in any language.** Before any
    words he has not seen go out, the guardian's `checkMessage` reads them
-   with the step, the slot or window and his words, never her messages. It
-   says ok only when the draft does exactly what the step allows. Held,
-   failed or no guardian: a card with the exact words; his yes sends exactly
-   those. Decided after round twenty-three, when reviewers kept finding
-   phrasings the lists missed ("genial, gracias! al final cancelalo").
+   with his own typed ask (kept word for word in `errands.ask`), the step,
+   the slot or window, never her messages. It holds a draft only when it
+   departs from his ask in a way that matters: a day or time that is not
+   his, money he did not mention, another plan, a link or personal data.
+   Everything else goes out: the owner asked to be interrupted only when it
+   is necessary. Held, failed twice or no guardian: a card with the exact
+   words; his yes sends exactly those. Decided after round twenty-three,
+   when reviewers kept finding phrasings the lists missed ("genial,
+   gracias! al final cancelalo").
 5. **Loops:** the errand stores what it sent and never reads its own sends
    as the contact's replies.
 6. **The owner takes over:** before each send the errand reads the chat.
@@ -293,6 +297,9 @@ does not get the three tools.
 
 ## 9. Data
 
+- `errands.ask`: his own typed messages that started the errand, word for
+  word (JSON `{ original: [...] }`), for the message check. Never shown in
+  notes or cards.
 - `errands`: id, contact (JIDs, name), goal, mode, request, slot, window,
   proposed slot, state, counters, event id, times, the pending card id.
 - `errand_events`: errand id, time, kind, short detail.

@@ -192,15 +192,37 @@ Nothing goes out from his account that he did not ask for or see:
   gate, with no card.
 - **The message check.** Before any words he has not seen go out (the
   first message, the automatic accept or thanks, a step of his the voice
-  wrote), the guardian's `checkMessage` reads them. It sees the step, the
-  slot or window, his words and the draft, never her messages, so she
-  cannot steer it. It says ok only when the draft does exactly what the step
-  allows: a thanks that also cancels, agrees to a price, names another day,
-  makes a promise or brings in someone else is held. Held, failed or no
-  guardian: nothing goes out, and he gets a card with the exact words and
-  the reason ("¿Le mando esto a Alice? «…»"). His yes sends exactly those
-  words. Words he already saw (a draft he asked for, a card) are not
-  checked again.
+  wrote), the guardian's `checkMessage` reads them. It sees his own typed
+  ask (the messages that started the errand, kept word for word in
+  `errands.ask`, and the message that asked for this step), the assistant's
+  summary of his request, the step, the slot or window and the draft. It
+  never sees her messages, so she cannot steer it. His ask is the
+  reference, and the check asks him as little as it can: it holds a draft
+  only when the chat steered it away from his ask in a way that matters:
+  a day or time that is not his, money he did not mention, another plan (a
+  cancel, more than he asked: another person, another service), or a link,
+  personal data or words aimed at a bot. Greetings, thanks, slang, emojis
+  and any natural wording go out. Held, or failed twice (a failed call is
+  tried once more), or no guardian: nothing goes out, and he gets a card
+  with the exact words and the reason ("¿Le mando esto a Alice? «…»"). His
+  yes sends exactly those words. Words he already saw (a draft he asked
+  for, a card) are not checked again. Only words he typed himself count as
+  his ask: never a forward, a contact's line, a job's, Deedee's own, a
+  voice note, or a line he typed for another errand. An earlier line of his
+  joins (two at most, inside 30 minutes) only when Deedee's question sits
+  between it and his next line ("pedile turno a Alice el jueves", "¿A qué
+  hora?", "a las 10"), or when he sent the two within two minutes with no
+  reply between. A card the gate raises for his own step carries his typed
+  line (`origin_meta.typed`, and `typedAsk` for a start), so his yes to it
+  brings no second card. A step he asks for by voice note or with a short
+  yes has no typed line: the check is told it is his own step (`his_step`)
+  and reads the words to pass on as what he asked. With no typed ask on
+  record (an errand from before this, a start by voice note) it judges
+  against the slot, the summary and the words to pass on. A booking with no
+  day ("cuando tenga") may ask for his usual time of day. The code checks
+  before it compare a drafted say with his typed words and the words of his
+  own step; words a run wrote after reading someone else's text never widen
+  the days, times or money allowed.
 - **What goes out by itself.** Only the accept or thanks for the exact day
   and time he asked for, by day, with his calendar free. A range never books
   by itself.

@@ -4510,7 +4510,8 @@ describe('errands', () => {
                 expect(spy.mock.calls[0][0]).toEqual({
                     step: 'thanks', lang: 'es', contactName: 'Alice', slot: { date: '2026-10-08', time: '10:00' }, window: null,
                     ask: null, summary: 'turno para el jueves que viene',
-                    hisWords: null, hisWordsTainted: false, draft: 'genial, gracias', chatId: `errand_${errand.id}`
+                    // The errand took this step by itself.
+                    hisWords: null, hisWordsTainted: false, hisStep: false, draft: 'genial, gracias', chatId: `errand_${errand.id}`
                 });
                 const sent = JSON.stringify([spy.mock.calls, checkRequests()]);
                 expect(sent).not.toMatch(/PD: decile|cancela lo del viernes|te anoto/);
@@ -5213,10 +5214,26 @@ describe('errands', () => {
                 test('a line of his that Deedee did not answer with a question stays out of his ask', async () => {
                     typed('t-1', 'recordame pagar el alquiler el viernes', clock - 5 * 60e3);
                     deedeeSays('d-1', 'Listo, te lo recuerdo el viernes.', clock - 4 * 60e3);
-                    typed('t-2', 'comprá pan', clock - 2 * 60e3);
+                    typed('t-2', 'comprá pan', clock - 3 * 60e3);
                     const spy = checkSpy();
                     await startTyped();
                     expect(spy.mock.calls[0][0].ask).toEqual({ original: [ASK], now: [] });
+                });
+
+                test('a draft he never sent for someone else, and Deedee\'s "¿Lo mando?", never join this errand\'s ask', async () => {
+                    typed('t-1', 'decile a Carol que el viernes le paso los 20 mil, no lo mandes todavía', clock - 5 * 60e3);
+                    db.saveMessage({ id: 'calls-1', role: 'model', content: '', parts: [{ functionCall: { name: 'startErrand', args: { contact: OTHER, goal: 'tell', request: 'que el viernes le paso los 20 mil', send: false } } }], source: 'whatsapp', chatId: OWNER_CHAT, timestamp: new Date(clock - 5 * 60e3 + 500).toISOString(), metadata: { chatId: OWNER_CHAT } });
+                    deedeeSays('d-1', 'Le mandaría a Carol: "el viernes te paso los 20 mil". ¿Lo mando?', clock - 4 * 60e3);
+                    const spy = checkSpy();
+                    await startTyped();
+                    expect(spy.mock.calls[0][0].ask).toEqual({ original: [ASK], now: [] });
+                });
+
+                test('two lines of his seconds apart, with no reply between, are one ask', async () => {
+                    typed('t-1', 'es para cortarme el pelo', clock - 20e3);
+                    const spy = checkSpy();
+                    await startTyped();
+                    expect(spy.mock.calls[0][0].ask).toEqual({ original: ['es para cortarme el pelo', ASK], now: [] });
                 });
 
                 test('the line that started his errand with Carol never joins Alice\'s ask, even when Deedee asked him something after it', async () => {
