@@ -101,6 +101,7 @@ describe('his draft, then "dale, mandalo", while a job card waits in his chat', 
     const { AgentDB } = require('../src/db');
     const { ErrandService } = require('../src/services/errands');
     const { ApprovalService } = require('../src/services/approval-service');
+    const { GuardianService } = require('../src/services/guardian-service');
     const { ErrandsExecutor } = require('../src/executors/errands');
 
     const OWNER = '5490000000001';
@@ -179,15 +180,8 @@ describe('his draft, then "dale, mandalo", while a job card waits in his chat', 
         };
         approvals = new ApprovalService(agent);
         agent.approvals = approvals;
-        // GuardianService.checkMessage comes in a change of its own: until it
-        // lands, a stand-in with its contract asks the same fake model.
-        if (typeof approvals.guardian.checkMessage !== 'function') {
-            approvals.guardian.checkMessage = async (p) => {
-                const res = await agent.client.models.generateContent({ contents: [{ role: 'user', parts: [{ text: JSON.stringify(p) }] }], config: { systemInstruction: 'You check one WhatsApp message.' } });
-                const a = JSON.parse(res.text);
-                return { ok: a.ok === true, reason: String(a.reason || ''), failed: false };
-            };
-        }
+        // The real guardian: its message check asks the scripted model above.
+        expect(approvals.guardian).toBeInstanceOf(GuardianService);
         service = new ErrandService(agent, { partGapMs: 0, bufferMs: 5 });
         agent.errands = service;
         executor = new ErrandsExecutor({ agent });
@@ -253,6 +247,15 @@ describe('his draft, then "dale, mandalo", while a job card waits in his chat', 
             step: 'say', hisWords: 'llego 10 minutos tarde',
             ask: { original: ['preguntale a Alice si tiene el libro', 'y si me lo guarda hasta el lunes'], now: ['decile que llego 10 minutos tarde'] }
         });
+        // The real guardian puts his typed words in the model's input as owner_ask.
+        const inputs = agent.client.models.generateContent.mock.calls.map(c => c[0])
+            .filter(r => /^You check one WhatsApp message/.test(String(r?.config?.systemInstruction || '')))
+            .map(r => JSON.parse(/<message_check>\n([\s\S]*?)\n<\/message_check>/.exec(r.contents[0].parts[0].text)[1]));
+        expect(inputs.map(i => i.owner_ask)).toEqual([
+            { original: ['preguntale a Alice si tiene el libro', 'y si me lo guarda hasta el lunes'], now: [] },
+            { original: ['preguntale a Alice si tiene el libro', 'y si me lo guarda hasta el lunes'], now: ['decile que llego 10 minutos tarde'] }
+        ]);
+        expect(inputs.map(i => i.assistant_summary)).toEqual([request, request]);
         expect(sends.map(s => s.content)).toEqual(['tenés el libro? me lo guardás?', 'llego 10 minutos tarde']);
     });
 });

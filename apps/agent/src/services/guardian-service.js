@@ -264,7 +264,7 @@ const SUMMARY_CHARS = 600;
 const MESSAGE_CHECK_TRIES = 2;
 const MESSAGE_RETRY_PAUSE_MS = 1000;
 // The longest the two tries take at the default timeout: 8 s + 1 s + 8 s.
-// A caller's own timeout must be longer (errands wait 20 s).
+// A caller's own timeout must be longer (errands wait messageCheckMaxMs + 5 s).
 const MESSAGE_CHECK_MAX_MS = MESSAGE_CHECK_TRIES * DEFAULT_TIMEOUT_MS + MESSAGE_RETRY_PAUSE_MS;
 // His time zone when the caller gives none, as elsewhere in the agent.
 const DEFAULT_TIME_ZONE = 'America/Argentina/Buenos_Aires';

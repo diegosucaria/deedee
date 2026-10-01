@@ -86,8 +86,9 @@ const TAINT_SOURCE = (id) => `a contact's message (errand ${id})`;
 const SHOWN_DRAFT_MS = 30 * 60e3;
 const SHOWN_DRAFTS_MAX = 20;
 // The message check tries its model twice (a failed call once more), each
-// try within the guardian's own limit (8 s by default). This limit covers
-// both tries; it only keeps a stuck call from holding the lock.
+// try within the guardian's own limit (8 s by default), with a 1 s pause
+// between. This limit covers both tries (_checkMs); it only keeps a stuck
+// call from holding the lock.
 const CHECK_TRIES = 2;
 const CHECK_SLACK_MS = 5e3;
 const CHECK_MS = CHECK_TRIES * 8e3 + CHECK_SLACK_MS;
@@ -1391,10 +1392,16 @@ class ErrandService {
         return { ...verdict, calls };
     }
 
-    /** How long the message check may take: both of its tries, each within the guardian's own limit. */
+    /**
+     * How long the message check may take: the guardian's own bound for both
+     * tries and the pause between them (messageCheckMaxMs), plus a margin.
+     * A guardian with no such bound: two tries of its timeout.
+     */
     _checkMs(guardian) {
+        const bound = Number(guardian?.messageCheckMaxMs);
         const each = Number(guardian?.timeoutMs);
-        return Math.max(CHECK_MS, CHECK_TRIES * (Number.isFinite(each) && each > 0 ? each : 8e3) + CHECK_SLACK_MS);
+        const tries = Number.isFinite(bound) && bound > 0 ? bound : CHECK_TRIES * (Number.isFinite(each) && each > 0 ? each : 8e3);
+        return Math.max(CHECK_MS, tries + CHECK_SLACK_MS);
     }
 
     /**

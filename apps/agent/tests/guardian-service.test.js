@@ -148,13 +148,13 @@ describe('GuardianService.judge', () => {
         expect(new GuardianService(makeAgent(jest.fn())).timeoutMs).toBe(8000);
     });
 
-    test('the message check\'s two tries and pause take at most 17 s, so the errand\'s 20 s wait covers them', () => {
+    // errands.test.js checks that the errand's own wait is longer than this bound.
+    test('the message check\'s two tries and pause take at most 17 s, and the bound grows with GUARDIAN_TIMEOUT_MS', () => {
         const svc = new GuardianService(makeAgent(jest.fn()));
         expect(svc.retryPauseMs).toBe(MESSAGE_RETRY_PAUSE_MS);
         expect(MESSAGE_RETRY_PAUSE_MS).toBe(1000);
         expect(svc.messageCheckMaxMs).toBe(MESSAGE_CHECK_MAX_MS);
         expect(MESSAGE_CHECK_MAX_MS).toBe(17000);
-        expect(MESSAGE_CHECK_MAX_MS).toBeLessThan(20000);
         // A longer timeout set by GUARDIAN_TIMEOUT_MS grows the bound with it.
         const saved = process.env.GUARDIAN_TIMEOUT_MS;
         process.env.GUARDIAN_TIMEOUT_MS = '10000';
