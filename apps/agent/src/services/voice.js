@@ -696,6 +696,21 @@ const NOT_A_YES_RE = /(?<![\p{L}\p{N}])(?:no|not|nope|nah|nunca|never|pero|but|u
 const DIGIT_TIME_RE = /(?<![\p{L}\p{N}:.,/])(\d{1,2})(?:([:.,h])(\d{2}))?(?!\p{N})/gu;
 
 /** VOICE_OWN_REPLY=0: an accept or a thanks never reuses his past reply. Read on every call. */
+// For a thanks, how many of his past replies to look at, and which one it
+// may prefer over his newest: a line that only thanks and says yes ("listo!
+// gracias", "dale, gracias"). "gracias igual", "gracias, te aviso" or
+// "gracias Carol!" thank for something else, so they are never preferred.
+// A preference among his own lines, not a check.
+const OWN_REPLY_LOOKBACK = 5;
+const THANKS_WORD_RE = /^(?:gracias+|thanks+|thank|thx)$/;
+const YES_THANKS_WORD_RE = /^(?:gracias+|thanks+|thank|you|thx|muchas|mil|listo+|dale+|genial+|perfecto+|joya+|buenisimo+|barbaro+|excelente+|ok+|okey+|oka+|bueno+|si+|voy|great|perfect|ok(?:ay)?)$/;
+
+/** A line of his that only thanks and agrees, with no other word. */
+function plainThanks(line) {
+    const words = foldText(line).split(/[^a-z]+/).filter(Boolean);
+    return words.length > 0 && words.some(w => THANKS_WORD_RE.test(w)) && words.every(w => YES_THANKS_WORD_RE.test(w));
+}
+
 function ownReplyEnabled() {
     return String(process.env.VOICE_OWN_REPLY || '1') !== '0';
 }
@@ -741,6 +756,7 @@ function ownReply(history, { step, slot, timeZone = 'UTC', now = Date.now(), sta
     const list = Array.isArray(history) ? history : [];
     // A line with no readable time counts as recent.
     const recent = new Set(list.filter(m => m?.role === 'assistant' && !(now - Number(m.timestamp) >= REPEAT_MS)).map(m => same(m.content)));
+    const fits = [];
     for (const { own } of replyMoments(list).reverse()) {
         const line = normText(own).replace(/\s+/g, ' ').trim();
         if (!line || [...line].length > OWN_REPLY_CHARS || /[?¿]/.test(line) || NOT_A_YES_RE.test(foldText(line))) continue;
@@ -749,9 +765,13 @@ function ownReply(history, { step, slot, timeZone = 'UTC', now = Date.now(), sta
         const parts = cleanText([set], stats);
         if (parts.length !== 1 || recent.has(same(parts[0]))) continue;
         if (checkText(parts, { step, time, dates: [slot.date], now, timeZone, ownWords: '' }).length > 0) continue;
-        return parts[0];
+        // An accept takes his newest reply. A thanks looks a little further back for one that thanks.
+        if (step !== 'thanks') return parts[0];
+        fits.push(parts[0]);
+        if (fits.length >= OWN_REPLY_LOOKBACK) break;
     }
-    return null;
+    // "Dalee" confirms, "dale, gracias" also thanks: a thanks prefers the one that does.
+    return fits.find(plainThanks) || fits[0] || null;
 }
 
 function splitParts(text) {

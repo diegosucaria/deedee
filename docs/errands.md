@@ -77,6 +77,14 @@ It never writes the message itself.
    not be read. If his calendar cannot be read at the start, the errand
    still asks for his usual time; her yes then comes to him as a card.
 5. **Booking.** Code adds the event to his primary calendar with no guests.
+   Once it is there, a run on that contact's chat (his watcher reads the
+   same messages, for example after he writes to them himself and the chat
+   goes back to his watchers) cannot add an event at that same start again:
+   the approval gate refuses the insert (`ErrandService.bookedFor`) and the
+   errand's log says so. His calendar decides: if the event is no longer
+   there (he deleted or moved it), the watcher may add the slot again. A
+   sub-agent of that run and a `quickAdd` are held the same way. His own
+   chat can still add what he asks for.
    It uses the `gws_personal` calendar tool (`ERRANDS_CALENDAR_ACCOUNT`
    picks another), and skips an event that is already there: one with the
    errand's title or its note (`(errand #N)`) at that start, or his
@@ -163,7 +171,11 @@ them for a day in `agent_settings.owner_style_stats`.
 For the automatic accept or thanks it first reuses his own words: a short
 line of his (40 characters or less, not a question) that answered her
 offer or yes before, with the hour set to the slot's ("dale, 11 voy"
-becomes "dale, 10 voy"). No model writes it. A line that says no, adds a
+becomes "dale, 10 voy"). No model writes it. An accept takes his newest
+such reply; a thanks looks at his last five and prefers one that only
+thanks and agrees ("dale, gracias" over a newer "Dalee"). A line that
+thanks for something else ("gracias igual", "gracias, te aviso") is never
+preferred. A line that says no, adds a
 condition or cancels is never reused. With no such line, the model writes
 one.
 

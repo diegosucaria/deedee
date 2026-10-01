@@ -1088,6 +1088,14 @@ class ApprovalService {
         };
 
         if (run?.stopped) return this._breakerStop(base);
+        // An errand already put this slot on his calendar: a run on that
+        // contact's chat (his watcher reads the same messages) must not add
+        // it a second time.
+        const dup = await this._errandBooked(message, toolName, args);
+        if (dup) {
+            console.log(`[Approvals] ${toolName}: errand #${dup.errand.id} booked this slot; not added again.`);
+            return { run: false, status: 'error', result: { info: dup.info, alreadyBooked: true } };
+        }
         // Only his own chat starts or answers an errand (executors/errands.js);
         // an errand's own run answers its own steps. A job, a watcher, a
         // sub-agent or a contact's chat gets no card: a card that looks like
@@ -1598,6 +1606,54 @@ class ApprovalService {
         if (channel === 'telegram') return telegramOwnerIds().includes(String(chatId));
         if (channel === 'whatsapp') return this._isOwnerWaChat(chatId);
         return false;
+    }
+
+    /**
+     * A calendar insert from a run on a contact's chat, for a slot an errand
+     * with that contact already booked and that is still on his calendar:
+     * that errand and what to tell the model, else null. His own chat may
+     * still add what he asks for.
+     */
+    async _errandBooked(message, toolName, args) {
+        const errands = this.agent?.errands;
+        if (typeof errands?.bookedFor !== 'function') return null;
+        if (!/calendar/i.test(String(toolName || ''))) return null;
+        // "events.insert" is "insert"; the event may come as an object or as JSON text.
+        const last = (v) => String(v ?? '').split('.').pop();
+        const method = last(args?.method);
+        if (!['insert', 'quickAdd', 'import'].includes(method)) return null;
+        if (args?.resource !== undefined && last(args.resource) !== 'events') return null;
+        const asObject = (v) => {
+            if (typeof v === 'string') { try { return JSON.parse(v); } catch { return null; } }
+            return v && typeof v === 'object' ? v : null;
+        };
+        const body = asObject(args?.body) || asObject(args?.json) || asObject(args?.requestBody);
+        const start = typeof errands.eventStartMs === 'function' ? errands.eventStartMs(body?.start) : Date.parse(body?.start?.dateTime);
+        // A quickAdd names no start we can read: then any booking with them that is still ahead counts.
+        if (method === 'insert' && !Number.isFinite(start)) return null;
+        // Only a run on a contact's chat on his personal account: his watcher, or a sub-agent it started.
+        const meta = message?.metadata || {};
+        const own = String(message?.source || '') === 'whatsapp:user';
+        const child = !!meta.isSubAgent && String(meta.parentSource || '') === 'whatsapp:user';
+        if (!own && !child) return null;
+        const ids = (own ? [meta.chatId, meta.phoneNumber, meta.lid] : [meta.parentChatId]).filter(Boolean).map(String);
+        try {
+            const errand = errands.bookedFor(ids, Number.isFinite(start) ? start : null);
+            if (!errand) return null;
+            // His calendar decides: an event he deleted or moved may be added again.
+            const there = typeof errands.stillBooked === 'function' ? await errands.stillBooked(errand) : true;
+            if (there === false) return null;
+            errands.noteDuplicate?.(errand, toolName);
+            const who = errand.contact_name || 'this contact';
+            const info = there === null
+                ? `Nothing was added: errand #${errand.id} booked this slot with ${who}, and his calendar could not be read to see if it is still there. Do not try again, and do not tell him it was scheduled now.`
+                : Number.isFinite(start)
+                    ? `Already on his calendar: errand #${errand.id} booked this slot with ${who}. Nothing was added. Do not add it again, and do not tell him it was scheduled now.`
+                    : `Nothing was added: errand #${errand.id} already booked a slot with ${who}, which is on his calendar. If this is another slot, add it with insert and an explicit start.`;
+            return { errand, info };
+        } catch {
+            return null;
+        }
     }
 
     /**

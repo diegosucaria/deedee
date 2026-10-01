@@ -212,6 +212,7 @@ export function eventLine(event, opts = {}) {
     }
     case 'after': {
         if (d.failed) return 'After the booking: could not read their message';
+        if (d.duplicate) return 'After the booking: a watcher tried to add it to the calendar again; skipped';
         return `After the booking: ${[clip(d.kind || 'message', 20), slots(d.slots)].filter(Boolean).join(', ')}`;
     }
     case 'asked': {

@@ -2370,6 +2370,76 @@ class ErrandService {
             .find(e => e.state === 'done' && e.grace_until && Date.parse(e.grace_until) > now && match(e)) || null;
     }
 
+    /**
+     * The errand that already booked this start with this person, or null.
+     * A watcher on that chat reads the same messages and would add the event
+     * a second time; the approval gate asks here before a calendar insert
+     * from that chat. Until the slot has passed.
+     * @param {string[]} idList the run's chat: a number, a WhatsApp ID, a chat id
+     * @param {number} startMs the new event's start
+     */
+    bookedFor(idList, startMs) {
+        const wanted = new Set((Array.isArray(idList) ? idList : []).map(digitsOf).filter(d => d.length >= 6));
+        // No start given (a quickAdd names none): any booking with them that is still ahead.
+        const anyStart = startMs === null || startMs === undefined;
+        if (wanted.size === 0 || (!anyStart && !Number.isFinite(startMs))) return null;
+        const tz = this.timeZone();
+        const now = this.clock();
+        try {
+            return this.db.listErrands({ all: true, limit: 50 }).find(e => {
+                if (e.state !== 'done' || !e.event_id || !e.agreed || !validDate(e.agreed.date) || !normTime(e.agreed.time)) return false;
+                if (!e.contact_ids.some(d => wanted.has(d))) return false;
+                const at = zonedMs(e.agreed.date, normTime(e.agreed.time), tz);
+                return anyStart ? at > now : Math.abs(at - startMs) < 60e3;
+            }) || null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Is that errand's booking still on his calendar: an event that starts
+     * at its slot? He may have deleted it, or moved it; then a watcher may
+     * add the slot again. true, false, or null when the calendar cannot be read.
+     */
+    async stillBooked(errand) {
+        if (!errand?.agreed) return false;
+        const startMs = zonedMs(errand.agreed.date, normTime(errand.agreed.time), this.timeZone());
+        let busy;
+        try { busy = await this._busyRanges(errand.agreed.date); } catch { return null; }
+        if (!busy || busy.error) return null;
+        return busy.ranges.some(r => r.startMs === startMs)
+            || (busy.items || []).some(ev => errand.event_id && ev?.id === errand.event_id && ev.status !== 'cancelled');
+    }
+
+    /** A watcher tried to add the booking again: kept on the errand's log, once per ten minutes. */
+    noteDuplicate(errand, toolName) {
+        try {
+            const now = this.clock();
+            const lately = this.db.listErrandEvents(errand.id, { newest: 20 })
+                .some(e => e.kind === 'after' && e.detail?.duplicate && now - (Date.parse(e.at) || 0) < 10 * 60e3);
+            if (!lately) this._event(errand.id, 'after', { duplicate: true, tool: clip(toolName, 60) });
+        } catch { /* the log is best effort */ }
+    }
+
+    /**
+     * A calendar event's start in ms. A dateTime with no offset is read in
+     * the event's own time zone, else his, never the process's.
+     * @param {{ dateTime?: string, timeZone?: string }} start
+     */
+    eventStartMs(start) {
+        const text = String(start?.dateTime || '');
+        if (!text) return Number.NaN;
+        if (/(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(text)) return Date.parse(text);
+        const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(text);
+        if (!m) return Number.NaN;
+        let tz = this.timeZone();
+        if (typeof start.timeZone === 'string' && start.timeZone) {
+            try { new Intl.DateTimeFormat('en-GB', { timeZone: start.timeZone }); tz = start.timeZone; } catch { /* his own zone */ }
+        }
+        return zonedMs(m[1], m[2], tz);
+    }
+
     /** Messages other errands with this person received (an older errand on the same chat). */
     _receivedElsewhere(errand) {
         const ids = new Set(errand.contact_ids);
