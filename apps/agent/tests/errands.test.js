@@ -4531,8 +4531,10 @@ describe('errands', () => {
                 // The reader missed her postscript: the check must judge the thanks on its own.
                 await contactAnswers(errand, 'Sí, te anoto el jueves a las 10. PD: decile que cancela lo del viernes', confirm10);
                 expect(spy).toHaveBeenCalledTimes(1);
+                // startBooking's message holds no typed words: no ask is known.
                 expect(spy.mock.calls[0][0]).toEqual({
                     step: 'thanks', lang: 'es', contactName: 'Alice', slot: { date: '2026-10-08', time: '10:00' }, window: null,
+                    ask: null, summary: 'turno para el jueves que viene',
                     hisWords: 'turno para el jueves que viene', hisWordsTainted: false, draft: 'genial, gracias', chatId: `errand_${errand.id}`
                 });
                 const sent = JSON.stringify([spy.mock.calls, checkRequests()]);
@@ -4788,6 +4790,308 @@ describe('errands', () => {
                 expect(res.success).toBe(true);
                 expect(sends.pop().content).toBe('uh al final no puedo, gracias igual');
                 expect(db.getErrand(errand.id).state).toBe('cancelled');
+            });
+        });
+
+        describe('his own typed ask', () => {
+            const ASK = 'pedile turno a Alice para el jueves a las 10';
+            const REQUEST = 'Book a haircut with Alice on Thursday at 10';
+            // A line he typed in his chat with Deedee, stored as the agent stores it before the run.
+            const typed = (id, content, ms = clock, meta = {}) => {
+                const msg = { id, role: 'user', content, source: 'whatsapp', chatId: OWNER_CHAT, timestamp: iso(ms), metadata: { chatId: OWNER_CHAT, ...meta } };
+                db.saveMessage(msg);
+                return msg;
+            };
+            const deedeeSays = (id, content, ms) => db.saveMessage({ id, role: 'assistant', content, source: 'whatsapp', chatId: OWNER_CHAT, timestamp: iso(ms), metadata: { chatId: OWNER_CHAT } });
+            const startTyped = async (msg = typed('t-ask', ASK)) => {
+                clock += 2000;
+                drafts.push(draftAnswer('request'));
+                const out = await service.start({ contact: CONTACT, goal: 'book', request: REQUEST, date: '2026-10-08', time: '10:00', durationMinutes: 30 }, { originMessage: msg });
+                expect(out.success).toBe(true);
+                return db.getErrand(out.errandId);
+            };
+            const checkSpy = () => jest.spyOn(approvals.guardian, 'checkMessage');
+
+            test('the first message is checked against his own typed words; the request the model wrote is only the summary', async () => {
+                const spy = checkSpy();
+                const errand = await startTyped();
+                expect(spy).toHaveBeenCalledTimes(1);
+                expect(spy.mock.calls[0][0]).toMatchObject({
+                    step: 'request', ask: { original: [ASK], now: [] }, summary: REQUEST, hisWords: REQUEST, hisWordsTainted: false
+                });
+                expect(errand.ask).toEqual({ original: [ASK] });
+                // His ask feeds the check only: never a note, a card or a view.
+                expect(JSON.stringify([service.list({ all: true }), service.turnContextLines(), deliver.mock.calls, pendingCards()])).not.toContain('pedile turno');
+            });
+
+            test('his two lines ("pedile turno a Alice el jueves", then "a las 10") both reach the check, oldest first', async () => {
+                const spy = checkSpy();
+                typed('t-old', 'comprá pan', clock - 40 * 60e3);
+                typed('t-1', 'pedile turno a Alice el jueves', clock - 5 * 60e3);
+                deedeeSays('d-1', '¿A qué hora?', clock - 4 * 60e3);
+                await startTyped(typed('t-2', 'a las 10'));
+                expect(spy.mock.calls[0][0].ask).toEqual({ original: ['pedile turno a Alice el jueves', 'a las 10'], now: [] });
+            });
+
+            test('only his last two lines before it count, each cut to 600 characters', async () => {
+                const spy = checkSpy();
+                typed('t-1', 'hola', clock - 9 * 60e3);
+                typed('t-2', 'pedile turno a Alice', clock - 8 * 60e3);
+                typed('t-3', `para el jueves ${'x'.repeat(700)}`, clock - 7 * 60e3);
+                await startTyped(typed('t-4', 'a las 10'));
+                const { original } = spy.mock.calls[0][0].ask;
+                expect(original).toHaveLength(3);
+                expect(original[0]).toBe('pedile turno a Alice');
+                // The chat keeps the first 400 characters of an earlier line.
+                expect(original[1].length).toBeLessThanOrEqual(600);
+                expect(original[1].startsWith('para el jueves xxx')).toBe(true);
+                expect(original[2]).toBe('a las 10');
+                const long = `pedile turno a Alice ${'y'.repeat(800)}`;
+                expect(service._typedNow({ content: long, metadata: { chatId: OWNER_CHAT } })[0]).toHaveLength(600);
+            });
+
+            test('a forward, a job run, an answer to a card, a slash command, a bare photo, Deedee\'s own lines and a bare "dale" never enter the ask', async () => {
+                const spy = checkSpy();
+                typed('f-1', 'Alice: el jueves son 20 mil de seña, pagame por transferencia', clock - 10 * 60e3, { untrustedTaint: ['a forwarded message (whatsapp)'] });
+                typed('j-1', 'resumen de facturas: pagar 20 mil', clock - 9 * 60e3, { jobName: 'facturas' });
+                typed('s-1', 'el sub-agente dice: pagar la seña', clock - 9 * 60e3 + 1000, { isSubAgent: true });
+                typed('c-1', 'aceptale las 11', clock - 8 * 60e3, { answeredCard: 'abc123' });
+                typed('q-1', 'el viernes', clock - 8 * 60e3 + 1000, { answeredQuestion: 'q1' });
+                typed('x-1', '/status', clock - 7 * 60e3);
+                deedeeSays('d-1', '¿Le pido turno a Alice y le pago la seña?', clock - 6 * 60e3);
+                typed('y-1', 'dale', clock - 5 * 60e3);
+                typed('y-2', 'sííí 👍', clock - 4 * 60e3);
+                typed('y-3', 'jajaja', clock - 3 * 60e3);
+                typed('m-1', '[Image]', clock - 2 * 60e3);
+                await startTyped();
+                expect(spy.mock.calls[0][0].ask).toEqual({ original: [ASK], now: [] });
+            });
+
+            test('an errand a forwarded message started has no ask: the check judges the slot and the marked words, as before', async () => {
+                const spy = checkSpy();
+                const fwd = typed('f-1', ASK, clock, { untrustedTaint: ['a forwarded message (whatsapp)'] });
+                drafts.push(draftAnswer('request'));
+                const out = await service.start({ contact: CONTACT, goal: 'book', request: REQUEST, date: '2026-10-08', time: '10:00' },
+                    { originMessage: fwd, taint: ['a forwarded message (whatsapp)'] });
+                expect(out.success).toBe(true);
+                expect(spy.mock.calls[0][0]).toMatchObject({ ask: null, summary: null, hisWords: REQUEST, hisWordsTainted: true });
+                expect(db.getErrand(out.errandId).ask).toBeNull();
+            });
+
+            test('the automatic thanks days later still carries his first words, with nothing for this step', async () => {
+                const errand = await startTyped();
+                clock += 2 * 24 * 3600e3;
+                const spy = checkSpy();
+                const done = await contactAnswers(errand, 'Sí, te anoto el jueves a las 10', confirm10);
+                expect(done.state).toBe('done');
+                expect(spy).toHaveBeenCalledTimes(1);
+                expect(spy.mock.calls[0][0]).toMatchObject({ step: 'thanks', ask: { original: [ASK], now: [] }, summary: REQUEST });
+            });
+
+            test('"decile que llego 10 minutos tarde" reaches the check as his words for that step', async () => {
+                const errand = await startTyped();
+                clock += 5 * 60e3;
+                const spy = checkSpy();
+                const step = typed('t-step', 'decile que llego 10 minutos tarde');
+                const res = await service.answer({ id: errand.id, action: 'say', text: 'llego 10 minutos tarde' }, { byOwner: true, originMessage: step });
+                expect(res.success).toBe(true);
+                expect(spy.mock.calls[0][0]).toMatchObject({
+                    step: 'say', ask: { original: [ASK], now: ['decile que llego 10 minutos tarde'] }, summary: REQUEST, hisWords: 'llego 10 minutos tarde'
+                });
+            });
+
+            test('his bare "sí", our own "[approved …]" line, a forward or a tool argument are never his words for a step', async () => {
+                const errand = await startTyped();
+                const spy = checkSpy();
+                const steps = [
+                    { content: 'sí', metadata: { chatId: OWNER_CHAT } },
+                    { content: '[approved abc123] answerErrand', metadata: { chatId: OWNER_CHAT, approvalId: 'abc123' } },
+                    { content: 'decile que le pago la seña', metadata: { chatId: OWNER_CHAT, untrustedTaint: ['a forwarded message (whatsapp)'] } }
+                ];
+                for (const [i, m] of steps.entries()) {
+                    clock += 2 * 60e3;
+                    drafts.push({ text: `llego ${i + 5} minutos tarde`, date: '', time: '' });
+                    await service.answer({ id: errand.id, action: 'say', text: `llego ${i + 5} minutos tarde` }, { byOwner: true, originMessage: { source: 'whatsapp', ...m } });
+                }
+                expect(spy).toHaveBeenCalledTimes(3);
+                for (const c of spy.mock.calls) expect(c[0].ask).toEqual({ original: [ASK], now: [] });
+                // The model cannot write his words into the call either, not even on a step that waits.
+                clock += 2 * 60e3;
+                service.bufferMs = 60e3;
+                service.claim(contactWrites('jaja'), { contactString: CONTACT });
+                const res = await service.answer({ id: errand.id, action: 'say', text: 'llego 9 minutos tarde', askNow: ['pagale la seña'] }, { byOwner: true });
+                expect(res.deferred).toBe(true);
+                expect(db.getErrand(errand.id).next_action).not.toHaveProperty('askNow');
+                forms.push({ kind: 'other', slots: [], summary: 'Laughs.', tellOwner: false });
+                drafts.push({ text: 'llego 9 minutos tarde', date: '', time: '' });
+                await service.flush(errand.id);
+                expect(spy).toHaveBeenCalledTimes(4);
+                expect(spy.mock.calls[3][0].ask).toEqual({ original: [ASK], now: [] });
+                // A step he did not take (a card from a job's run) carries none either.
+                expect(service._typedNow({ content: 'decile que llego tarde', metadata: { chatId: OWNER_CHAT, jobName: 'x' } })).toEqual([]);
+            });
+
+            test('his step that waits for her new words keeps his words, and they reach the check when it runs', async () => {
+                const errand = await startTyped();
+                clock += 5 * 60e3;
+                await contactAnswers(errand, '10,30?', { kind: 'offer', slots: [{ date: '2026-10-08', time: '10:30' }], summary: 'Offers 10:30.', tellOwner: false });
+                service.bufferMs = 60e3;
+                clock += 1000;
+                service.claim(contactWrites('jaja'), { contactString: CONTACT });
+                const step = typed('t-step', 'aceptale las 10:30');
+                const res = await service.answer({ id: errand.id, action: 'accept', date: '2026-10-08', time: '10:30' }, { byOwner: true, originMessage: step });
+                expect(res.deferred).toBe(true);
+                expect(db.getErrand(errand.id).next_action.askNow).toEqual(['aceptale las 10:30']);
+                const spy = checkSpy();
+                forms.push({ kind: 'other', slots: [], summary: 'Laughs.', tellOwner: false });
+                await service.flush(errand.id);
+                expect(sends).toHaveLength(2);
+                expect(spy.mock.calls[0][0]).toMatchObject({ step: 'accept', ask: { original: [ASK], now: ['aceptale las 10:30'] } });
+                expect(db.getErrand(errand.id)).toMatchObject({ state: 'done', agreed: { date: '2026-10-08', time: '10:30' } });
+            });
+
+            test('his waiting step that the sweep runs after a restart still carries his words', async () => {
+                const errand = await startTyped();
+                clock += 5 * 60e3;
+                // A step of his that waited, as a restart leaves it on the row.
+                db.updateErrand(errand.id, {
+                    next_action: { id: errand.id, action: 'say', text: 'llego 10 minutos tarde', owner: true, askNow: ['decile que llego 10 minutos tarde'] },
+                    next_check_at: iso(clock - 1000)
+                });
+                service.stop();
+                service = new ErrandService(agent, { now: () => clock, timeZone: TZ, partGapMs: 0, bufferMs: 5 });
+                agent.errands = service;
+                const spy = checkSpy();
+                await service.sweep();
+                expect(spy.mock.calls[0][0]).toMatchObject({ step: 'say', ask: { original: [ASK], now: ['decile que llego 10 minutos tarde'] } });
+                expect(sends.pop().content).toBe('llego 10 minutos tarde');
+            });
+
+            test('his waiting step still carries his words after a restart, once her words are read', async () => {
+                const errand = await startTyped();
+                clock += 5 * 60e3;
+                service.bufferMs = 60e3;
+                service.claim(contactWrites('jaja'), { contactString: CONTACT });
+                const step = typed('t-step', 'decile que llego 10 minutos tarde');
+                const res = await service.answer({ id: errand.id, action: 'say', text: 'llego 10 minutos tarde' }, { byOwner: true, originMessage: step });
+                expect(res.deferred).toBe(true);
+                // A restart drops the buffer: the sweep reads her words, then runs his step.
+                service.stop();
+                service = new ErrandService(agent, { now: () => clock, timeZone: TZ, partGapMs: 0, bufferMs: 5 });
+                agent.errands = service;
+                const spy = checkSpy();
+                forms.push({ kind: 'other', slots: [], summary: 'Laughs.', tellOwner: false });
+                clock += 60e3;
+                await service.sweep();
+                expect(spy.mock.calls[0][0]).toMatchObject({ step: 'say', ask: { original: [ASK], now: ['decile que llego 10 minutos tarde'] } });
+                expect(sends.pop().content).toBe('llego 10 minutos tarde');
+            });
+
+            test('a start card he approves keeps his ask, though his yes types none', async () => {
+                chat = [];
+                const errand0 = typed('t-ask', ASK);
+                drafts.push(draftAnswer('request'));
+                const out = await service.start({ contact: CONTACT, goal: 'book', request: REQUEST, date: '2026-10-08', time: '10:00' }, { originMessage: errand0 });
+                expect(out.info).toMatch(/PAUSED/);
+                const [card] = startCards();
+                expect(JSON.stringify(card)).not.toContain('pedile turno');
+                chat = [{ role: 'assistant', content: 'hola', timestamp: at('2026-09-01', '10:00'), id: 'Z', fromMe: true }];
+                // The approved call runs with our own "[approved …]" line, as Agent._executeTool runs it.
+                const executor = new ErrandsExecutor({ agent });
+                agent._executeTool = (name, args, message, relay, usage, opts = {}) => executor.execute(name, args, { message, approved: opts.approved === true, ownerTyped: true });
+                clock += 60e3;
+                await approvals.decide(card.id, 'approved', { via: 'web' });
+                const [errand] = db.listErrands();
+                expect(errand.ask).toEqual({ original: [ASK] });
+                const spy = checkSpy();
+                clock += 5 * 60e3;
+                await contactAnswers(errand, 'Sí, te anoto el jueves a las 10', confirm10);
+                expect(spy.mock.calls[0][0]).toMatchObject({ step: 'thanks', ask: { original: [ASK], now: [] } });
+            });
+
+            test('a start card the check held keeps his ask through his yes', async () => {
+                const spy = checkSpy();
+                checks.push({ ok: false, reason: 'Unsure.' });
+                typed('t-1', 'pedile turno a Alice el jueves', clock - 60e3);
+                await service.start({ contact: CONTACT, goal: 'book', request: REQUEST, date: '2026-10-08', time: '10:00' }, { originMessage: typed('t-2', 'a las 10') });
+                expect(spy.mock.calls[0][0].ask.original).toEqual(['pedile turno a Alice el jueves', 'a las 10']);
+                const [card] = startCards();
+                const res = await service.start(card.args, { approved: true, originMessage: { source: 'whatsapp', content: 'sí', metadata: { chatId: OWNER_CHAT, approvalId: card.id } } });
+                expect(res.success).toBe(true);
+                expect(db.getErrand(res.errandId).ask).toEqual({ original: ['pedile turno a Alice el jueves', 'a las 10'] });
+            });
+
+            test('a gate card he approves carries no ask of its own: the check judges with none', async () => {
+                const msg = typed('t-ask', ASK);
+                const args = { contact: CONTACT, goal: 'book', request: REQUEST, date: '2026-10-08', time: '10:00' };
+                const gate = await approvals.review({ message: msg, toolName: 'startErrand', args, historyUntrusted: true, foreignText: false });
+                expect(gate.status).toBe('paused');
+                const executor = new ErrandsExecutor({ agent });
+                agent._executeTool = (name, a, message, relay, usage, opts = {}) => executor.execute(name, a, { message, approved: opts.approved === true, ownerTyped: true });
+                const spy = checkSpy();
+                drafts.push(draftAnswer('request'));
+                // He approves a minute later: his typed line is in the chat, but a gate card never carries it.
+                clock += 60e3;
+                await approvals.decide(pendingCards()[0].id, 'approved', { via: 'web' });
+                expect(sends).toHaveLength(1);
+                expect(spy.mock.calls[0][0]).toMatchObject({ step: 'request', ask: null, summary: REQUEST });
+                expect(db.listErrands()[0].ask).toBeNull();
+            });
+
+            test('after a restart, the stored ask still reaches the check', async () => {
+                const errand = await startTyped();
+                service.stop();
+                service = new ErrandService(agent, { now: () => clock, timeZone: TZ, partGapMs: 0, bufferMs: 5 });
+                agent.errands = service;
+                clock += 5 * 60e3;
+                const spy = checkSpy();
+                await contactAnswers(errand, 'Sí, te anoto el jueves a las 10', confirm10);
+                expect(spy.mock.calls[0][0]).toMatchObject({ step: 'thanks', ask: { original: [ASK], now: [] } });
+                expect(db.getErrand(errand.id).state).toBe('done');
+            });
+
+            test('an old errand with no ask passes none and still thanks and books', async () => {
+                const errand = await startTyped();
+                db.db.prepare('UPDATE errands SET ask = NULL WHERE id = ?').run(errand.id);
+                clock += 5 * 60e3;
+                const spy = checkSpy();
+                const done = await contactAnswers(db.getErrand(errand.id), 'Sí, te anoto el jueves a las 10', confirm10);
+                expect(spy.mock.calls[0][0]).toMatchObject({ step: 'thanks', ask: null, summary: REQUEST });
+                expect(done).toMatchObject({ state: 'done', agreed: { date: '2026-10-08', time: '10:00' } });
+                expect(sends.map(s => s.content)).toEqual(['Buenas! hay lugar el jueves 8 a las 10?', 'genial, gracias']);
+            });
+
+            test('a database from before the ask column gains it; its old errands read with no ask', () => {
+                db.db.exec('ALTER TABLE errands DROP COLUMN ask');
+                db.db.prepare("INSERT INTO errands (goal, state, contact_jid, contact_ids, request, expires_at, created_at, updated_at) VALUES ('book', 'waiting_contact', ?, ?, 'turno', ?, ?, ?)")
+                    .run(CONTACT_JID, JSON.stringify([CONTACT]), iso(clock + 3600e3), iso(clock), iso(clock));
+                db.close();
+                db = new AgentDB(dir);
+                db.init();
+                agent.db = db;
+                const old = db.listErrands()[0];
+                expect(old.ask).toBeNull();
+                const fresh = db.createErrand({ goal: 'ask', contactJid: `${OTHER}@s.whatsapp.net`, contactIds: [OTHER], request: 'x', expiresAt: iso(clock + 3600e3), ask: { original: ['preguntale a Bob'] } });
+                expect(db.getErrand(fresh.id).ask).toEqual({ original: ['preguntale a Bob'] });
+            });
+
+            test('the check waits out both of the guardian\'s tries, each within its own limit, and no longer', async () => {
+                jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+                try {
+                    approvals.guardian.timeoutMs = 12e3;
+                    approvals.guardian.checkMessage = () => new Promise(r => setTimeout(() => r({ ok: true, reason: 'fine', failed: false }), 2 * 12e3 - 100));
+                    const slow = service._check(null, { step: 'request', draft: 'x' });
+                    await jest.advanceTimersByTimeAsync(2 * 12e3);
+                    await expect(slow).resolves.toMatchObject({ ok: true, failed: false });
+                    approvals.guardian.checkMessage = () => new Promise(() => { });
+                    const stuck = service._check(null, { step: 'request', draft: 'x' });
+                    await jest.advanceTimersByTimeAsync(2 * 12e3 + 10e3);
+                    await expect(stuck).resolves.toMatchObject({ ok: false, failed: true });
+                } finally {
+                    jest.useRealTimers();
+                }
+                // The default guardian limit gets both tries too.
+                expect(service._checkMs({ timeoutMs: 8e3 })).toBeGreaterThan(2 * 8e3);
             });
         });
     });

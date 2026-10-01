@@ -773,6 +773,7 @@ class AgentDB {
         origin_chat_id TEXT,
         origin_source TEXT,
         cancel_requested_at TEXT,
+        ask TEXT,
         expires_at TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -826,6 +827,12 @@ class AgentDB {
     // Migration: errands keep a cancel he asked for while a step ran.
     try {
       this.db.exec("ALTER TABLE errands ADD COLUMN cancel_requested_at TEXT");
+    } catch (e) {
+      // Ignore if column exists
+    }
+    // Migration: errands keep his own typed words that started them, for the message check.
+    try {
+      this.db.exec("ALTER TABLE errands ADD COLUMN ask TEXT");
     } catch (e) {
       // Ignore if column exists
     }
@@ -5490,24 +5497,26 @@ class AgentDB {
       offer: parse(row.offer, null),
       agreed: parse(row.agreed, null),
       next_action: parse(row.next_action, null),
-      held_yes: parse(row.held_yes, null)
+      held_yes: parse(row.held_yes, null),
+      ask: parse(row.ask, null)
     };
   }
 
+  /** `ask`: { original: [...] }, his own typed words that started it. Only the message check reads it. */
   createErrand(fields) {
     const now = fields.createdAt || new Date().toISOString();
     const json = (v) => (v === undefined || v === null ? null : JSON.stringify(v));
     const info = this.db.prepare(`
       INSERT INTO errands (goal, mode, state, contact_jid, contact_ids, contact_name, person_id, request, slot,
         window_start, window_end, event_title, location, duration_min, origin_chat_id, origin_source,
-        expires_at, created_at, updated_at, slot_owned, time_owned, request_tainted, lang)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        expires_at, created_at, updated_at, slot_owned, time_owned, request_tainted, lang, ask)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(fields.goal, fields.mode || 'ask', fields.state || 'waiting_contact', fields.contactJid,
       JSON.stringify(fields.contactIds || []), fields.contactName || null, fields.personId || null, fields.request,
       json(fields.slot), fields.windowStart || null, fields.windowEnd || null, fields.eventTitle || null,
       fields.location || null, Number.isFinite(fields.durationMin) ? fields.durationMin : null,
       fields.originChatId || null, fields.originSource || null, fields.expiresAt, now, now,
-      fields.slotOwned ? 1 : 0, fields.timeOwned ? 1 : 0, fields.requestTainted ? 1 : 0, fields.lang || null);
+      fields.slotOwned ? 1 : 0, fields.timeOwned ? 1 : 0, fields.requestTainted ? 1 : 0, fields.lang || null, json(fields.ask));
     return this.getErrand(info.lastInsertRowid);
   }
 
