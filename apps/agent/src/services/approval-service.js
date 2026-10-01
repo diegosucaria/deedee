@@ -15,7 +15,10 @@
  * Answers: a plain yes/no in a strict vocabulary counts only in the chat
  * that holds the card, only when exactly one approval waits there, and
  * only while no askUser question is open in that chat. Everywhere else the
- * word falls through to askUser and the model. `/confirm <id>` and
+ * word falls through to askUser and the model. His other words to that one
+ * card ("de una", "aceptale las 10:30") go to the guardian, which reads
+ * only the card and his reply: a clear yes or no decides it, anything else
+ * goes to the model. `/confirm <id>` and
  * `/cancel <id>` work from any of the owner's chats; the bare commands act
  * only with exactly one approval pending in the chat they are typed in.
  *
@@ -61,6 +64,10 @@ const PREVIEW_MAX = 50;
 const LATE_DELIVERY_MS = 3 * 3600e3;
 // Cards whose delivery time is known only from deliver() (no ledger row).
 const CARD_SENT_MAX = 500;
+// His reply to a card that the guardian may read (_readReply). Longer text is a new request.
+const READ_REPLY_CHARS = 300;
+// decided_via for a card his reply decided through the guardian's reading.
+const READ_VIA = 'chat_read';
 
 /**
  * The id of a card's own message, which is also its delivery row: one per
@@ -184,6 +191,7 @@ function randomId() {
 /** "Yes!!" -> "yes"; "  Sí. " -> "sí"; keeps inner spaces ("go ahead"). */
 function normalizeWord(text) {
     return String(text || '')
+        .normalize('NFC')
         .toLowerCase()
         .replace(/[\s ]+/g, ' ')
         .replace(/^[\s"'“”‘’(¡¿]+|[\s"'“”‘’)!.,;:?…]+$/g, '')
@@ -208,6 +216,25 @@ const CANCEL_ERRAND_RE = /(?<![\p{L}])(?:cancel\p{L}*|canc[eé]l\p{L}*|olvid\p{L
 // On a card that cancels something, these mean "cancel it", not "deny".
 const CANCEL_VERBS = new Set(['cancel', 'cancelar', 'cancelalo', 'cancélalo', 'cancelala', 'cancélala', 'cancelá', 'cancela']);
 const MAX_DECISION_WORDS = 5;
+// Every word the lists above know.
+const KNOWN_WORDS = new Set([...APPROVE_CORE, ...APPROVE_FILLER, ...DENY_CORE, ...DENY_FILLER, ...CANCEL_VERBS]);
+// Skin tones, emoji style marks and invisible marks: "👍🏻" is "👍".
+const EMOJI_MARK_RE = /[\u{1F3FB}-\u{1F3FF}\uFE0E\uFE0F]|\p{Cf}/gu;
+// An emoji typed against a word stands apart: "dale👍" is "dale 👍".
+const EMOJI_RE = /(\p{Extended_Pictographic})/gu;
+
+/**
+ * A word as the lists spell it: "siii" -> "si", "daleee" -> "dale",
+ * "sisi" -> "si". A word no list knows stays as it is.
+ */
+function listWord(word) {
+    if (KNOWN_WORDS.has(word)) return word;
+    const once = word.replace(/(\p{L})\1+/gu, '$1');
+    if (KNOWN_WORDS.has(once)) return once;
+    const plain = once.normalize('NFD').replace(/\p{M}/gu, '');
+    const unit = /^(\p{L}{1,4}?)\1+$/u.exec(plain);
+    return unit && KNOWN_WORDS.has(unit[1]) ? unit[1] : word;
+}
 
 /**
  * 'approved' | 'denied' | 'ambiguous' | null for a plain reply.
@@ -216,11 +243,12 @@ const MAX_DECISION_WORDS = 5;
  *   card, a bare "cancel" could mean either answer, so it is 'ambiguous'.
  */
 function decisionWord(text, { toolName = '' } = {}) {
-    const word = normalizeWord(text);
-    if (!word) return null;
+    const raw = normalizeWord(text);
+    if (!raw) return null;
     const cancelCard = /cancel/i.test(String(toolName || ''));
-    const words = word.split(/[\s,;.!?¡¿:]+/).filter(Boolean);
+    const words = raw.replace(EMOJI_MARK_RE, '').replace(EMOJI_RE, ' $1 ').split(/[\s,;.!?¡¿:]+/).filter(Boolean).map(listWord);
     if (words.length === 0 || words.length > MAX_DECISION_WORDS) return null;
+    const word = words.join(' ');
     if (cancelCard && words.every(w => CANCEL_VERBS.has(w) || APPROVE_FILLER.has(w)) && words.some(w => CANCEL_VERBS.has(w))) {
         return 'ambiguous';
     }
@@ -800,6 +828,25 @@ class ApprovalService {
     }
 
     /**
+     * A startErrand that sends a draft the errand service showed him before
+     * his message (ErrandService.isShownDraft). A draft made in this same
+     * run came after his word, so it does not count. His client's clock
+     * cannot put his message later than now.
+     */
+    _shownDraft(toolName, args, message) {
+        if (toolName !== 'startErrand' || typeof args?.text !== 'string') return false;
+        const errands = this.agent?.errands;
+        if (typeof errands?.isShownDraft !== 'function') return false;
+        const now = Date.now();
+        const came = Date.parse(message?.timestamp);
+        try {
+            return errands.isShownDraft(args, { before: Number.isFinite(came) ? Math.min(came, now) : now }) === true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
      * The action is running, or a newer card asks for it: an older waiting
      * card must not run it a second time on a later "ok". It is marked expired.
      */
@@ -990,9 +1037,10 @@ class ApprovalService {
         // His bare yes or no while a card waits in this chat, and no card took
         // it (intercept): it may be meant for that card. It never runs the
         // card's own action and never writes to anyone, asked or not. Only
-        // the card's id does that.
+        // the card's id does that. One exception: an errand draft he saw
+        // before this message. His "dale, mandalo" is about that draft.
         const missed = await this._cardHisWordMissed(message, kind, toolName, args, guard.rule);
-        if (missed) {
+        if (missed && !this._shownDraft(toolName, args, message)) {
             const row = this._record({
                 ...base, outcome: 'escalated_duplicate', decidedBy: 'owner', approvalId: missed.card.id,
                 reason: 'His short yes or no did not decide the card that waits in his chat.'
@@ -1835,7 +1883,8 @@ class ApprovalService {
      * approval only when its card sits in this chat, it is the only one
      * pending here, and no askUser question is open here. Returns null in
      * every other case (the message goes on to askUser and the model); with
-     * several pending the card already asks for `/confirm <id>`.
+     * several pending the card already asks for `/confirm <id>`. His other
+     * words to that card are read by the guardian (_readReply).
      * @returns {Promise<null | { handled: boolean, reply?: object, execute?: { name: string, args: object, approvalId: string } }>}
      */
     async intercept(message, sendCallback) {
@@ -1843,11 +1892,14 @@ class ApprovalService {
         const chatId = message?.metadata?.chatId;
         if (!chatId || message.metadata?.isSubAgent) return null;
         const text = typeof message.content === 'string' ? message.content.trim() : '';
-        if (!text || text.startsWith('/') || text.length > 80) return null;
+        if (!text || text.startsWith('/')) return null;
         // A question ("y?", "dale?") asks something; it answers no card.
         if (/[?¿]/.test(text)) return null;
-        // Cheap test first: no card can take a reply that is not a yes or no word.
-        if (!decisionWord(text) && !decisionWord(text, { toolName: 'cancel' })) return null;
+        // Cheap test first: a known yes or no word. His other words may
+        // still answer the card ("aceptale las 10:30"): the guardian reads them.
+        if (text.length > 80 || (!decisionWord(text) && !decisionWord(text, { toolName: 'cancel' }))) {
+            return this._readReply(message, text, sendCallback);
+        }
 
         const pending = await this.pendingHere(message);
         if (pending.length !== 1) return null;
@@ -1877,6 +1929,52 @@ class ApprovalService {
             return { handled: true, reply: await this._reply(message, 'Reply yes to cancel it, or no to keep it.', sendCallback, { approvalId: pending[0].id }) };
         }
         return this.decide(pending[0].id, decision, { via: 'chat', message, sendCallback });
+    }
+
+    /**
+     * His own words to a card, when they are no known yes or no ("de una",
+     * "aceptale las 10:30"). The guardian reads the card and his reply,
+     * nothing else: 'yes' decides the card as "sí" does, 'no' as "no".
+     * Anything else, or a read that failed, goes on to the model as before.
+     * Only his own typed chat (never a job, a sub-agent, a voice call or
+     * another chat), only the one card in it, and only while that card is
+     * still his question and reached him before his reply.
+     * CARD_REPLY_READ=0 turns it off.
+     */
+    async _readReply(message, text, sendCallback) {
+        if (process.env.CARD_REPLY_READ === '0') return null;
+        if (text.length > READ_REPLY_CHARS || typeof this.guardian?.readReply !== 'function') return null;
+        const pending = await this.pendingHere(message);
+        if (pending.length !== 1) return null;
+        if (!(await this._ownerTypedRun(message, sourceKind(message)))) return null;
+        const row = pending[0];
+        if (!this._cardReached(row, message) || (await this._stillAsking(row, message)) !== true) return null;
+        if (await this._questionOpen(message)) return null;
+        const chatId = String(message.metadata.chatId);
+        let read = null;
+        try {
+            read = await this.guardian.readReply({ ...this._cardAsShown(row), reply: text, chatId });
+        } catch (e) {
+            read = null;
+        }
+        const answer = read && read.failed !== true && (read.answer === 'yes' || read.answer === 'no') ? read.answer : 'other';
+        console.log(`[Approvals] ${row.id} (${row.tool_name}): his reply read as ${answer}${read && read.failed !== true ? '' : ' (the read failed)'}.`);
+        if (answer === 'other') return null;
+        // The read takes seconds: the card must still be the one waiting here.
+        const still = await this.pendingHere(message);
+        if (still.length !== 1 || still[0].id !== row.id) return null;
+        try { this.db.saveMessage({ ...message, metadata: { ...(message.metadata || {}), answeredCard: row.id } }); } catch { /* history is best effort */ }
+        return this.decide(row.id, answer === 'yes' ? 'approved' : 'denied', { via: READ_VIA, message, sendCallback });
+    }
+
+    /** The card as he read it: its question and detail, never its reason (it may quote the guardian). */
+    _cardAsShown(row) {
+        const plain = row.origin_meta?.card;
+        if (plain && typeof plain.question === 'string') {
+            return { question: plain.question, detail: plain.detail ? String(plain.detail) : null, lang: plain.lang === 'es' ? 'es' : 'en' };
+        }
+        const preview = typeof row.origin_meta?.preview === 'string' ? row.origin_meta.preview : '';
+        return { question: `Approve ${row.tool_name}?`, detail: preview || row.summary || null, lang: 'en' };
     }
 
     /**
@@ -2089,8 +2187,10 @@ class ApprovalService {
                 try { this.agent?.errands?.ownerSaidNo?.(errandId, row.args || null); } catch { /* the sweep sees the denial too */ }
             }
             const words = String(message?.content || '').trim();
-            // A slash command ("/cancel <id>") answers the card only.
-            if (Number.isFinite(errandId) && !words.startsWith('/') && CANCEL_ERRAND_RE.test(words) && typeof this.agent?.errands?.cancelFromCard === 'function') {
+            // A slash command ("/cancel <id>") answers the card only. So does a
+            // no the guardian read: only his own short word ("no, cancelalo")
+            // closes the whole errand.
+            if (Number.isFinite(errandId) && via !== READ_VIA && !words.startsWith('/') && CANCEL_ERRAND_RE.test(words) && typeof this.agent?.errands?.cancelFromCard === 'function') {
                 try {
                     const line = await this.agent.errands.cancelFromCard(errandId);
                     if (line) text = line;

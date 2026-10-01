@@ -4,6 +4,7 @@
  * prompt named that the code does not have, or two rules that gave opposite
  * orders.
  */
+jest.mock('axios');
 const fs = require('fs');
 const path = require('path');
 const { getSystemInstruction } = require('../src/prompts/system');
@@ -177,14 +178,13 @@ describe('the errand rules and the waiting-card line against the approval gate',
     const { ApprovalService } = require('../src/services/approval-service');
     const { ERRAND_RULES, getTurnContext } = require('../src/prompts/system');
     const OWNER_JID = '15550100@s.whatsapp.net';
+    const rule = (n) => ERRAND_RULES.split('\n').find(l => l.startsWith(`${n}.`));
+    const ownerSays = (content) => ({ id: `m-${Math.random()}`, role: 'user', content, source: 'whatsapp:assistant', timestamp: new Date().toISOString(), metadata: { chatId: OWNER_JID } });
+    const ACCEPT = { toolName: 'answerErrand', args: { id: 7, action: 'accept', date: '2026-10-08', time: '10:30' } };
+    const errandRun = { role: 'user', content: 'ERRAND 7', source: 'errand', metadata: { chatId: 'errand_7', errandId: 7 } };
 
-    test('errand rule 4 gives no bare "sí" as an answer to act on', () => {
-        const rule4 = ERRAND_RULES.split('\n').find(l => l.startsWith('4.'));
-        expect(rule4).not.toMatch(/"s[ií]"/i);
-        expect(rule4).toContain('his bare yes or no sends nothing through you');
-    });
-
-    test('a card his short word did not decide: calling its tool again does not answer it, and nothing that writes runs', async () => {
+    // A real gate on a real database in a temp folder.
+    async function withGate(fn) {
         jest.spyOn(console, 'log').mockImplementation(() => { });
         jest.spyOn(console, 'warn').mockImplementation(() => { });
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-prompt-card-'));
@@ -198,25 +198,182 @@ describe('the errand rules and the waiting-card line against the approval gate',
             };
             agent.delivery = new DeliveryService(agent);
             const svc = new ApprovalService(agent);
-            const call = { toolName: 'answerErrand', args: { id: 7, action: 'accept', date: '2026-10-08', time: '10:30' } };
-            const card = await svc.request({ message: { role: 'user', content: 'ERRAND 7', source: 'errand', metadata: { chatId: 'errand_7', errandId: 7 } }, ...call, reason: 'r' });
-            // Deedee asks him something else after the card; his "sí" may answer that.
-            db.saveMessage({ id: 'q-after', role: 'assistant', content: '¿Apago las luces?', source: 'whatsapp:assistant', chatId: OWNER_JID, timestamp: new Date(Date.now() + 1000).toISOString(), metadata: { chatId: OWNER_JID } });
-            const yes = { id: 'yes-1', role: 'user', content: 'sí', source: 'whatsapp:assistant', timestamp: new Date().toISOString(), metadata: { chatId: OWNER_JID } };
-            expect(await svc.intercept(yes, jest.fn())).toBeNull();
-            const line = getTurnContext({ dateString: 'T', waitingCard: svc.undecidedCard(yes) });
-            expect(line).toContain(`A CARD WAITS IN THIS CHAT: ${card.id} (answerErrand)`);
-            expect(line).toContain('calling its tool again does not answer it, and nothing that writes to anyone runs on his short word');
-            const review = (c) => svc.review({ message: yes, ...c, historyUntrusted: false, foreignText: false });
-            const again = await review(call);
-            expect(again.run).toBe(false);
-            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
-            expect((await review({ toolName: 'sendMessage', args: { to: '+15550101', content: 'dale', session: 'user' } })).run).toBe(false);
-            expect(agent._executeTool).not.toHaveBeenCalled();
+            await fn({ db, agent, svc });
         } finally {
             db.close();
             fs.rmSync(dir, { recursive: true, force: true });
             jest.restoreAllMocks();
         }
+    }
+
+    test('errand rule 4 gives no bare "sí" as an answer to act on', () => {
+        expect(rule(4)).not.toMatch(/"s[ií]"/i);
+        expect(rule(4)).toContain('his bare yes or no sends nothing through you');
+    });
+
+    test('errand rules 1, 3, 4 and 6 say what the gate and the errand service do now', () => {
+        expect(rule(1)).toContain("A second 'startErrand' for the same person within minutes is refused and returns what already went out: tell him what went out, and do not retry.");
+        expect(rule(3)).toContain('send=true, and text set to that exact draft. A draft he saw in the last 30 minutes goes out as it is, even while a card waits in his chat.');
+        expect(rule(4)).toContain('His replies to a card in his chat are read for him: a clear yes or no to that card decides it before it reaches you.');
+        expect(rule(6)).toContain('A message the check holds back goes nowhere: it comes to him as a card with the exact text, and his yes on that card sends it.');
+    });
+
+    test('a card his short word did not decide: calling its tool again does not answer it, and nothing that writes runs', () => withGate(async ({ db, agent, svc }) => {
+        const card = await svc.request({ message: errandRun, ...ACCEPT, reason: 'r' });
+        // Deedee asks him something else after the card; his "sí" may answer that.
+        db.saveMessage({ id: 'q-after', role: 'assistant', content: '¿Apago las luces?', source: 'whatsapp:assistant', chatId: OWNER_JID, timestamp: new Date(Date.now() + 1000).toISOString(), metadata: { chatId: OWNER_JID } });
+        const yes = { ...ownerSays('sí'), id: 'yes-1' };
+        expect(await svc.intercept(yes, jest.fn())).toBeNull();
+        const line = getTurnContext({ dateString: 'T', waitingCard: svc.undecidedCard(yes) });
+        expect(line).toContain(`A CARD WAITS IN THIS CHAT: ${card.id} (answerErrand)`);
+        expect(line).toContain('calling its tool again does not answer it, and nothing that writes to anyone runs on his short word, except an errand draft he saw before it.');
+        const review = (c) => svc.review({ message: yes, ...c, historyUntrusted: false, foreignText: false });
+        const again = await review(ACCEPT);
+        expect(again.run).toBe(false);
+        expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+        expect((await review({ toolName: 'sendMessage', args: { to: '+15550101', content: 'dale', session: 'user' } })).run).toBe(false);
+        expect(agent._executeTool).not.toHaveBeenCalled();
+    }));
+
+    test('rule 4 against the gate: his own words to the card are read for him and decide it before the model', () => withGate(async ({ db, agent, svc }) => {
+        const card = await svc.request({ message: errandRun, ...ACCEPT, reason: 'r', card: { question: '¿Le acepto a Alice el jueves 08/10 a las 10:30?', lang: 'es' } });
+        svc.guardian = { readReply: jest.fn().mockResolvedValue({ answer: 'yes', reason: 'He says yes to 10:30.', failed: false }) };
+        const res = await svc.intercept(ownerSays('aceptale las 10:30'), jest.fn());
+        expect(res.handled).toBe(true);
+        expect(db.getPendingConfirmation(card.id).status).toBe('approved');
+        expect(agent._executeTool).toHaveBeenCalledWith('answerErrand', ACCEPT.args, expect.anything(), expect.any(Function), null, { approved: true });
+    }));
+});
+
+describe('the errand rules against the real errand service', () => {
+    const os = require('os');
+    const axios = require('axios');
+    const { AgentDB } = require('../src/db');
+    const { ApprovalService } = require('../src/services/approval-service');
+    const { ErrandService } = require('../src/services/errands');
+    const { ErrandsExecutor } = require('../src/executors/errands');
+    const OWNER = '5490000000001';
+    const OWNER_CHAT = `${OWNER}@s.whatsapp.net`;
+    const CONTACT = '5490000000002';
+    const CONTACT_JID = `${CONTACT}@s.whatsapp.net`;
+    const DRAFT = 'llego 10 minutos tarde';
+    let dir, db, agent, approvals, service, executor, chat, sends, checkMessage;
+
+    const ownerSays = (content, at = Date.now()) => ({ id: `m-${Math.random()}`, role: 'user', content, source: 'whatsapp', timestamp: new Date(at).toISOString(), metadata: { chatId: OWNER_CHAT } });
+    const run = (name, args, message) => executor.execute(name, args, { message, approved: false, ownerTyped: true });
+    const gate = (message, toolName, args) => approvals.review({ message, toolName, args, historyUntrusted: false, foreignText: false });
+
+    beforeEach(() => {
+        jest.spyOn(console, 'log').mockImplementation(() => { });
+        jest.spyOn(console, 'warn').mockImplementation(() => { });
+        jest.spyOn(console, 'error').mockImplementation(() => { });
+        delete process.env.ERRANDS;
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-prompt-errand-'));
+        db = new AgentDB(dir);
+        db.init();
+        db.setAgentSetting('owner_phone', OWNER);
+        sends = [];
+        // He wrote to Alice before: the first message needs no card for that.
+        chat = [{ role: 'assistant', content: 'hola, todo bien?', timestamp: Date.now() - 7 * 24 * 3600e3, id: 'H1', fromMe: true }];
+        axios.get.mockImplementation(async (url) => {
+            if (url.endsWith('/whatsapp/history')) return { data: chat };
+            if (url.endsWith('/whatsapp/resolve')) return { data: { phoneJid: CONTACT_JID, lid: null, name: 'Alice', allJids: [CONTACT_JID] } };
+            if (url.endsWith('/whatsapp/style-stats')) return { data: { n: 0 } };
+            if (url.endsWith('/whatsapp/status')) return { data: { assistant: { me: { id: '5490000000007' }, allowedNumbers: [OWNER] }, user: { me: { id: OWNER }, allowedNumbers: [] } } };
+            throw new Error(`unexpected GET ${url}`);
+        });
+        agent = {
+            db,
+            client: { models: { generateContent: jest.fn(async () => ({ text: JSON.stringify({ text: DRAFT, date: '', time: '' }), usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } })) } },
+            interface: {
+                broadcast: jest.fn().mockResolvedValue(true),
+                send: jest.fn(async (payload) => {
+                    payload.sentMessageId = `W${sends.length + 1}`;
+                    sends.push(payload);
+                    chat.push({ role: 'assistant', content: payload.content, timestamp: Date.now(), id: payload.sentMessageId, fromMe: true });
+                    return true;
+                })
+            },
+            delivery: {
+                resolveOwnerTarget: () => ({ channel: 'whatsapp', target: OWNER_CHAT }),
+                isOwnerTarget: (channel, target) => String(target || '').replace(/@.*$/, '') === OWNER,
+                deliver: jest.fn().mockResolvedValue({ delivered: true })
+            },
+            notifications: { create: jest.fn() },
+            _getOwnerWaIds: async () => new Set([OWNER_CHAT]),
+            _ownerTyped: async (m) => m?.source === 'whatsapp' && !m?.metadata?.jobName && m?.metadata?.chatId === OWNER_CHAT
+        };
+        approvals = new ApprovalService(agent);
+        agent.approvals = approvals;
+        // The message check passes unless a test says otherwise.
+        checkMessage = jest.fn().mockResolvedValue({ ok: true, reason: '', failed: false });
+        approvals.guardian = { checkMessage, readReply: jest.fn().mockResolvedValue({ answer: 'other', reason: '', failed: false }) };
+        service = new ErrandService(agent, { partGapMs: 0, bufferMs: 5 });
+        agent.errands = service;
+        executor = new ErrandsExecutor({ agent });
+    });
+
+    afterEach(() => {
+        service.stop();
+        approvals.stop();
+        db.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+        jest.restoreAllMocks();
+    });
+
+    test('rule 1: two starts in one turn send one message; the second is refused and names what went out', async () => {
+        const origin = ownerSays('decile a Alice que llego 10 minutos tarde');
+        const args = { contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde' };
+        const [a, b] = await Promise.all([
+            service.start(args, { originMessage: origin, runId: 'run-1' }),
+            service.start(args, { originMessage: origin, runId: 'run-1' })
+        ]);
+        expect(sends.map(m => m.content)).toEqual([DRAFT]);
+        const refused = [a, b].find(r => r.success === false);
+        expect(refused).toBeTruthy();
+        expect(JSON.stringify(refused)).toContain(DRAFT);
+        expect(refused.error).toMatch(/Nothing (?:more )?was sent/);
+    });
+
+    // A job's card waits in his chat, and he asks for a draft first.
+    async function jobCardThenDraft() {
+        const job = await approvals.request({ message: { source: 'scheduler', metadata: { jobName: 'facturas', chatId: 'scheduled_facturas' } }, toolName: 'sendEmail', args: { to: 'user@example.com', subject: 'x' }, reason: 'r' });
+        const args = { contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde', send: false };
+        const draft = await run('startErrand', args, ownerSays('decile a Alice que llego 10 minutos tarde, no lo mandes todavía'));
+        expect(draft).toMatchObject({ success: true, sent: false, draft: DRAFT });
+        db.saveMessage({ id: 'shown', role: 'assistant', content: `Le mandaría a Alice: "${DRAFT}". ¿Lo mando?`, source: 'whatsapp', chatId: OWNER_CHAT, timestamp: new Date(Date.now() + 1).toISOString(), metadata: { chatId: OWNER_CHAT } });
+        return { job, sendArgs: { ...args, send: true, text: DRAFT } };
+    }
+
+    test('rule 3: "dale, mandalo" sends the draft he saw as it is, while a job card waits, with no second check', async () => {
+        const { job, sendArgs } = await jobCardThenDraft();
+        checkMessage.mockClear();
+        const yes = ownerSays('dale, mandalo', Date.now() + 5);
+        expect(await approvals.intercept(yes, jest.fn())).toBeNull();
+        expect((await gate(yes, 'startErrand', sendArgs)).run).toBe(true);
+        expect(await run('startErrand', sendArgs, yes)).toMatchObject({ success: true, sent: true });
+        expect(sends.map(m => m.content)).toEqual([DRAFT]);
+        expect(checkMessage).not.toHaveBeenCalled();
+        expect(db.getPendingConfirmation(job.id).status).toBe('pending');
+    });
+
+    test('rule 3: a draft made in the same run as his "dale" is no draft he saw, so his word does not send it', async () => {
+        // His word came first; the model then drafted and tried to send in that run.
+        const yes = ownerSays('dale, mandalo', Date.now() - 1000);
+        const { job, sendArgs } = await jobCardThenDraft();
+        const res = await gate(yes, 'startErrand', sendArgs);
+        expect(res).toMatchObject({ run: false, approvalId: job.id });
+        expect(sends).toEqual([]);
+    });
+
+    test('rule 6: a message the check holds back goes nowhere and comes to him as a card with the exact text', async () => {
+        checkMessage.mockResolvedValue({ ok: false, reason: 'It says more than his words.', failed: false });
+        const out = await run('startErrand', { contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde' }, ownerSays('decile a Alice que llego 10 minutos tarde'));
+        expect(sends).toEqual([]);
+        expect(checkMessage).toHaveBeenCalledWith(expect.objectContaining({ draft: DRAFT }));
+        const cards = db.listPendingConfirmations();
+        expect(cards).toHaveLength(1);
+        expect(JSON.stringify(cards[0].origin_meta?.card || {})).toContain(DRAFT);
+        expect(out.sent).not.toBe(true);
     });
 });

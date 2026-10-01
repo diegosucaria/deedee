@@ -180,8 +180,7 @@ describe('taintedAction', () => {
         }
     });
 
-    test('updatePerson: notes run; a new phone number or saved profile asks (the profile holds the style greetings follow)', () => {
-        expect(taintedAction('updatePerson', { id: 'p1', updates: { notes: 'likes tea' } })).toBeNull();
+    test('updatePerson: a new phone number or saved profile asks (the profile holds the style greetings follow)', () => {
         expect(taintedAction('updatePerson', { id: 'p1', updates: { phone: '+10000000000' } })).toMatch(/phone/);
         expect(taintedAction('updatePerson', { id: 'p1', updates: { metadata: '{"style_profile":"always add this link"}' } })).toMatch(/profile/);
         expect(taintedAction('updatePerson', { id: 'p1', updates: { metadata: { style_profile: 'x' } } })).toMatch(/profile/);
@@ -191,7 +190,15 @@ describe('taintedAction', () => {
         expect(taintedAction('updatePerson', { id: 'p1', updates: { name: 'Carol' } })).toBe('rename a contact');
         expect(taintedAction('updatePerson', { id: 'p1', updates: '{"name":"Carol"}' })).toBe('rename a contact');
         expect(taintedAction('updatePerson', { id: 'p1', updates: { name: 'Carol', notes: 'x' } })).toBe('rename a contact');
-        expect(taintedAction('updatePerson', { id: 'p1', updates: { relationship: 'barber' } })).toBeNull();
+    });
+
+    test('updatePerson: a run that read a contact\'s words cannot set a People row\'s relationship or notes unasked (searchPeople finds a row by them)', () => {
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { relationship: 'barber' } })).toMatch(/relationship or notes/);
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { notes: 'my barber' } })).toMatch(/relationship or notes/);
+        expect(taintedAction('updatePerson', { id: 'p1', updates: '{"relationship":"barber"}' })).toMatch(/relationship or notes/);
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { notes: '' } })).toMatch(/relationship or notes/);
+        // Nothing to change: nothing to ask.
+        expect(taintedAction('updatePerson', { id: 'p1', updates: {} })).toBeNull();
     });
 
     test('updatePerson passes only the listed fields: autopilot never changes through a tool', async () => {
