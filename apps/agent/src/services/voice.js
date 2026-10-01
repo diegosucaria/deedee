@@ -805,12 +805,14 @@ class VoiceService {
     /**
      * Draft one step. Two model calls at most. An accept or a thanks first
      * reuses his own past reply (ownReply): no model call, and fromOwn: true.
+     * `checkWords`: the words the code checks compare the draft with (his
+     * own typed words); left out, the request and the words in `brief`.
      * @returns {Promise<{ ok: boolean, parts: string[], text: string, date: string|null, time: string|null,
      *   problems: string[], calls: number, fromOwn?: boolean }>}
      *   ok false: the last draft failed a check (problems) or the model failed; send nothing.
      */
     async draft({ ownerName, contactName, history, notes, stats, step, brief, now = Date.now(), timeZone, chatId = null,
-        requireTime = null, requireDate = null, range = null, allowMoney = false, check = null }) {
+        requireTime = null, requireDate = null, range = null, allowMoney = false, check = null, checkWords = null }) {
         const oneDate = Array.isArray(requireDate) ? (requireDate.length === 1 ? requireDate[0] : null) : requireDate;
         if ((step === 'accept' || step === 'thanks') && !range && oneDate && ownReplyEnabled()) {
             const line = ownReply(history, { step, slot: { date: oneDate, time: requireTime }, timeZone, now, stats });
@@ -830,7 +832,8 @@ class VoiceService {
         const model = this.config.getModel('FLASH');
         const thinking = this.config.getThinkingConfig('FLASH', 'impersonation', { model });
         // His own words. A request the assistant wrote after reading someone else's text is not his.
-        const own = brief?.requestTainted ? '' : [brief?.request, brief?.words].filter(Boolean).join('\n');
+        const own = typeof checkWords === 'string' ? checkWords
+            : brief?.requestTainted ? '' : [brief?.request, brief?.words].filter(Boolean).join('\n');
         // Money only when his words name it: the caller's guess may read "apagó" as "pagó".
         const money = !!allowMoney && MONEY_RE.test(foldText(own));
         // The weekdays CONTACT offered: a propose or a decline may turn them down.
@@ -872,7 +875,10 @@ class VoiceService {
             const time = requireTime || ownTime;
             // The days the text may name: his, or (a request with no day of his) the one the model chose.
             const days = dates.length > 0 ? dates : (step === 'request' && answer.date ? [answer.date] : []);
-            const problems = checkText(parts, { step, time: range ? null : time, range, allowMoney: money, ownWords: own, dates: days, now, timeZone, offered });
+            // A step that names only his times (a decline, a say, a tell) never
+            // takes its own time as the slot's: the time must be in his words.
+            const checkTime = range ? null : (HIS_DAYS_STEPS.has(step) ? requireTime : time);
+            const problems = checkText(parts, { step, time: checkTime, range, allowMoney: money, ownWords: own, dates: days, now, timeZone, offered });
             if (dates.length > 0 && answer.date && !dates.includes(answer.date)) problems.push(`it asked for ${answer.date} instead of ${dates.join(' or ')}`);
             last = { parts, text: parts.join('\n'), date: answer.date || dates[0] || null, time: range ? null : (requireTime || ownTime), problems };
             // The caller's own check (his calendar), once the text passes.

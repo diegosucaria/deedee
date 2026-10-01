@@ -2904,19 +2904,24 @@ class AgentDB {
 
   /**
    * Rows of these chat ids (one person's chat can carry several ids) written
-   * at or after `sinceIso`, oldest first: { id, role, timestamp, metadata }.
+   * at or after `sinceIso`, oldest first:
+   * { id, role, timestamp, metadata, head, source, chatId }.
    * `excludeId`: the message being handled now. `more` is true when rows
-   * past `limit` were left out.
+   * past `limit` were left out. `withCalls`: the model's tool calls of each
+   * run come too, as role 'model' rows with `calls: [{ name, args }]`.
    */
-  listChatMessagesSince(chatIds = [], sinceIso, { excludeId = null, limit = 50 } = {}) {
+  listChatMessagesSince(chatIds = [], sinceIso, { excludeId = null, limit = 50, withCalls = false } = {}) {
     const ids = [...new Set((chatIds || []).filter(Boolean).map(String))];
     const since = Date.parse(sinceIso);
     if (ids.length === 0 || !Number.isFinite(since)) return { rows: [], more: false };
     const cap = Math.max(1, Math.min(Number(limit) || 50, 200));
     // His words and Deedee's only: a run's tool steps are not messages to him.
+    const roles = withCalls ? "('user', 'assistant', 'model')" : "('user', 'assistant')";
     const newest = this.db.prepare(`
-      SELECT id, role, timestamp, metadata, substr(content, 1, 400) AS head FROM messages
-      WHERE chat_id IN (${ids.map(() => '?').join(', ')}) AND id IS NOT ? AND role IN ('user', 'assistant')
+      SELECT id, role, timestamp, metadata, source, chat_id, substr(content, 1, 400) AS head,
+             CASE WHEN role = 'model' THEN parts ELSE NULL END AS parts
+      FROM messages
+      WHERE chat_id IN (${ids.map(() => '?').join(', ')}) AND id IS NOT ? AND role IN ${roles}
       ORDER BY timestamp DESC, rowid DESC
       LIMIT ?
     `).all(...ids, excludeId === null || excludeId === undefined ? null : String(excludeId), cap + 1);
@@ -2926,7 +2931,14 @@ class AgentDB {
       let metadata = null;
       try { metadata = r.metadata ? JSON.parse(r.metadata) : null; } catch { metadata = null; }
       // The first words, so a reader can tell a question from a statement.
-      return { id: r.id, role: r.role, timestamp: r.timestamp, metadata, head: typeof r.head === 'string' ? r.head : '' };
+      const row = { id: r.id, role: r.role, timestamp: r.timestamp, metadata, head: typeof r.head === 'string' ? r.head : '', source: r.source || null, chatId: r.chat_id || null };
+      if (r.role === 'model') {
+        let parts = [];
+        try { parts = r.parts ? JSON.parse(r.parts) : []; } catch { parts = []; }
+        row.calls = (Array.isArray(parts) ? parts : []).filter(p => p && p.functionCall && typeof p.functionCall.name === 'string')
+          .map(p => ({ name: p.functionCall.name, args: p.functionCall.args && typeof p.functionCall.args === 'object' ? p.functionCall.args : {} }));
+      }
+      return row;
     });
     return { rows, more: after.length > cap };
   }

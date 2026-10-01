@@ -508,6 +508,27 @@ describe('voice: drafting', () => {
         expect(out.problems).toContain('it named a number that is not the slot\'s day or time');
     });
 
+    test('a say that names one time he never gave is refused: its own time is never taken as allowed', async () => {
+        const bad = { text: 'dale, llego a las 21', date: '', time: '' };
+        const { svc } = service([bad, bad]);
+        const out = await svc.draft({ stats: OWNER_STATS, step: 'say', brief: { words: 'llego tarde' }, timeZone: TZ, now: NOW });
+        expect(out.ok).toBe(false);
+        expect(out.problems).toContain('it named a time he never gave');
+    });
+
+    test('checkWords, his own typed words, replace the request and the words for the code checks', async () => {
+        const steered = { text: 'dale, el viernes te dejo 20 mil de seña', date: '', time: '' };
+        // The model's words name the day and the money, his typed words do not: refused.
+        const { svc } = service([steered, steered]);
+        const out = await svc.draft({ stats: OWNER_STATS, step: 'say', brief: { words: 'el viernes le dejo 20 mil de seña' }, timeZone: TZ, now: NOW, allowMoney: true, checkWords: 'contestale vos' });
+        expect(out.ok).toBe(false);
+        expect(out.problems).toEqual(expect.arrayContaining(['it talked about money', 'it named a day he never gave']));
+        // His typed words name them: the same draft passes.
+        const { svc: svc2 } = service([steered]);
+        const ok = await svc2.draft({ stats: OWNER_STATS, step: 'say', brief: { words: 'x' }, timeZone: TZ, now: NOW, allowMoney: true, checkWords: 'decile que el viernes le dejo 20 mil de seña' });
+        expect(ok.ok).toBe(true);
+    });
+
     test('the time the text names becomes the slot when the model leaves it empty', async () => {
         const { svc } = service([{ text: 'Buenas! hay lugar el jueves tipo 10?', date: '2026-10-08', time: '' }]);
         const out = await svc.draft({ stats: OWNER_STATS, step: 'request', brief: {}, timeZone: 'UTC' });

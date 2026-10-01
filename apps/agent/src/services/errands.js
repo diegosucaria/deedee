@@ -25,10 +25,11 @@
  */
 const crypto = require('crypto');
 const axios = require('axios');
-const { VoiceService, callModel, cleanText, checkText, splitParts, timesIn, sameTime } = require('./voice');
+const { VoiceService, callModel, cleanText, checkText, splitParts, timesIn, sameTime, foldText, MONEY_RE } = require('./voice');
 const { ConfigService } = require('./config-service');
 const { resultText } = require('./guardian-service');
 const { decisionWord } = require('./approval-service');
+const { telegramOwnerIds } = require('./delivery-service');
 const { TurnTaint } = require('../utils/untrusted-content');
 const { styleStats } = require('@deedee/shared/src/style-stats');
 
@@ -94,8 +95,9 @@ const CHECK_SLACK_MS = 5e3;
 const CHECK_MS = CHECK_TRIES * 8e3 + CHECK_SLACK_MS;
 const CHECK_REASON_CHARS = 120;
 // His own typed words for the message check: the lines that started the
-// errand (his earlier ones from this long before, at most 2, then the one
-// that started it) and the line that asked for a step. Each this long at most.
+// errand (the one that started it, and at most 2 earlier ones from this long
+// before that Deedee answered with a question) and the line that asked for a
+// step. Each this long at most.
 const ASK_CHARS = 600;
 const ASK_LINES = 3;
 const ASK_EARLIER = 2;
@@ -162,20 +164,46 @@ function bareReply(text) {
     return words.length <= 4 && words.every(w => BARE_WORDS.has(w) || /^(?:ja|je|ji|ha)+[jh]?$/.test(w) || !!decisionWord(w, { actionWords: true }));
 }
 
+// A voice note, a photo or a file, or what a model wrote about one: never his
+// typing. Any line of the message that starts with such a mark counts.
+const MEDIA_MARK_RE = /^\s*\[(?:Voice(?: Message| Transcript)?|Audio(?: Message)?|Image(?: Description)?|Video|Sticker|Document|Media)\b[^\]\n]*\]/im;
+// Sources only he can write from (Agent._ownerTyped). A voice call is spoken, not typed.
+const TYPED_SOURCES = new Set(['web', 'web_chat', 'iphone', 'ios_shortcut', 'http', 'api']);
+// His chat with Deedee: his only when the chat is one of his own.
+const CHAT_SOURCES = new Set(['whatsapp', 'whatsapp:assistant', 'telegram']);
+
+/** A message with a voice note or a media mark in it. */
+function hasMedia(content, parts) {
+    if (typeof content === 'string' && MEDIA_MARK_RE.test(content)) return true;
+    return Array.isArray(parts) && parts.some(p => /^audio\//i.test(String(p?.inlineData?.mimeType || '')));
+}
+
+/** A run's tool calls that started or stepped an errand. A draft (send=false) did neither. */
+function errandCall(calls) {
+    return (Array.isArray(calls) ? calls : []).some(c => c?.name === 'answerErrand' || (c?.name === 'startErrand' && c?.args?.send !== false));
+}
+
+/** A line, as two errands' asks compare it. */
+function lineKey(text) {
+    return String(text ?? '').replace(/…$/, '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 300);
+}
+
 /**
  * His own typed line, cut to 600 characters, or null: never a forward, a
- * line of a job, a sub-agent or an errand, his answer to a card or a
- * question, a slash command, our own "[approved …]" line, a bare media
- * marker ("[Image]"), or a bare yes or no.
+ * line of a job, a sub-agent, an errand or a group, his personal account's
+ * mirror, his answer to a card or a question, a slash command, our own
+ * "[approved …]" line, a voice note or a media mark, or a bare yes or no.
+ * Where it came from is checked apart (_typedBy).
  */
 function typedLine(content, metadata) {
     const meta = metadata && typeof metadata === 'object' ? metadata : {};
     const taint = meta.untrustedTaint;
     if (Array.isArray(taint) ? taint.length > 0 : !!taint) return null;
-    if (meta.answeredCard || meta.answeredQuestion || meta.jobName || meta.errandId || meta.isSubAgent) return null;
+    if (meta.answeredCard || meta.answeredQuestion || meta.jobName || meta.errandId || meta.isSubAgent || meta.isGroup) return null;
+    if (meta.session === 'user' || meta.fromMe === true) return null;
     const text = typeof content === 'string' ? content.trim() : '';
     if (!text || text.startsWith('/') || /^\[(?:approved|SYSTEM)\b/i.test(text) || bareReply(text)) return null;
-    if (/^\[(?:Audio|Image|Video|Sticker|Document|Media)\b[^\]]*\]$/i.test(text)) return null;
+    if (hasMedia(text)) return null;
     return typedCut(text);
 }
 
@@ -1419,32 +1447,26 @@ class ErrandService {
     }
 
     /**
-     * His own typed words that started an errand: up to two earlier lines of
-     * his in the same chat from the last 30 minutes ("pedile turno a Alice
-     * el jueves", then "a las 10"), then this message. Oldest first. A
-     * forward gives none.
+     * His own typed words that started an errand, oldest first: this
+     * message, and before it at most two lines of his that Deedee answered
+     * with a question, inside 30 minutes ("pedile turno a Alice el jueves",
+     * "¿A qué hora?", "a las 10"). A forward, a voice note or a photo gives
+     * none, and so does anything he did not type himself.
      * @returns {Promise<string[]>}
      */
     async _typedAsk(message) {
         if (!message || typeof message !== 'object') return [];
         const meta = message.metadata && typeof message.metadata === 'object' ? message.metadata : {};
-        const taint = meta.untrustedTaint;
-        if (Array.isArray(taint) ? taint.length > 0 : !!taint) return [];
-        const own = typedLine(message.content, meta);
         const chatId = meta.chatId ? String(meta.chatId) : null;
+        const owners = await this._ownerChats(message);
+        if (!this._typedBy({ source: message.source, metadata: meta, chatId }, owners)) return [];
+        // A voice note or a photo: no typed ask at all, so the check falls back.
+        if (hasMedia(message.content, message.parts)) return [];
+        const own = typedLine(message.content, meta);
         let earlier = [];
         if (chatId && typeof this.db.listChatMessagesSince === 'function') {
-            const at = this._sentAt(message) ?? this.clock();
-            // His WhatsApp chat can carry several ids (his number, his WhatsApp ID).
-            let chats = [chatId];
-            if (/^whatsapp/.test(String(message.source || ''))) {
-                try { chats = [...chats, ...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { /* this chat id alone */ }
-            }
-            const head = typeof message.content === 'string' ? message.content.slice(0, 400).trim() : '';
             try {
-                const { rows } = this.db.listChatMessagesSince(chats, new Date(at - ASK_LOOKBACK_MS).toISOString(), { excludeId: message.id || null, limit: 50 });
-                earlier = rows.filter(r => r.role === 'user' && Date.parse(r.timestamp) < at && String(r.head || '').trim() !== head)
-                    .map(r => typedLine(r.head, r.metadata)).filter(Boolean).slice(-ASK_EARLIER);
+                earlier = await this._earlierAsk(message, chatId, owners);
             } catch (e) {
                 console.warn(`[Errands] his earlier words not read: ${e.message}`);
                 earlier = [];
@@ -1453,11 +1475,147 @@ class ErrandService {
         return [...earlier, ...(own ? [own] : [])];
     }
 
-    /** His typed message that asked for a step ("decile que llego 10 minutos tarde"), or none. */
+    /**
+     * Walking back from his message: Deedee's reply that asked him
+     * something, and before it a line he typed. At most two such hops. A
+     * line that started or stepped an errand (one stored in another errand's
+     * ask, or whose run called an errand tool) ends the walk.
+     */
+    async _earlierAsk(message, chatId, owners) {
+        const at = this._sentAt(message) ?? this.clock();
+        // His WhatsApp chat can carry several ids (his number, his WhatsApp ID).
+        let chats = [chatId];
+        if (/^whatsapp/.test(String(message.source || ''))) chats = [...chats, ...[...owners].filter(id => id.includes('@'))];
+        const head = typeof message.content === 'string' ? message.content.slice(0, 400).trim() : '';
+        const { rows } = this.db.listChatMessagesSince(chats, new Date(at - ASK_LOOKBACK_MS).toISOString(), { excludeId: message.id || null, limit: 100, withCalls: true });
+        const before = rows.filter(r => Date.parse(r.timestamp) < at && !(r.role === 'user' && String(r.head || '').trim() === head));
+        const taken = this._otherAskLines();
+        const lines = [];
+        let i = before.length - 1;
+        for (let hop = 0; hop < ASK_EARLIER; hop++) {
+            if (!this._deedeeAsks(before[i])) break;
+            i -= 1;
+            // The run of the line that question answered: its tool calls and progress lines.
+            let stepped = false;
+            while (i >= 0 && (before[i].role === 'model' || (before[i].role === 'assistant' && before[i].metadata?.progress))) {
+                if (errandCall(before[i].calls)) stepped = true;
+                i -= 1;
+            }
+            const row = before[i];
+            if (stepped || !row || row.role !== 'user' || !this._typedBy(row, owners)) break;
+            const line = typedLine(row.head, row.metadata);
+            if (!line || taken.has(lineKey(line))) break;
+            lines.unshift(line);
+            i -= 1;
+        }
+        return lines;
+    }
+
+    /** Deedee's own reply in his chat that asks him something: no note, card line or job's line. */
+    _deedeeAsks(row) {
+        if (!row || row.role !== 'assistant' || row.source === 'whatsapp:user') return false;
+        const meta = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+        const marks = ['errandId', 'jobName', 'jobTaint', 'progress', 'approval', 'approvalLine', 'aboutApproval', 'isSubAgent'];
+        if (marks.some(k => meta[k] !== undefined && meta[k] !== null && meta[k] !== false) || meta.session === 'user') return false;
+        return /[?¿]/.test(String(row.head || ''));
+    }
+
+    /** The lines stored as other errands' asks: a line that started one never joins another. */
+    _otherAskLines() {
+        const out = new Set();
+        try {
+            for (const e of this.db.listErrands({ all: true, limit: 50 })) {
+                for (const line of Array.isArray(e?.ask?.original) ? e.ask.original : []) out.add(lineKey(line));
+            }
+        } catch { /* none known */ }
+        return out;
+    }
+
+    /**
+     * His own chats: his WhatsApp ids and his Telegram ids. When his WhatsApp
+     * ids cannot be read, the chat of a message from his chat counts: the
+     * errand tools run only from his own chat (executors/errands.js).
+     * @returns {Promise<Set<string>>}
+     */
+    async _ownerChats(message) {
+        const out = new Set();
+        try { for (const id of (await this.agent._getOwnerWaIds?.()) || []) out.add(String(id)); } catch { /* none read */ }
+        const waKnown = out.size > 0;
+        for (const id of telegramOwnerIds()) out.add(String(id));
+        const chatId = message?.metadata?.chatId ? String(message.metadata.chatId) : null;
+        const source = String(message?.source || '');
+        if (chatId && !waKnown && /^whatsapp/.test(source)) out.add(chatId);
+        return out;
+    }
+
+    /**
+     * Did he type this row himself? Agent._ownerTyped's rule, row by row: a
+     * source only he writes from, or his own chat with Deedee. Never his
+     * personal account's mirror, a contact, a job, a sub-agent, an errand,
+     * a group or a forward.
+     */
+    _typedBy(row, owners) {
+        const meta = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+        const taint = meta.untrustedTaint;
+        if (Array.isArray(taint) ? taint.length > 0 : !!taint) return false;
+        if (meta.isSubAgent || meta.isGroup || meta.jobName || (meta.errandId !== undefined && meta.errandId !== null)) return false;
+        if (meta.session === 'user' || meta.fromMe === true) return false;
+        const source = String(row?.source || '');
+        if (TYPED_SOURCES.has(source)) return true;
+        if (!CHAT_SOURCES.has(source)) return false;
+        const chat = String(meta.chatId || row?.chatId || '');
+        if (!chat) return false;
+        const norm = !chat.includes('@') && /^whatsapp/.test(source) ? `${chat.replace(/\D/g, '')}@s.whatsapp.net` : chat;
+        return owners.has(chat) || owners.has(norm);
+    }
+
+    /**
+     * His typed message that asked for a step ("decile que llego 10 minutos
+     * tarde"), or none. The caller checks that it came from his own chat.
+     */
     _typedNow(message) {
         if (!message || typeof message !== 'object') return [];
+        const source = String(message.source || '');
+        if (!TYPED_SOURCES.has(source) && !CHAT_SOURCES.has(source)) return [];
+        if (hasMedia(message.content, message.parts)) return [];
         const line = typedLine(message.content, message.metadata);
         return line ? [line] : [];
+    }
+
+    /**
+     * His typed line that a gate card carried (ApprovalService keeps it on
+     * the card row as origin_meta.typed), for the approved call that runs
+     * now. Only a card for this very tool, raised in his own chat, not
+     * denied or lapsed, and not yet run. A bare "sí" on it gives none.
+     * @returns {string|null}
+     */
+    _cardTyped(approvalId, toolName, args) {
+        if (!approvalId || typeof this.db.getPendingConfirmation !== 'function') return null;
+        let row = null;
+        try { row = this.db.getPendingConfirmation(String(approvalId)); } catch { return null; }
+        if (!row || row.tool_name !== toolName || !['approved', 'pending'].includes(row.status) || (row.result !== null && row.result !== undefined)) return null;
+        if (row.origin_meta?.ownerChat !== true || typeof row.origin_meta?.typed !== 'string') return null;
+        if (toolName === 'answerErrand' && Number(row.args?.id) !== Number(args?.id)) return null;
+        return typedLine(row.origin_meta.typed, {});
+    }
+
+    /**
+     * The errand's own slot, for a step that names none (say, tell, question,
+     * decline): the slot agreed, else the slot he asked for or proposed.
+     * @returns {{ date: string, time: string|null }|null}
+     */
+    _ownSlot(errand) {
+        if (!errand) return null;
+        const valid = (s) => (s && validDate(s.date) ? { date: s.date, time: normTime(s.time) || null } : null);
+        if (errand.agreed) return valid(errand.agreed);
+        if (errand.slot && errand.slot_owned) return valid({ date: errand.slot.date, time: errand.time_owned ? errand.slot.time : null });
+        // A say clears the slot on the table; the one he asked for at the start stays on its event.
+        try {
+            const started = this.db.listErrandEvents(errand.id, { limit: 5 }).find(e => e.kind === 'started');
+            return valid(started?.detail?.asked);
+        } catch {
+            return null;
+        }
     }
 
     /** Keep the ask a start card carries, for his yes on it: as long as the card lives. */
@@ -1501,10 +1659,11 @@ class ErrandService {
     /**
      * Start an errand from the owner's request (startErrand).
      * @param {object} args - the tool's arguments
-     * @param {{ approved?: boolean, originMessage?: object|null, taint?: string[] }} [ctx]
+     * @param {{ approved?: boolean, approvalId?: string|null, originMessage?: object|null, taint?: string[] }} [ctx]
      *   taint: sources of untrusted content the run read before this call
+     *   approvalId: the card he approved, when this call runs on his yes
      */
-    async start(args = {}, { approved = false, originMessage = null, taint = [], runId = null } = {}) {
+    async start(args = {}, { approved = false, approvalId = null, originMessage = null, taint = [], runId = null } = {}) {
         if (!this.enabled()) return { success: false, error: 'Errands are turned off (ERRANDS=0).' };
         const goal = String(args.goal || '').toLowerCase();
         if (!GOALS.includes(goal)) return { success: false, error: `goal must be one of: ${GOALS.join(', ')}.` };
@@ -1562,8 +1721,10 @@ class ErrandService {
         const shownName = person?.name && (sameName || to.relabelled) ? `${contactName} (${mask})` : contactName;
 
         // His own typed words that started it, for the message check. An
-        // approved call has none of its own: a start card of ours carries them.
-        const typed = approved ? [] : await this._typedAsk(originMessage);
+        // approved call has none of its own: the gate card he approved
+        // carries his typed line, and a start card of ours carries his ask.
+        const cardLine = approved ? this._cardTyped(approvalId, 'startErrand', args) : null;
+        const typed = approved ? (cardLine ? [cardLine] : []) : await this._typedAsk(originMessage);
 
         // One start per person at a time, from the clash check through the
         // first send: two messages of his, or two calls in one turn, never
@@ -1744,8 +1905,8 @@ class ErrandService {
         // A card of ours he approved: its signed key says it showed him exactly
         // this call. A gate card or any other approval carries no such key.
         const sawCard = approved && typeof args.cardKey === 'string' && args.cardKey === this._cardKey(contactJid, args);
-        // His typed ask: from his message, or kept with the start card he approved. A gate card carries none.
-        const original = sawCard ? this._cardAsk(args.cardKey) : approved ? [] : typed;
+        // His typed ask: from his message, from the gate card he approved, or kept with our start card.
+        const original = sawCard ? this._cardAsk(args.cardKey) : typed;
         // The repeat card he approved names the errand it repeats (`after`)
         // and showed what that one sent. Only that clash is passed.
         const seen = sawCard && Number.isInteger(args.after) ? args.after : null;
@@ -1821,11 +1982,18 @@ class ErrandService {
         let draftSlot = slot;
         let calls = 0;
         const exact = typeof args.text === 'string' && args.text.trim() ? args.text.trim() : null;
+        // Words he has seen: a card of ours he approved, or a draft shown in his chat before his message.
+        let ownerChats = [originMessage?.metadata?.chatId];
+        try { ownerChats = [...ownerChats, ...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { /* his chat id alone */ }
+        const seenWords = sawCard || (!!exact && this.isShownDraft(args, { before: this._sentAt(originMessage) ?? Number.NaN, chatIds: ownerChats }));
         if (exact) {
-            // The words of a draft he already saw, or his own.
+            // The words of a draft he already saw, or text the model passed.
+            // Only the slot's days; money only when he saw the words or typed it.
             parts = cleanText(splitParts(exact), stats);
             const problems = checkText(parts, {
-                step: goal === 'book' ? 'request' : 'say', time: range ? null : (slot?.time || null), range, allowMoney: true
+                step: goal === 'book' ? 'request' : 'say', time: range ? null : (slot?.time || null), range,
+                dates: goal !== 'book' ? null : windowStart ? windowDays(windowStart, windowEnd) : (slot ? [slot.date] : null),
+                now, timeZone: tz, allowMoney: seenWords || (original.length > 0 && MONEY_RE.test(foldText(original.join('\n'))))
             });
             if (problems.length > 0) return { success: false, error: `That text cannot go out: ${problems.join('; ')}. Nothing was sent.` };
             const named = timesIn(parts.join('\n'));
@@ -1921,18 +2089,19 @@ class ErrandService {
         // no draft he saw before his message) go through the message check
         // first. Held, or no check: a card with the exact words, and his yes
         // on it sends them with no second check.
-        let ownerChats = [originMessage?.metadata?.chatId];
-        try { ownerChats = [...ownerChats, ...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { /* his chat id alone */ }
-        const seenWords = sawCard || (!!exact && this.isShownDraft(args, { before: this._sentAt(originMessage) ?? Number.NaN, chatIds: ownerChats }));
         let checked = null;
         if (!seenWords) {
             const step = goal === 'book' ? 'request' : (goal === 'ask' ? 'question' : 'tell');
             checked = await this._check(null, {
-                step, lang, contactName, slot: goal === 'book' && draftSlot ? { date: draftSlot.date, time: draftSlot.time || null } : null,
+                // With his typed ask, only a day he gave is the slot: a day the draft
+                // picked by itself is judged against his ask. With none, as before.
+                step, lang, contactName, slot: goal === 'book' && draftSlot && (slotOwned || original.length === 0) ? { date: draftSlot.date, time: draftSlot.time || null } : null,
                 window: windowStart ? fmtWindow({ window_start: windowStart, window_end: windowEnd }, tz, lang) : null,
                 // His typed words judge the draft; the request the model wrote is context only.
+                // A request travels as the summary: his_words only for the words a first tell or
+                // question passes on, or in its fence when a tainted run wrote it.
                 ask: this._askFor({ ask: { original } }), summary: requestTainted ? null : request,
-                hisWords: request, hisWordsTainted: requestTainted, draft: parts.join('\n'), chatId: null
+                hisWords: step !== 'request' || requestTainted ? request : null, hisWordsTainted: requestTainted, draft: parts.join('\n'), chatId: null
             });
             calls += checked.calls;
             if (!checked.ok) {
@@ -1967,7 +2136,11 @@ class ErrandService {
         }
         this._runs.set(errand.id, { run, at: this.clock() });
         if (calls) this._countModelCall(errand, calls);
-        this._event(errand.id, 'started', { goal, mode: errand.mode, slot: draftSlot, window: windowStart ? [windowStart, windowEnd] : null, ...(requestTainted ? { tainted: true } : {}) });
+        this._event(errand.id, 'started', {
+            goal, mode: errand.mode, slot: draftSlot, window: windowStart ? [windowStart, windowEnd] : null, ...(requestTainted ? { tainted: true } : {}),
+            // The slot he asked for (his day, and his time when he gave one): later steps are judged with it (_ownSlot).
+            ...(slotOwned ? { asked: { date: slot.date, time: timeOwned ? slot.time : null } } : {})
+        });
         if (checked) this._event(errand.id, 'checked', { ok: checked.ok, reason: checked.reason, failed: checked.failed, step: goal === 'book' ? 'request' : (goal === 'ask' ? 'question' : 'tell') });
         // A draft of these words he saw is used up: a second "dale" never sends them again.
         this._useDraft(ids, draftText);
@@ -3278,8 +3451,11 @@ Answer in JSON.`;
             // A step of his is a decision of his, whether or not it goes out: the
             // errand acts on nothing by itself until a slot he proposed goes out.
             if (action !== 'cancel') this.db.updateErrand(errand.id, { auto_ok: 0, auto_why: 'his' });
-            // His typed words that asked for this step, for the message check (never a bare "sí").
-            const askNow = byOwner ? this._typedNow(originMessage) : [];
+            // His typed words that asked for this step, for the message check
+            // (never a bare "sí"). On his yes to a gate card, the line he typed
+            // when the card was raised, which the card row keeps.
+            const cardLine = approved ? this._cardTyped(approvalId, 'answerErrand', args) : null;
+            const askNow = cardLine ? [cardLine] : byOwner ? this._typedNow(originMessage) : [];
             const out = await this._perform(this.db.getErrand(errand.id), { ...args, action }, { auto: false, wordsTainted: Array.isArray(taint) && taint.length > 0, runId, askNow });
             // His step on a paused errand failed before anything went out: it stays paused.
             const after = this.db.getErrand(errand.id);
@@ -3404,6 +3580,22 @@ Answer in JSON.`;
             });
             d = { ok: problems.length === 0, parts, text: parts.join('\n'), problems, calls: 0 };
         } else {
+            // What the code checks of a say compare with: his own typed words
+            // when there are any. Otherwise the request and the words, as
+            // before; words a tainted run wrote never widen the days, times or money.
+            let checkWords = null;
+            let allowMoney = !!words && /plata|pag|transfer|cobr|se[ñn]a/i.test(words);
+            if (args.action === 'say') {
+                const typedAsk = this._askFor(errand, auto ? [] : askNow);
+                const typed = typedAsk ? [...typedAsk.original, ...typedAsk.now] : [];
+                if (typed.length > 0) {
+                    checkWords = typed.join('\n');
+                    allowMoney = true;
+                } else if (wordsTainted) {
+                    checkWords = errand.request_tainted ? '' : String(errand.request || '');
+                    allowMoney = false;
+                }
+            }
             d = await this.voice.draft({
                 ownerName: this._ownerName(), contactName: name, history, notes: this._notes(errand.person_id), stats, step: voiceStep,
                 brief: {
@@ -3412,7 +3604,7 @@ Answer in JSON.`;
                     ...(words ? { words } : {})
                 },
                 now: this.clock(), timeZone: tz, chatId: `errand_${errand.id}`, requireTime: slot?.time || null, requireDate: slot?.date || null,
-                allowMoney: !!words && /plata|pag|transfer|cobr|se[ñn]a/i.test(words)
+                allowMoney, checkWords
             });
             // His own past reply, reused, costs no call.
             this._countModelCall(errand, Number.isFinite(d.calls) ? d.calls : 1);
@@ -3444,9 +3636,13 @@ Answer in JSON.`;
         // messages. The errand's own step has no words of his for it.
         let verdict = null;
         if (!seen) {
-            const hisWords = args.action === 'say' ? (words || given) : args.action === 'decline' ? null : (errand.request || null);
+            // The request travels as the summary. It is his_words only for a say,
+            // or in its fence when a tainted run wrote it.
+            const hisWords = args.action === 'say' ? (words || given) : args.action === 'decline' ? null : (errand.request_tainted ? (errand.request || null) : null);
+            // A step with no slot of its own (say, decline) is judged with the errand's own slot.
+            const checkSlot = slot || this._ownSlot(errand);
             verdict = await this._check(errand, {
-                step: voiceStep, lang, contactName: name, slot: slot ? { date: slot.date, time: slot.time } : null,
+                step: voiceStep, lang, contactName: name, slot: checkSlot ? { date: checkSlot.date, time: checkSlot.time || null } : null,
                 window: errand.window_start && errand.window_end ? fmtWindow(errand, tz, lang) : null,
                 ask: this._askFor(errand, auto ? [] : askNow), summary: errand.request_tainted ? null : (errand.request || null),
                 hisWords, hisWordsTainted: args.action === 'say' ? !!wordsTainted : !!errand.request_tainted,

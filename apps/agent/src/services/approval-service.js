@@ -304,6 +304,23 @@ function truncate(text, max) {
     return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+// His typed line an errand's gate card keeps, at most this long.
+const CARD_TYPED_CHARS = 600;
+
+/**
+ * The text of his own message, for an errand card raised from it: never a
+ * forward (untrustedTaint) or our own "[approved …]" or "[SYSTEM …]" line.
+ * The errand reads it as his words only when it is a real line of his
+ * (errands.js _cardTyped): a bare "sí" or a voice note gives none.
+ */
+function cardTypedText(message) {
+    const taint = message?.metadata?.untrustedTaint;
+    if (Array.isArray(taint) ? taint.length > 0 : !!taint) return null;
+    const text = typeof message?.content === 'string' ? message.content.trim() : '';
+    if (!text || /^\[(?:approved|SYSTEM)\b/i.test(text)) return null;
+    return truncate(text, CARD_TYPED_CHARS);
+}
+
 // A card that replaced another this recently waits for /confirm, not a bare word.
 const REPLACED_LATELY_MS = 60e3;
 // A card taken back this recently still holds a bare word (_cardHisWordMissed).
@@ -1298,7 +1315,13 @@ class ApprovalService {
                 : (his.args?.action === 'say' && his.args?.text ? truncate(String(his.args.text).replace(/\s+/g, ' ').trim(), 120) : (String(his.origin_meta?.card?.question || '').replace(/^¿|\?$/g, '').trim() || true));
             card = this._errandCard(toolName, args, whyKey, message, { dropped });
             preview = card ? `${card.question} ${card.detail}` : errandPreview(toolName, args);
-            if (kind === 'chat') extraMeta = { ownerChat: true };
+            if (kind === 'chat') {
+                extraMeta = { ownerChat: true };
+                // His own typed line rides on the card, so his yes to it does
+                // not leave the errand's message check without his words.
+                const typed = cardTypedText(message);
+                if (typed) extraMeta.typed = typed;
+            }
         }
         const paused = await this.request({
             message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null,
@@ -1690,8 +1713,12 @@ class ApprovalService {
         // The run that paused was the owner's own request: the run that
         // resumes after his approval keeps that (see _ownerConsent).
         if (ownerConsent === true) originMeta.ownerConsent = true;
-        // An errand card raised by his own typed chat: the errand may follow it.
-        if (extraMeta?.ownerChat === true) originMeta.ownerChat = true;
+        // An errand card raised by his own typed chat: the errand may follow it,
+        // and reads the line he typed (errands.js _cardTyped).
+        if (extraMeta?.ownerChat === true) {
+            originMeta.ownerChat = true;
+            if (typeof extraMeta.typed === 'string' && extraMeta.typed.trim()) originMeta.typed = truncate(extraMeta.typed.trim(), CARD_TYPED_CHARS);
+        }
         // The run that raised the card: its own reply after the card does not
         // stop a bare yes from deciding it (see _stillAsking).
         if (typeof extraMeta?.cardRunId === 'string' && extraMeta.cardRunId) originMeta.cardRunId = extraMeta.cardRunId;
