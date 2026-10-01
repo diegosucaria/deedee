@@ -29,12 +29,16 @@ It never writes the message itself.
 ## How it works
 
 1. **Start.** `startErrand` reads the last 60 messages of his chat with that
-   person and his style numbers. For `book` it checks his calendar for that
-   day, and a time the draft picks must be free. `voice.js` writes the first
-   message, and it goes out from his account (`session: 'user'`,
-   `strictSession: true`: never from Deedee's number). If he never wrote to
-   that person, he gets a card first. An errand never writes to his own
-   lines or to Deedee's number.
+   person and his style numbers. It reads that exact chat (`exact=1`): a
+   new number never reads another person's chat, even when the last digits
+   match. For `book` it checks his calendar for that day, and a time the
+   draft picks must be free. `voice.js` writes the first message, the
+   message check reads it (see Safety), and it goes out from his account
+   (`session: 'user'`, `strictSession: true`: never from Deedee's number).
+   If he never wrote to that person, or two People share the name, he gets
+   a card with the words first. An errand never writes to his own lines or
+   to Deedee's number. A number shorter than 11 digits that his WhatsApp
+   cannot place is refused: he gives the full number.
 2. **Replies.** In `agent.js`, a contact's message on his account reaches
    the errand before watchers and Autopilot. While an errand is open for a
    chat, and until the booked slot (12 hours at most) after it books, they
@@ -64,7 +68,10 @@ It never writes the message itself.
      outside his range, or the day or time was one the draft picked, not he;
    - a question, a refusal, an unclear answer: a note asks him;
    - small talk: nothing; news: a note. A note that asks him says so when
-     a step that waited, or one he asked for, did not go out.
+     a step that waited, or one he asked for, did not go out;
+   - her yes after something he has not answered yet (news such as a
+     price, a photo or a file, a question of hers, a voice note it could
+     not read) comes as a card that says why, never the automatic thanks.
 
    Every card also says when his calendar is busy at that slot, or could
    not be read. If his calendar cannot be read at the start, the errand
@@ -139,9 +146,12 @@ note says it is not on his calendar. A message Deedee sent from his account
 
 ## The voice
 
-`voice.js` gives the model:
+The model writes like him, from his chat with that person, in the language
+he uses there. `voice.js` gives it:
 
-- the chat, marked as data;
+- the chat, marked as data, his lines as examples;
+- up to five of his past replies to the same kind of moment (her line that
+  offered or confirmed a time, then his answer), her line marked as data;
 - his notes from Autopilot → Style;
 - his measured habits: how often he opens a question with "¿", ends with a
   period, how long his messages are, how many he sends in a row.
@@ -150,16 +160,69 @@ The interfaces service computes those numbers over his own one-to-one texts
 (`GET /whatsapp/style-stats`) and returns numbers only. The agent keeps
 them for a day in `agent_settings.owner_style_stats`.
 
-After the model writes, code:
+For the automatic accept or thanks it first reuses his own words: a short
+line of his (40 characters or less, not a question) that answered her
+offer or yes before, with the hour set to the slot's ("dale, 11 voy"
+becomes "dale, 10 voy"). No model writes it. A line that says no, adds a
+condition or cancels is never reused. With no such line, the model writes
+one.
+
+After the text is written, code:
 
 - removes an opening "¿" or "¡" and a final period when he almost never
   uses them;
+- drops invisible marks (format and default-ignorable code points; a joiner
+  between two emoji stays);
 - refuses links, phone numbers, emails, brackets around words, words aimed
   at an assistant, commands to Deedee, more than 160 characters or 2
-  messages, and a time other than the slot; money only when his own words
-  mention it; an accept must name its time;
+  messages, a time or day other than the slot's, a number his words or the
+  slot do not have, and money unless his own words mention it; an accept
+  must name its time. These word lists read Spanish and English; they are a
+  cheap first filter, and the message check below reads the meaning in any
+  language;
 - lets a refused draft try once more with the reasons; a second refusal
   sends nothing.
+
+## Safety
+
+Nothing goes out from his account that he did not ask for or see:
+
+- **Who.** Only his own typed chat starts or answers an errand. A job, a
+  watcher, a sub-agent, a contact's chat or a voice call is refused at the
+  gate, with no card.
+- **The message check.** Before any words he has not seen go out (the
+  first message, the automatic accept or thanks, a step of his the voice
+  wrote), the guardian's `checkMessage` reads them. It sees the step, the
+  slot or window, his words and the draft, never her messages, so she
+  cannot steer it. It says ok only when the draft does exactly what the step
+  allows: a thanks that also cancels, agrees to a price, names another day,
+  makes a promise or brings in someone else is held. Held, failed or no
+  guardian: nothing goes out, and he gets a card with the exact words and
+  the reason ("¿Le mando esto a Alice? «…»"). His yes sends exactly those
+  words. Words he already saw (a draft he asked for, a card) are not
+  checked again.
+- **What goes out by itself.** Only the accept or thanks for the exact day
+  and time he asked for, by day, with his calendar free. A range never books
+  by itself.
+- **His reply to a card.** A plain "sí", "no", "dale", "👍" (also "siii",
+  "👍🏻", "dale👍") decides it. Other words ("aceptale las 10:30", "de una")
+  go to the guardian's `readReply`, which sees only what the card does,
+  written by code, and his reply. Only a clear yes or no decides the card;
+  "jaja", "mil gracias" or "dale pero a las 11" decide nothing. A short yes
+  that no card took never runs anything or writes to anyone, except sending
+  a draft he saw before it, for the same day and time, when no card reached
+  him after that draft.
+- **One person, once.** A start runs under a lock per person; a second start
+  for the same person in the same run is refused and says what went out. A
+  new start for someone an errand wrote to in the last 10 minutes, with no
+  word from her since, asks first. Words she got from his account in that
+  time never go out again.
+- **Stops that hold.** A cancel takes effect before a running step sends.
+  Before each part of a message the errand reads the chat again; if he
+  wrote to her himself, it stops. Past its end it never acts.
+- **Others stay out.** While an errand holds a chat, watchers and Autopilot
+  do not write to that person; Autopilot drops a reply it held from before.
+- **Limits.** See below. A failed send is never retried by itself.
 
 ## Limits
 
@@ -174,7 +237,8 @@ After the model writes, code:
 | Life | until the slot's day, 7 days at most; an end in quiet hours moves to 21:55 (a late slot keeps its evening); past its end an errand closes at once, and a note held by quiet hours goes out at 08:00. He hears at the start when the errand ends before the day |
 | Model calls | 20 per errand, 40 for his own steps and once he answers a paused errand |
 | Voice notes | 60 seconds to transcribe, then it counts as unreadable |
-| Contact messages | 60 per errand, then it pauses |
+| Contact messages | 60 per errand (every message, not one burst), then it pauses |
+| Model checks | one message check per message he has not seen; one reply read per card reply the word list does not decide |
 
 ## Switches
 
@@ -183,12 +247,19 @@ After the model writes, code:
 - `ERRANDS_CALENDAR_ACCOUNT`: the Google account label whose calendar gets
   the bookings. Default `personal`.
 - `communication_dry_run` (Settings): errands draft and send nothing.
+- `VOICE_OWN_REPLY=0`: the automatic accept or thanks never reuses his past
+  reply; the model writes it. Read on every call.
+- `CARD_REPLY_READ=0`: his replies to a card are not read by the guardian;
+  only the plain yes and no words decide it. Read on every call.
+- The message check has no switch: turning it off would let unseen words go
+  out unchecked.
 
 ## Approvals
 
 Errands use the built-in approval service (`docs/security.md`, Errands):
 his request in his own chat starts one with no card; his choices come as
 cards for `answerErrand`; steps inside the scope he set run through the gate
-with a one-time errand grant. The guardian does not decide errand steps.
-Only his own chat starts or answers an errand: a job, a watcher or a
-contact's chat is refused at the gate, with no card.
+with a one-time errand grant. The guardian never allows an errand step,
+but its message check can stop one (a card instead), and its reply reader
+reads his words to a card. Only his own chat starts or answers an errand: a
+job, a watcher or a contact's chat is refused at the gate, with no card.

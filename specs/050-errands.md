@@ -103,8 +103,14 @@ What it reads:
    length, how many short messages he sends in a row, emoji and laughter.
 4. The step to write: ask for a slot, accept one, propose another, decline,
    thank, ask a question, pass on a message.
+5. Up to five of his past replies to the same kind of moment: her line that
+   offered or confirmed a time (marked as data), then his answer.
 
-A Flash call with no tools returns `{ text, slot }`. Then code:
+For an accept or a thanks it first reuses his own words: a short line of
+his that answered her offer or yes before, with the hour set to the slot's.
+No model writes it; a line that says no, adds a condition or cancels is
+never reused (`ownReply`, `VOICE_OWN_REPLY=0` turns it off). Otherwise a
+Flash call with no tools returns `{ text, slot }`. Then code:
 
 - drops an opening `¿` or `¡` and a final period when he almost never uses
   them (under 2 in 100 of his messages);
@@ -210,7 +216,16 @@ Code enforces these, not the prompt.
    words mention it; no words aimed at a model ("ignorá", "instrucciones",
    "prompt", "Deedee", "IA" in capitals); no command to Deedee ("/confirm");
    an accepted or proposed slot must appear as its time; no brackets around
-   words.
+   words; no day, time or number his words or the slot do not have; no
+   invisible marks. These lists read Spanish and English and are a first
+   filter only; they are not extended further.
+4b. **The message check reads the meaning, in any language.** Before any
+   words he has not seen go out, the guardian's `checkMessage` reads them
+   with the step, the slot or window and his words, never her messages. It
+   says ok only when the draft does exactly what the step allows. Held,
+   failed or no guardian: a card with the exact words; his yes sends exactly
+   those. Decided after round twenty-three, when reviewers kept finding
+   phrasings the lists missed ("genial, gracias! al final cancelalo").
 5. **Loops:** the errand stores what it sent and never reads its own sends
    as the contact's replies.
 6. **The owner takes over:** before each send the errand reads the chat.
@@ -300,8 +315,13 @@ own.
 
 ## 12. Review
 
-Twenty-two review rounds (security, the owner's real flows replayed message by
+Twenty-three review rounds (security, the owner's real flows replayed message by
 message, regressions, and a check that each fix held) found real faults.
+After them, a product review and a safety audit ("no message he did not
+mean, no spam") led to the changes in section 6 (rules 4 and 4b), the
+reply reader for cards (`docs/security.md`, Approval guardian), and a
+range that always asks with a card. Each audit fault has a test named
+after it.
 Each fix has a test named after the fault in
 `apps/agent/tests/errands.test.js` ("review round one", "review round
 two", "review round two, his flows", "review round three", "review round
