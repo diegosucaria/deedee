@@ -26,10 +26,14 @@ class ErrandsExecutor extends BaseExecutor {
                 // runId: the first-message card belongs to this run, so its own reply after it leaves "sí" for it.
                 return errands.start(a, { approved, originMessage: context?.message || null, taint: context?.untrustedTaint || [], runId: context?.approvalRunId || null });
             case 'answerErrand':
+                // taint: his words for say were written by a run that read someone else's text.
+                // runId: a card this step raises belongs to this run.
                 return errands.answer(a, {
                     byOwner: ownerTyped,
                     approved,
-                    approvalId: context?.message?.metadata?.approvalId || null
+                    approvalId: context?.message?.metadata?.approvalId || null,
+                    taint: context?.untrustedTaint || [],
+                    runId: context?.approvalRunId || null
                 });
             case 'listErrands':
                 return { success: true, errands: errands.list({ all: a.all === true }) };

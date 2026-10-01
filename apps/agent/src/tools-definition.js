@@ -462,7 +462,7 @@ const toolDefinitions = [
       {
         name: "answerErrand",
         category: "communication",
-        description: "Only in the owner's own chat. His answer on an open errand (listed in the TURN CONTEXT): 'accept' a slot, 'propose' another slot, 'decline', 'say' something else to the person, or 'cancel' the errand without writing. accept and propose need an explicit date and time. The errand writes the message in his voice.",
+        description: "Only in the owner's own chat. His answer on an open errand (listed in the TURN CONTEXT): 'accept' a slot, 'propose' another slot, 'decline', 'say' something else to the person, or 'cancel' the errand without writing. accept and propose need an explicit date and time. The errand writes the message in his voice, unless he gave the exact words. Words he has not seen pass a check first; if it holds them, he gets a card with the exact words.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -470,7 +470,7 @@ const toolDefinitions = [
             action: { type: "STRING", description: "'accept', 'propose', 'decline', 'say' or 'cancel'." },
             date: { type: "STRING", description: "accept or propose: YYYY-MM-DD, required (the slot on the table is in the TURN CONTEXT)." },
             time: { type: "STRING", description: "accept or propose: HH:MM (24 h), required." },
-            text: { type: "STRING", description: "say: what to tell them, in his words." }
+            text: { type: "STRING", description: "say: what to tell them, in his words. accept, propose or decline: only when he dictated the exact words to send; they go out as given." }
           },
           required: ["id", "action"]
         }

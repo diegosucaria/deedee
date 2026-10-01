@@ -206,3 +206,19 @@ describe('eventLine: steps added in review', () => {
         expect(eventLine({ kind: 'note', detail: { told: true } })).toBe('Told you what else they wrote');
     });
 });
+
+describe('eventLine: the message check', () => {
+    test('a check that passed, one that held the words, and one that could not run read as plain lines', () => {
+        expect(eventLine(ev('checked', { ok: true, reason: 'fine', failed: false, step: 'thanks' }))).toBe('Checked the message (thanks): fine');
+        expect(eventLine(ev('checked', { ok: false, reason: 'It also cancels the slot.', failed: false, step: 'accept' })))
+            .toBe('The check held the message (accept), so it asked you first: It also cancels the slot.');
+        expect(eventLine(ev('checked', { ok: false, reason: '', failed: true, step: 'request' }))).toBe('Could not check the message (request), so it asked you first');
+        expect(eventLine(ev('checked', { ok: false }))).toBe('The check held the message, so it asked you first');
+    });
+
+    test('a held reason from the model is cut short, never shown whole', () => {
+        const line = eventLine(ev('checked', { ok: false, reason: 'r'.repeat(2000), failed: false, step: 'say' }));
+        expect(line.length).toBeLessThanOrEqual(240);
+        expect(line.endsWith('…')).toBe(true);
+    });
+});

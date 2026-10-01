@@ -80,6 +80,9 @@ const TAINT_SOURCE = (id) => `a contact's message (errand ${id})`;
 // A draft start() showed him (send=false) counts as shown this long (isShownDraft).
 const SHOWN_DRAFT_MS = 30 * 60e3;
 const SHOWN_DRAFTS_MAX = 20;
+// The message check has its own 8 s limit; this one only keeps a stuck call from holding the lock.
+const CHECK_MS = 20e3;
+const CHECK_REASON_CHARS = 120;
 
 const READ_KINDS = Object.freeze(['offer', 'confirm', 'decline', 'question', 'answer', 'later', 'other']);
 const READ_SCHEMA = Object.freeze({
@@ -433,6 +436,7 @@ const TEXTS = {
         whyEarlierMedia: 'antes mandó una foto o un archivo; miralo primero',
         whyEarlierVoice: 'antes mandó un audio que no pude entender',
         whyEarlierUnread: 'antes escribió algo que no pude leer',
+        whyEarlierAsked: 'antes preguntó algo que nadie le contestó; leelo primero',
         partSent: (q) => ` Le llegó solo una parte: "${q}".`,
         mediaAnswer: (n, id) => `${n} contestó con una foto o un archivo (pedido #${id}). Fijate en el chat; el pedido quedó cerrado.`,
         whyInvolved: 'ya me dijiste algo sobre este pedido, así que te pregunto antes',
@@ -507,7 +511,17 @@ const TEXTS = {
             floor: 'Esto siempre te lo pregunto.',
             rules: 'Tus reglas de aprobación piden preguntarte.'
         },
-        gateDenied: 'Listo, no lo hago.'
+        gateDenied: 'Listo, no lo hago.',
+        // The message check held words he has not seen (_askSend, _askStart).
+        checkAccept: (n, s) => `¿Le mando esto a ${n} y agendo el ${s}?`,
+        checkDecline: (n) => `¿Le mando esto a ${n} y cierro el pedido?`,
+        checkWhy: (r) => `Lo frené para que lo veas antes: ${sentence(r)}`,
+        checkFailed: 'No pude revisarlo, así que te lo muestro antes.',
+        checkMaybe: 'puede decir algo que no pediste',
+        checkHeld: (n) => `Todavía no le mandé nada a ${n}: te mostré el mensaje para que lo apruebes.`,
+        checkDenied: 'Listo, no se lo mando.',
+        checkExpired: (id, q) => `Pedido #${id}: venció sin respuesta el mensaje que te mostré («${q}»). No lo mandé.`,
+        checkNoCard: (n) => `No le mandé nada a ${n}: tenía que mostrarte el mensaje antes y no pude mandarte la tarjeta. Decime si se lo mando.`
     },
     en: {
         booked: (n, s, t, cal) => `Booked with ${n}: ${s}. I told them "${t}".${cal}`,
@@ -545,6 +559,7 @@ const TEXTS = {
         whyEarlierMedia: 'they sent a photo or a file before; look at it first',
         whyEarlierVoice: 'they sent a voice note before that I could not understand',
         whyEarlierUnread: 'they wrote something before that I could not read',
+        whyEarlierAsked: 'they asked something before that nobody answered; read it first',
         partSent: (q) => ` Only part of it reached them: "${q}".`,
         mediaAnswer: (n, id) => `${n} answered with a photo or a file (errand #${id}). Please look at the chat; the errand is closed.`,
         whyInvolved: 'you already weighed in on this errand, so I ask first',
@@ -618,7 +633,16 @@ const TEXTS = {
             floor: 'I always ask about this.',
             rules: 'Your approval rules ask me to check with you.'
         },
-        gateDenied: 'OK, I won\'t.'
+        gateDenied: 'OK, I won\'t.',
+        checkAccept: (n, s) => `Send this to ${n} and book ${s}?`,
+        checkDecline: (n) => `Send this to ${n} and close the errand?`,
+        checkWhy: (r) => `I held it so you see it first: ${sentence(r)}`,
+        checkFailed: 'I could not check it, so I show it to you first.',
+        checkMaybe: 'it may say something you did not ask for',
+        checkHeld: (n) => `Nothing went to ${n} yet: I showed you the message to approve.`,
+        checkDenied: 'OK, I won\'t send it.',
+        checkExpired: (id, q) => `Errand #${id}: the message I showed you («${q}») expired with no answer. I did not send it.`,
+        checkNoCard: (n) => `Nothing went to ${n}: I had to show you the message first and could not send you the card. Tell me if I should send it.`
     }
 };
 
@@ -1227,6 +1251,50 @@ class ErrandService {
         if (row) this.db.updateErrand(errand.id, { model_calls: (row.model_calls || 0) + n }, { closed: true });
     }
 
+    /**
+     * The model check before words he has not seen go out
+     * (GuardianService.checkMessage). It gets the step, the slot, his words
+     * and the draft, never her messages. No guardian, an error or a stuck
+     * call: not ok, so he sees the words on a card first. `errand`: where
+     * the 'checked' event goes (none yet for a first message).
+     * @returns {Promise<{ ok: boolean, reason: string, failed: boolean, calls: number }>}
+     */
+    async _check(errand, params) {
+        const guardian = this.agent.approvals?.guardian;
+        let out;
+        let calls = 0;
+        if (!guardian || typeof guardian.checkMessage !== 'function') {
+            out = { ok: false, reason: 'no message check is available', failed: true };
+        } else {
+            calls = 1;
+            try { out = await this._withTimeout(guardian.checkMessage(params), CHECK_MS); } catch (e) {
+                out = { ok: false, reason: `the check failed: ${e.message || e}`, failed: true };
+            }
+            if (errand) this._countModelCall(errand);
+        }
+        const verdict = {
+            ok: !!out && out.ok === true && out.failed !== true,
+            reason: clip(out?.reason || '', CHECK_REASON_CHARS),
+            failed: !out || typeof out !== 'object' || out.failed === true
+        };
+        if (errand) this._event(errand.id, 'checked', { ...verdict, step: params.step });
+        else console.log(`[Errands] first message check (${params.step}): ${verdict.ok ? 'ok' : `held${verdict.failed ? ', failed' : ''}`}`);
+        return { ...verdict, calls };
+    }
+
+    /** Why the message check held words, for a card in his language. */
+    _checkLine(t, verdict) {
+        if (!verdict || verdict.failed) return t.checkFailed;
+        return t.checkWhy(verdict.reason || t.checkMaybe);
+    }
+
+    /** Signs what a check card showed him: the errand, the step and its exact words (_askSend). */
+    _stepKey(id, args) {
+        const a = args && typeof args === 'object' ? args : {};
+        const flat = [Number(id), String(a.action || ''), String(a.date || ''), normTime(a.time) || '', String(a.step || ''), draftKey(a.text)].join('\n');
+        return crypto.createHmac('sha256', this._cardSecret).update(`step\n${flat}`).digest('hex').slice(0, 32);
+    }
+
     // --- start ---
 
     /**
@@ -1391,27 +1459,48 @@ class ErrandService {
 
     /**
      * Did start() show him a draft (send=false) of exactly these words for
-     * this person in the last 30 minutes? The approval gate asks before it
-     * holds his "dale, mandalo": then that word is about the draft, not a
-     * card that waits in his chat. Same person (a contact id the draft
-     * shares), same words (spaces and " [SPLIT] " aside), same goal when
-     * both name one. Synchronous.
+     * this person in the last 30 minutes, before his message? The approval
+     * gate asks before it holds his "dale, mandalo": then that word is about
+     * the draft, not a card that waits in his chat. start() asks too: a
+     * draft he saw needs no message check. Same person (a contact id the
+     * draft shares), same words (spaces and " [SPLIT] " aside), same goal
+     * when both name one. A draft that went out is used up. Synchronous.
      * @param {object} args - startErrand's arguments
+     * @param {{ before?: number }} [opts] - his message's time (ms): the draft must be older.
+     *   Left out: any draft up to now.
      * @returns {boolean}
      */
-    isShownDraft(args) {
+    isShownDraft(args, { before } = {}) {
         if (!this.enabled()) return false;
         const a = args && typeof args === 'object' ? args : {};
         if (typeof a.text !== 'string' || !a.text.trim()) return false;
         const text = draftKey(a.text);
         const raw = String(a.contact || '').trim();
         if (!raw) return false;
+        const now = this.clock();
+        const given = before !== undefined && before !== null;
+        const by = given ? Number(before) : now;
+        if (!Number.isFinite(by)) return false;
         const digits = this._contactDigits(raw);
         const goal = String(a.goal || '').toLowerCase();
-        const now = this.clock();
-        return this._drafts.some(d => now - d.at < SHOWN_DRAFT_MS && now >= d.at && d.text === text
+        return this._drafts.some(d => !d.used && now - d.at < SHOWN_DRAFT_MS && (given ? d.at < by : d.at <= by) && d.text === text
             && (!goal || !d.goal || d.goal === goal)
             && (d.contact === raw || [...digits].some(x => d.ids.has(x))));
+    }
+
+    /** These words go out to this person now: a draft of them no longer counts as shown. */
+    _useDraft(ids, text) {
+        const key = draftKey(text);
+        for (const d of this._drafts) {
+            if (d.text === key && [...ids].some(x => d.ids.has(x))) d.used = true;
+        }
+    }
+
+    /** His message's time in ms, or null when it has none. */
+    _sentAt(message) {
+        const ts = message?.timestamp;
+        const ms = typeof ts === 'number' ? ts : Date.parse(ts);
+        return Number.isFinite(ms) ? ms : null;
     }
 
     /** The rest of start(), under the person's start lock. */
@@ -1591,6 +1680,25 @@ class ErrandService {
             return this._askStart(args, shownName, draftText, originMessage, lang, runId, ids, repeat, { contactJid, why, name: contactName, mask });
         }
 
+        // Words he has not seen (a draft, or text the model passed that is
+        // no draft he saw before his message) go through the message check
+        // first. Held, or no check: a card with the exact words, and his yes
+        // on it sends them with no second check.
+        const seenWords = sawCard || (!!exact && this.isShownDraft(args, { before: this._sentAt(originMessage) ?? Number.NaN }));
+        let checked = null;
+        if (!seenWords) {
+            const step = goal === 'book' ? 'request' : (goal === 'ask' ? 'question' : 'tell');
+            checked = await this._check(null, {
+                step, lang, contactName, slot: goal === 'book' && draftSlot ? { date: draftSlot.date, time: draftSlot.time || null } : null,
+                window: windowStart ? fmtWindow({ window_start: windowStart, window_end: windowEnd }, tz, lang) : null,
+                hisWords: request, hisWordsTainted: requestTainted, draft: parts.join('\n'), chatId: null
+            });
+            calls += checked.calls;
+            if (!checked.ok) {
+                return this._askStart(args, shownName, draftText, originMessage, lang, runId, ids, null, { contactJid, why: 'checked', name: contactName, mask, verdict: checked });
+            }
+        }
+
         // Checked again with no wait before the insert: a start that ran
         // meanwhile (another message of his, a parallel call) wins.
         const again = this._clashFor(ids, { run, except: seen });
@@ -1618,6 +1726,9 @@ class ErrandService {
         this._runs.set(errand.id, { run, at: this.clock() });
         if (calls) this._countModelCall(errand, calls);
         this._event(errand.id, 'started', { goal, mode: errand.mode, slot: draftSlot, window: windowStart ? [windowStart, windowEnd] : null, ...(requestTainted ? { tainted: true } : {}) });
+        if (checked) this._event(errand.id, 'checked', { ok: checked.ok, reason: checked.reason, failed: checked.failed, step: goal === 'book' ? 'request' : (goal === 'ask' ? 'question' : 'tell') });
+        // A draft of these words he saw is used up: a second "dale" never sends them again.
+        this._useDraft(ids, draftText);
         const out = await this._send(errand, parts);
         const gotPart = out.sent.length ? ` They got only part of it: "${clip(out.sent.map(p => p.text).join(' '), 160)}".` : '';
         if (out.stopped === 'owner') {
@@ -1663,7 +1774,9 @@ class ErrandService {
      * (a tell, a send that timed out). After her answer, a follow-up is no
      * repeat, nor is one after a booking her yes closed (its last message,
      * the thanks or the accept, answered her). `sameRun`: this run started it.
-     * `except`: a closed errand the repeat card he approved named.
+     * `except`: the closed errand the repeat card he approved named. That
+     * card named the newest one, so older ones are passed too: otherwise
+     * each yes would raise one more card for the next older errand.
      * @returns {{ errand: object, sameRun: boolean } | null}
      */
     _clashFor(ids, { run = null, recent = true, except = null } = {}) {
@@ -1686,7 +1799,7 @@ class ErrandService {
             return true;
         };
         const done = this.db.listErrands({ all: true, limit: 50 })
-            .find(e => e.closed_at && mine(e) && !(except !== null && Number(e.id) === except)
+            .find(e => e.closed_at && mine(e) && !(except !== null && Number(e.id) <= except)
                 && (sameRun(e) || (now - Date.parse(e.closed_at) < ATTEMPT_WINDOW_MS && unanswered(e))));
         return done ? { errand: done, sameRun: sameRun(done) } : null;
     }
@@ -1718,18 +1831,22 @@ class ErrandService {
      * `repeat`) to someone an errand wrote to a few minutes ago. Approving it
      * runs startErrand again. `why`: 'new' (he never wrote to them),
      * 'sameName' (two People share the name) or 'relabelled' (a number given
-     * as a WhatsApp ID); the card then names the masked address. Its
-     * arguments carry `cardKey`, so the approved call skips this card.
+     * as a WhatsApp ID); the card then names the masked address. 'checked':
+     * the message check held the words (`verdict` says why). Its arguments
+     * carry `cardKey`, so the approved call skips this card and the check.
      */
-    async _askStart(args, contactName, text, originMessage, lang, runId = null, ids = null, repeat = null, { contactJid = null, why = 'new', name = contactName, mask = '' } = {}) {
+    async _askStart(args, contactName, text, originMessage, lang, runId = null, ids = null, repeat = null, { contactJid = null, why = 'new', name = contactName, mask = '', verdict = null } = {}) {
         const approvals = this.agent.approvals;
         if (!approvals || typeof approvals.askOwner !== 'function' || !originMessage) {
             if (repeat) return this._repeatRefusal(repeat, contactName);
+            if (why === 'checked') return { success: false, error: `The words for ${contactName} must be shown to him on a card first (the message check ${verdict?.failed ? 'could not run' : 'held them'}), and no card can reach him. Nothing was sent.` };
             if (why !== 'new') return { success: false, error: `He must confirm ${contactName} on a card first, and no card can reach him. Nothing was sent.` };
             return { success: false, error: `He has never written to ${contactName}. Ask him to confirm the person before starting.` };
         }
         const es = lang === 'es';
-        const shown = clip(text.replace(/\s*\[SPLIT\]\s*/g, ' / '), 160);
+        const t = TEXTS[es ? 'es' : 'en'];
+        // The whole text: approving the card sends exactly what it shows.
+        const shown = clip(text.replace(/\s*\[SPLIT\]\s*/g, ' / '), 400);
         // What the earlier errand sent them: he sees it before he says yes again.
         const before = repeat ? this._sentBy(repeat) : null;
         const failed = repeat?.state === 'failed';
@@ -1760,6 +1877,7 @@ class ErrandService {
             toolName: 'startErrand',
             args: cardArgs,
             reason: repeat ? `An errand wrote to ${contactName} a few minutes ago (#${repeat.id}), so writing again is checked first.`
+                : why === 'checked' ? `The message check ${verdict?.failed ? 'could not run' : 'held the words'} for ${contactName}, so he sees them before they go out.`
                 : why === 'sameName' ? `More than one person in People is called ${name}; this one is ${mask}, so he confirms which one first.`
                     : why === 'relabelled' ? `${String(args.contact || '').slice(0, 40)} is not a WhatsApp ID his WhatsApp knows; it is the number of ${contactName}, so he confirms first.`
                         : why === 'new' ? `He has never written to ${contactName} from his WhatsApp, so the person is checked first.`
@@ -1769,8 +1887,8 @@ class ErrandService {
                 question: repeat ? (es ? `Hace unos minutos ya le escribí a ${contactName}. ¿Le mando esto también?` : `I wrote to ${contactName} a few minutes ago. Send this too?`)
                     : why === 'new' ? (es ? `Nunca le escribiste a ${contactName}. ¿Le mando esto?` : `You never wrote to ${contactName}. Send this?`)
                         : why === 'sameName' ? (es ? `Tenés más de un contacto llamado ${name}. ¿Le mando esto a ${contactName}?` : `You have more than one contact called ${name}. Send this to ${contactName}?`)
-                            : (es ? `¿Le mando esto a ${contactName}?` : `Send this to ${contactName}?`),
-                detail: `"${shown}"${beforeLine}`,
+                            : t.gateStartText(contactName),
+                detail: why === 'checked' && !repeat ? `«${shown}» ${this._checkLine(t, verdict)}` : `"${shown}"${beforeLine}`,
                 lang,
                 denied: es ? 'Listo, no le escribo.' : 'OK, I won\'t write to them.'
             },
@@ -2086,10 +2204,11 @@ class ErrandService {
 
     /**
      * Something she sent since the errand's last message that only he can
-     * weigh: news (a price, a change), a photo or a file, a voice note or
-     * words it could not read. Her later yes is then his to decide: a thanks
-     * would read as a yes to that too. Read from the stored events, so a
-     * restart or a later burst keeps it. Returns the card's reason, or null.
+     * weigh: news (a price, a change), a question nobody answered, a photo
+     * or a file, a voice note or words it could not read. Her later yes is
+     * then his to decide: a thanks would read as a yes to that too, or as
+     * the answer to her question. Read from the stored events, so a restart
+     * or a later burst keeps it. Returns the card's reason, or null.
      */
     _newsSinceSent(errand) {
         let events = [];
@@ -2098,6 +2217,7 @@ class ErrandService {
         const since = events.filter(e => e.id > lastSent && e.detail && typeof e.detail === 'object');
         const t = this._t(errand);
         if (since.some(e => e.kind === 'read' && e.detail.tellOwner === true)) return t.whyEarlierWrote;
+        if (since.some(e => e.kind === 'read' && e.detail.kind === 'question')) return t.whyEarlierAsked;
         if (since.some(e => e.kind === 'received' && e.detail.media)) return t.whyEarlierMedia;
         if (since.some(e => e.kind === 'received' && e.detail.unreadable)) return t.whyEarlierVoice;
         if (since.some(e => e.kind === 'read' && e.detail.failed)) return t.whyEarlierUnread;
@@ -2449,7 +2569,8 @@ Answer in JSON.`;
                 say: t.gateSay(name),
                 cancel: t.gateCancel(name)
             }[a.action] || t.gateSay(name);
-            const said = a.action === 'say' && a.text ? `"${flat(a.text, 200)}" ` : '';
+            // His words, or the exact words of an accept, a proposal or a no: he sees what goes out.
+            const said = a.action !== 'cancel' && typeof a.text === 'string' && a.text.trim() ? `"${flat(a.text, 200)}" ` : '';
             // His dropped step is named, never asked about: the card asks one thing.
             const drop = dropped ? (typeof dropped === 'string' ? t.heldStep(dropped) : t.notSent) : '';
             return { question, detail: `${said}${t.gateWhy[why] || t.gateWhy.rules} ${t.gateErrand(a.id)}${drop}`, lang, denied: t.gateDenied };
@@ -2538,6 +2659,60 @@ Answer in JSON.`;
         });
         this._event(errand.id, 'asked', { card: res.id || null, slots, offer: best });
         return updated;
+    }
+
+    /**
+     * The message check held a step, or could not run: nothing goes out,
+     * and he gets a card with the exact words and why. Its arguments carry
+     * those words and a signed key, so his yes sends exactly them, with no
+     * new draft and no second check (_perform). An accept still books.
+     * `live`: he waits for this answer (his chat, a card he approved).
+     * `own`: a step of his, not the errand's own (a later note says it did not go out).
+     */
+    async _askSend(errand, args, parts, verdict, { live = false, runId = null, own = false, step = null } = {}) {
+        const tz = this.timeZone();
+        const lang = this._lang(errand);
+        const t = TEXTS[lang];
+        const name = safeName(errand.contact_name);
+        const slot = (args.action === 'accept' || args.action === 'propose') && validDate(args.date) && normTime(args.time)
+            ? { date: args.date, time: normTime(args.time) } : null;
+        const cardArgs = {
+            id: Number(errand.id), action: args.action, ...(slot ? { date: slot.date, time: slot.time } : {}),
+            ...(step === 'thanks' && args.action === 'accept' ? { step: 'thanks' } : {}), text: parts.join(' [SPLIT] ')
+        };
+        cardArgs.cardKey = this._stepKey(errand.id, cardArgs);
+        const question = args.action === 'accept' && slot ? t.checkAccept(name, fmtSlot(slot, tz, lang))
+            : args.action === 'decline' ? t.checkDecline(name) : t.gateStartText(name);
+        const detail = `«${parts.join(' / ')}» ${this._checkLine(t, verdict)} ${t.gateErrand(errand.id)}`;
+        const approvals = this.agent.approvals;
+        if (!approvals || typeof approvals.askOwner !== 'function') {
+            // No card can reach him: he hears it, and nothing goes out.
+            await this._askNote(errand, t.checkNoCard(name));
+            return live ? { success: false, errandId: errand.id, error: 'The message check held it and no card can reach him. Nothing was sent.', ownerLine: t.checkNoCard(name) } : this.db.getErrand(errand.id);
+        }
+        // One card per errand: a newer question replaces the older ones.
+        this._withdraw(errand);
+        const res = await approvals.askOwner({
+            message: this._runMessage(errand),
+            toolName: 'answerErrand',
+            args: cardArgs,
+            reason: `The message check ${verdict?.failed ? 'could not run' : 'held the words'} for a step of errand #${errand.id}, so he sees them first.`,
+            preview: `${question} ${detail}`,
+            card: { question, detail, lang, denied: args.action === 'accept' ? t.cardDenied(name) : t.checkDenied },
+            runId
+        });
+        if (!res?.id) {
+            // The card could not be made (his deny-list, no channel): he hears it, and nothing goes out.
+            await this._askNote(errand, t.checkNoCard(name));
+            return live ? { success: false, errandId: errand.id, error: res?.result?.error || 'The message check held it and no card could be made. Nothing was sent.', ownerLine: t.checkNoCard(name) } : this.db.getErrand(errand.id);
+        }
+        const updated = this.db.updateErrand(errand.id, {
+            state: 'waiting_owner', pending_approval_id: res.id, next_action: null, next_check_at: null,
+            ...(args.action === 'accept' && slot ? { offer: slot } : {})
+        });
+        this._event(errand.id, 'asked', { card: res.id, why: 'the message check held it', step: args.action, ...(own ? { owner: true } : {}) });
+        if (!live) return updated;
+        return { success: true, sent: false, held: true, errandId: errand.id, cardId: res.id, ...(res.result || {}), ownerLine: t.checkHeld(name) };
     }
 
     /**
@@ -2724,12 +2899,17 @@ Answer in JSON.`;
         const ids = new Set(stored ? [stored] : []);
         const his = new Map();
         try {
+            // Check cards that held a step of his (_askSend): their words are a draft, so they stay unnamed.
+            let held = null;
             for (const r of (typeof this.db.listPendingConfirmations === 'function' ? this.db.listPendingConfirmations() : [])) {
                 if (r.tool_name !== 'answerErrand' || Number(r.args?.id) !== Number(errand.id)) continue;
                 ids.add(r.id);
                 // His step, named: the words he asked to send, else the card's question.
                 if (r.origin_meta?.ownerChat === true) {
                     his.set(r.id, r.args?.action === 'say' && r.args?.text ? clip(r.args.text, 120) : (String(r.origin_meta?.card?.question || '').replace(/^¿|\?$/g, '').trim() || null));
+                } else if (typeof r.args?.cardKey === 'string') {
+                    held = held || new Set(this.db.listErrandEvents(errand.id, { newest: 200 }).filter(e => e.kind === 'asked' && e.detail?.owner === true && e.detail?.card).map(e => e.detail.card));
+                    if (held.has(r.id)) his.set(r.id, null);
                 }
             }
         } catch { /* the stored one is enough */ }
@@ -2808,10 +2988,11 @@ Answer in JSON.`;
     /**
      * answerErrand: a step on an open errand. The owner's own chat or a card
      * he approved may do it.
-     * @param {object} args - { id, action, date?, time?, text? }
-     * @param {{ byOwner?: boolean, approved?: boolean, approvalId?: string|null }} ctx
+     * @param {object} args - { id, action, date?, time?, text? }; a check card adds cardKey
+     * @param {{ byOwner?: boolean, approved?: boolean, approvalId?: string|null, taint?: string[], runId?: string|null }} ctx
+     *   taint: sources of untrusted content the run read (his words for say are then data)
      */
-    async answer(args = {}, { byOwner = false, approved = false, approvalId = null } = {}) {
+    async answer(args = {}, { byOwner = false, approved = false, approvalId = null, taint = [], runId = null } = {}) {
         const action = String(args.action || '');
         if (!this.enabled() && action !== 'cancel') return { success: false, error: 'Errands are turned off (ERRANDS=0). A cancel still works.' };
         if (!byOwner && !approved) return { success: false, error: 'Only the owner answers an errand: from his own chat, or by approving its card.' };
@@ -2822,6 +3003,11 @@ Answer in JSON.`;
         // heldYes is our own record (her yes that waits), never a tool argument.
         if (args && typeof args === 'object' && 'heldYes' in args) {
             const { heldYes, ...rest } = args;
+            args = rest;
+        }
+        // A check card's key counts only on a call he approved (_perform checks the key itself).
+        if (args && typeof args === 'object' && 'cardKey' in args && approved !== true) {
+            const { cardKey, ...rest } = args;
             args = rest;
         }
         // A cancel is on record before it waits behind a running step: that step sends nothing more.
@@ -2842,7 +3028,7 @@ Answer in JSON.`;
             // A step of his is a decision of his, whether or not it goes out: the
             // errand acts on nothing by itself until a slot he proposed goes out.
             if (action !== 'cancel') this.db.updateErrand(errand.id, { auto_ok: 0, auto_why: 'his' });
-            const out = await this._perform(this.db.getErrand(errand.id), { ...args, action }, { auto: false });
+            const out = await this._perform(this.db.getErrand(errand.id), { ...args, action }, { auto: false, wordsTainted: Array.isArray(taint) && taint.length > 0, runId });
             // His step on a paused errand failed before anything went out: it stays paused.
             const after = this.db.getErrand(errand.id);
             if (errand.state === 'paused' && out && out.success === false && after && !after.closed_at && after.state === 'waiting_contact' && after.sent_count === errand.sent_count) {
@@ -2861,7 +3047,7 @@ Answer in JSON.`;
      * waits for this answer (his chat, a card): its `ownerLine` tells him,
      * in his language, and no separate note goes out.
      */
-    async _perform(errand, args, { auto = false, step = null, notify = false } = {}) {
+    async _perform(errand, args, { auto = false, step = null, notify = false, wordsTainted = false, runId = null } = {}) {
         if (!errand || errand.closed_at) return { success: false, error: 'The errand is closed.', ...(errand ? { ownerLine: this._t(errand).alreadyClosed(errand.id) } : {}) };
         const t = this._t(errand);
         const lang = this._lang(errand);
@@ -2910,8 +3096,16 @@ Answer in JSON.`;
 
         let slot = null;
         if (args.action === 'accept' || args.action === 'propose') slot = { date: args.date, time: normTime(args.time) };
-        const words = args.action === 'say' ? clip(args.text, 400) : null;
-        if (args.action === 'say' && !words) return { success: false, error: 'text is required for say: what to tell them.' };
+        // A check card he approved carries a signed key: its words go out as
+        // they are, with no new draft and no second check. Exact words of an
+        // accept, a proposal or a no (`text`) are sent as given, after the
+        // checks. For say, `text` is his words, which the voice writes his
+        // way, unless a card of ours carries it.
+        const keyed = typeof args.cardKey === 'string' && args.cardKey.length > 0;
+        const seen = keyed && args.cardKey === this._stepKey(errand.id, args);
+        const given = typeof args.text === 'string' && args.text.trim() && (args.action !== 'say' || keyed) ? args.text : null;
+        const words = args.action === 'say' && !given ? clip(args.text, 400) : null;
+        if (args.action === 'say' && !words && !given) return { success: false, error: 'text is required for say: what to tell them.' };
 
         // He may have answered them himself since.
         let history = [];
@@ -2929,19 +3123,37 @@ Answer in JSON.`;
             return { success: false, error: `Errand #${errand.id} used its model calls and is paused. Nothing was sent.`, ownerLine: t.paused(name, errand.id, t.whyCalls(errand.model_calls)) };
         }
 
-        const voiceStep = step || ({ accept: 'accept', propose: 'propose', decline: 'decline', say: 'say' })[args.action];
+        // A held thanks keeps its step on its card: a thanks need not name the time.
+        const voiceStep = step || (keyed && args.action === 'accept' && args.step === 'thanks' ? 'thanks' : null)
+            || ({ accept: 'accept', propose: 'propose', decline: 'decline', say: 'say' })[args.action];
         const stats = await this._stats(history);
-        const d = await this.voice.draft({
-            ownerName: this._ownerName(), contactName: name, history, notes: this._notes(errand.person_id), stats, step: voiceStep,
-            brief: {
-                ...(errand.request_tainted ? {} : { request: errand.request }),
-                ...(slot ? { slotText: fmtSlot(slot, tz) } : {}),
-                ...(words ? { words } : {})
-            },
-            now: this.clock(), timeZone: tz, chatId: `errand_${errand.id}`, requireTime: slot?.time || null, requireDate: slot?.date || null,
-            allowMoney: !!words && /plata|pag|transfer|cobr|se[ñn]a/i.test(words)
-        });
-        this._countModelCall(errand, d.calls || 1);
+        let d;
+        if (given) {
+            const parts = seen ? splitParts(given) : cleanText(splitParts(given), stats);
+            // A card he approved showed exactly these words; others pass the checks first.
+            const problems = seen ? [] : checkText(parts, {
+                step: voiceStep, time: slot?.time || null, dates: slot ? [slot.date] : null, now: this.clock(), timeZone: tz, allowMoney: args.action === 'say'
+            });
+            d = { ok: problems.length === 0, parts, text: parts.join('\n'), problems, calls: 0 };
+        } else {
+            d = await this.voice.draft({
+                ownerName: this._ownerName(), contactName: name, history, notes: this._notes(errand.person_id), stats, step: voiceStep,
+                brief: {
+                    ...(errand.request_tainted ? {} : { request: errand.request }),
+                    ...(slot ? { slotText: fmtSlot(slot, tz) } : {}),
+                    ...(words ? { words } : {})
+                },
+                now: this.clock(), timeZone: tz, chatId: `errand_${errand.id}`, requireTime: slot?.time || null, requireDate: slot?.date || null,
+                allowMoney: !!words && /plata|pag|transfer|cobr|se[ñn]a/i.test(words)
+            });
+            // His own past reply, reused, costs no call.
+            this._countModelCall(errand, Number.isFinite(d.calls) ? d.calls : 1);
+        }
+        if (!d.ok && given) {
+            this._event(errand.id, 'refused', { step: voiceStep, problems: d.problems });
+            if (notify) await this._notify(errand, t.failDraft(name));
+            return { success: false, error: `That text cannot go out: ${d.problems.join('; ')}. Nothing was sent.`, ownerLine: t.failDraft(name) };
+        }
         if (!d.ok) {
             this._event(errand.id, 'refused', { step: voiceStep, problems: d.problems });
             if (auto) {
@@ -2959,7 +3171,20 @@ Answer in JSON.`;
             return { success: true, dryRun: true, draft: d.parts.join(' [SPLIT] '), info: 'Dry run is on (communication_dry_run): nothing was sent.' };
         }
 
-        // Cancelled, or the contact wrote, while the draft was written: stop here.
+        // Words he has not seen pass the message check first. It sees the
+        // step, the slot, his words and the draft, never her messages.
+        let verdict = null;
+        if (!seen) {
+            const hisWords = args.action === 'say' ? (words || given) : args.action === 'decline' ? null : (errand.request || null);
+            verdict = await this._check(errand, {
+                step: voiceStep, lang, contactName: name, slot: slot ? { date: slot.date, time: slot.time } : null,
+                window: errand.window_start && errand.window_end ? fmtWindow(errand, tz, lang) : null,
+                hisWords, hisWordsTainted: args.action === 'say' ? !!wordsTainted : !!errand.request_tainted,
+                draft: d.parts.join('\n'), chatId: `errand_${errand.id}`
+            });
+        }
+
+        // Cancelled, or the contact wrote, while the draft was written and checked: stop here.
         const current = this.db.getErrand(errand.id);
         if (!current || current.closed_at) return { success: false, error: `Errand #${errand.id} closed meanwhile; nothing was sent.`, ownerLine: t.alreadyClosed(errand.id) };
         if (this._hasUnread(current)) return this._deferForNews(current, args, { auto, step });
@@ -2971,6 +3196,8 @@ Answer in JSON.`;
 
         // He cancelled while the draft was written: nothing goes out.
         if (this._stopRequested(current.id)) return { success: false, error: `Errand #${errand.id} is being cancelled; nothing was sent.`, ownerLine: t.alreadyClosed(errand.id) };
+        // The check held it, or could not run: he sees the exact words first.
+        if (verdict && !verdict.ok) return this._askSend(current, args, d.parts, verdict, { live, runId, own: !auto, step: voiceStep });
 
         this._withdraw(current);
         const out = await this._send(current, d.parts, { auto });
@@ -3159,7 +3386,10 @@ Answer in JSON.`;
                     // His own step's card (the gate's) names his step, not the contact's old offer.
                     const question = card.origin_meta?.ownerChat === true && typeof card.origin_meta?.card?.question === 'string' ? card.origin_meta.card.question.replace(/^¿|\?$/g, '') : null;
                     const asked = validDate(card.args?.date) && normTime(card.args?.time) ? { date: card.args.date, time: normTime(card.args.time) } : errand.offer;
-                    await this._notify(errand, question ? t.gateExpired(errand.id, question) : t.cardExpired(name, errand.id, asked ? fmtSlot(asked, this.timeZone(), lang) : null));
+                    // A check card that is not about her yes names the words it held (a draft: marked).
+                    const held = typeof card.args?.cardKey === 'string' && card.args.action !== 'accept' && typeof card.args.text === 'string';
+                    if (held) await this._notify(errand, t.checkExpired(errand.id, clip(card.args.text.replace(/\s*\[SPLIT\]\s*/g, ' / '), 160)), { taint: true });
+                    else await this._notify(errand, question ? t.gateExpired(errand.id, question) : t.cardExpired(name, errand.id, asked ? fmtSlot(asked, this.timeZone(), lang) : null));
                 }
                 return;
             }
@@ -3335,7 +3565,9 @@ Answer in JSON.`;
                 const tainted = Array.isArray(c.origin_meta?.untrustedTaint) && c.origin_meta.untrustedTaint.length > 0;
                 const step = a.action === 'say' ? (tainted ? 'say (words written after reading someone else\'s text, not his; hidden)' : `say ${JSON.stringify(String(a.text || '').slice(0, 600))}`)
                     : `${a.action}${a.date ? ` ${a.date}` : ''}${a.time ? ` ${a.time}` : ''}`;
-                bits.push(`card ${c.id} waits for his yes: ${step}`);
+                // A check card: the exact words wait on it; calling the step again would draft new ones.
+                const held = typeof a.cardKey === 'string' ? ' (the message check held it; the exact words wait on the card)' : '';
+                bits.push(`card ${c.id} waits for his yes: ${step}${held}`);
             }
             if (e.offer) bits.push(`on the table: ${fmtSlot(e.offer, tz)} (date ${e.offer.date}, time ${e.offer.time})`);
             const held = this._heldYes(e);
