@@ -415,6 +415,58 @@ function createAutopilotRouter(agent) {
         }
     });
 
+    // --- ERRANDS (services/errands.js) ---
+    // The owner's own view: his errands, their steps, a cancel. Behind the
+    // internal token like every agent route; only ids go out on the socket.
+
+    const errandView = (e) => ({
+        id: e.id, goal: e.goal, mode: e.mode, state: e.state, contactName: e.contact_name,
+        request: e.request, slot: e.slot, offer: e.offer, agreed: e.agreed,
+        windowStart: e.window_start, windowEnd: e.window_end, eventTitle: e.event_title,
+        eventId: e.event_id, sentCount: e.sent_count, autoCount: e.auto_count, modelCalls: e.model_calls,
+        waitingCard: e.pending_approval_id || null, nextCheckAt: e.next_check_at,
+        createdAt: e.created_at, updatedAt: e.updated_at, expiresAt: e.expires_at,
+        closedAt: e.closed_at, closeReason: e.close_reason
+    });
+
+    // GET /errands?all=1
+    router.get('/errands', (req, res) => {
+        try {
+            const all = req.query.all === '1' || req.query.all === 'true';
+            const rows = agent.db.listErrands({ all, limit: 100 });
+            const { errandsEnabled, LIMITS } = require('../services/errands');
+            res.json({ enabled: errandsEnabled(), limits: LIMITS, errands: rows.map(errandView) });
+        } catch (e) {
+            console.error('Error listing errands:', e);
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // GET /errands/:id
+    router.get('/errands/:id', (req, res) => {
+        try {
+            const errand = agent.db.getErrand(req.params.id);
+            if (!errand) return res.status(404).json({ error: 'Errand not found' });
+            res.json({ errand: errandView(errand), events: agent.db.listErrandEvents(errand.id) });
+        } catch (e) {
+            console.error('Error reading errand:', e);
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // POST /errands/:id/cancel
+    router.post('/errands/:id/cancel', async (req, res) => {
+        try {
+            if (!agent.errands) return res.status(503).json({ error: 'Errands are not available' });
+            const out = await agent.errands.answer({ id: Number(req.params.id), action: 'cancel' }, { byOwner: true });
+            if (!out.success) return res.status(409).json({ error: out.error });
+            res.json(out);
+        } catch (e) {
+            console.error('Error cancelling errand:', e);
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     return router;
 }
 

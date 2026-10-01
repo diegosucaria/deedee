@@ -146,7 +146,10 @@ describe('approvedResultText', () => {
 
 describe('replies that decide a card', () => {
     test('short natural answers count; anything with more to say goes to the model', () => {
-        for (const w of ['si, dale', 'sí reservalo', 'ok dale', 'confirmo', '👍', 'si por favor', 'yes do it']) expect(decisionWord(w)).toBe('approved');
+        for (const w of ['si, dale', 'ok dale', 'confirmo', '👍', 'si por favor', 'yes do it']) expect(decisionWord(w)).toBe('approved');
+        // A word that names an action ("reservalo") is read against what the card does, by the guardian.
+        expect(decisionWord('sí reservalo')).toBeNull();
+        expect(decisionWord('sí reservalo', { actionWords: true })).toBe('approved');
         for (const w of ['no gracias', 'no, dejalo', 'not yet', 'nope']) expect(decisionWord(w)).toBe('denied');
         for (const w of ['ok gracias', 'yes please send it', 'si pero a las 5', 'dale, y después avisale a mamá', 'no sé']) expect(decisionWord(w)).toBeNull();
     });

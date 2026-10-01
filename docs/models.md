@@ -246,7 +246,7 @@ Defaults (`THINKING_DEFAULTS` in `config-service.js`):
 
 | Role | Class | Level |
 |---|---|---|
-| ROUTER, LITE | all (`router`, `scoper`, `cron_helper`, `eager_extract`, `guardian`) | MINIMAL |
+| ROUTER, LITE | all (`router`, `scoper`, `cron_helper`, `eager_extract`, `guardian`, `guardian_message`, `guardian_reply`) | MINIMAL |
 | SEARCH | `search` (the googleSearch polyfill) | LOW |
 | FLASH | `chat`, `tool_loop`, `job`, `subagent`, `watcher`, `coding`, `wardrobe`, `impersonation`, `dream`, `pruning` | LOW |
 | FLASH | `summarization`, `title`, `scoper`, `people_enrich`, `cron_helper`, `analysis`, `transcribe`, `partner_greeting`, `dj`, `impersonation_learn`, any other | MINIMAL |

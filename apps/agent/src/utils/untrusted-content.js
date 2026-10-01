@@ -61,6 +61,8 @@ const INTERNAL_TRUSTED = Object.freeze(new Set([
     'generateImage', 'cityWeatherImage', 'lookupDevice', 'learnDevice', 'listDeviceAliases', 'deleteDeviceAlias',
     'sendMessage', 'searchContacts', 'listPeople', 'getPerson', 'searchPeople', 'updatePerson', 'deletePerson',
     'addWatcher', 'replyWithAudio',
+    // Errands return the owner's words, checked slots, People names and our own drafts (services/errands.js).
+    'startErrand', 'answerErrand', 'listErrands',
     'createVault', 'deleteVault', 'listVaults', 'addToVault', 'readVaultPage', 'writeVaultPage', 'listVaultFiles',
     'setSessionTopic', 'saveNoteToVault', 'ingestDocument', 'reindexEmbeddings',
     'add_vinyl', 'list_vinyls', 'get_vinyl', 'search_vinyls', 'list_crate_tracks', 'recommend_vinyl',
@@ -521,12 +523,21 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
             // A message to the owner himself is how jobs and watchers report.
             return isOwnerTarget(a) ? null : 'send a message';
         case 'sendSlackMessage': return 'send a Slack message';
+        // An errand writes to a person from the owner's own account.
+        case 'startErrand': return a.send === false ? null : 'start an errand that writes to someone as the owner';
+        case 'answerErrand': return a.action === 'cancel' ? null : 'send a message as the owner on an errand';
         // A changed number redirects later messages "to" this contact.
         // Metadata holds the contact's writing style, which autopilot drafts
         // and partner greetings follow when they write as the owner.
+        // Errands trust a People name as the owner's own word for who
+        // someone is, so a new name asks too. So do a relationship and notes:
+        // searchPeople finds a row by them, and his "mi peluquero" must not
+        // lead to the row a contact chose.
         case 'updatePerson': {
             const u = asObject(a.updates) || {};
             if (u.phone !== undefined) return "change a contact's phone number";
+            if (u.name !== undefined) return 'rename a contact';
+            if (u.relationship !== undefined || u.notes !== undefined) return 'change who a contact is (relationship or notes)';
             return u.metadata !== undefined ? "change a contact's saved profile" : null;
         }
         // A plain GET (curl/wget, no pipe, redirect, upload or output file)

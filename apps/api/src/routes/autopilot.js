@@ -47,4 +47,10 @@ router.get('/style/:id', (req, res) => proxyToAgent(req, res, 'GET', `/style/${r
 router.post('/style/:id', (req, res) => proxyToAgent(req, res, 'POST', `/style/${req.params.id}`, req.body));
 router.post('/style/:id/analyze', (req, res) => proxyToAgent(req, res, 'POST', `/style/${req.params.id}/analyze`, null));
 
+// Errands (specs/050-errands.md). The list passes ?all=1 on as a query.
+// Cancel sends no body: the agent needs only the id.
+router.get('/errands', (req, res) => proxyToAgent(req, res, 'GET', '/errands', null));
+router.get('/errands/:id', (req, res) => proxyToAgent(req, res, 'GET', `/errands/${encodeURIComponent(req.params.id)}`, null));
+router.post('/errands/:id/cancel', (req, res) => proxyToAgent(req, res, 'POST', `/errands/${encodeURIComponent(req.params.id)}/cancel`, null));
+
 module.exports = router;

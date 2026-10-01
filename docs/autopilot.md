@@ -21,6 +21,14 @@ Autopilot allows DeeDee to assist in personal messaging by drafting replies in y
 - **WhatsApp IDs**: WhatsApp gives contacts a WhatsApp ID (LID) next to their phone number. A person record holds the phone number and, once linked, the WhatsApp ID (`identifiers.whatsapp_lid`); lookups match either one exactly. "Sync WhatsApp" on the People page and the nightly maintenance job link the two from the WhatsApp contact list. There is no digit-suffix guessing: a WhatsApp ID's digits are unrelated to the phone number. A contact known only by its WhatsApp ID keeps those digits as its phone and in `identifiers.whatsapp_lid`; `sendMessage` and the greetings send to it at `<id>@lid`, because `<id>@s.whatsapp.net` would be some other number. The interfaces now send the phone number for most chats WhatsApp shows by ID (see `docs/interfaces.md`); in a one-to-one chat shown by an ID, a person saved under that ID alone is still found by its digits. Links read from message keys live apart from the contact list, so the nightly link pass does not see them.
 - **Safety**: Function calling is disabled for drafts to prevent accidental command execution.
 
+## Errands
+
+Autopilot answers whatever a contact writes. An errand has a goal and an
+end: the owner asks Deedee to book a slot, ask a question or pass on a
+message, and she writes from his account in his voice until it is done.
+They share the owner's style notes (Style tab) and live in the Errands tab.
+See `docs/errands.md`.
+
 ## Greetings
 
 The Greetings tab runs the `partner_good_morning` (07:00, plus up to 75 minutes) and `partner_good_night` (22:30, plus up to 45 minutes) system jobs. They write one or two lines to one person from the owner's own WhatsApp, in the owner's style, and follow that person's saved style from the Style tab when there is one. The job skips a morning when the owner already wrote that day, and a night when the owner wrote in the last hour. The model declines when the chat shows an argument or bad news.

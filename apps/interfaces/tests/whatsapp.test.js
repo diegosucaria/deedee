@@ -131,10 +131,17 @@ describe('WhatsAppService Unit Tests', () => {
         );
     });
 
+    test('sendMessage returns the WhatsApp id of what went out, so an errand knows its own messages', async () => {
+        await whatsapp.connect();
+        whatsapp.sock.sendMessage.mockResolvedValueOnce({ key: { id: 'WAID-1', fromMe: true } });
+        const out = await whatsapp.sendMessage('123@s.whatsapp.net', 'hola', { type: 'text', id: 'msg-9' });
+        expect(out).toEqual({ duplicate: false, messageId: 'WAID-1' });
+    });
+
     test('sendMessage skips a repeat of the same message id for 24 h', async () => {
         await whatsapp.connect();
         const first = await whatsapp.sendMessage('123@s.whatsapp.net', 'hello', { type: 'text', id: 'msg-1' });
-        expect(first).toEqual({ duplicate: false });
+        expect(first).toEqual({ duplicate: false, messageId: null });
         const again = await whatsapp.sendMessage('123@s.whatsapp.net', 'hello', { type: 'text', id: 'msg-1' });
         expect(again).toEqual({ duplicate: true });
         expect(whatsapp.sock.sendMessage).toHaveBeenCalledTimes(1);
@@ -150,7 +157,7 @@ describe('WhatsAppService Unit Tests', () => {
         whatsapp.sock.sendMessage.mockRejectedValueOnce(new Error('Connection Closed'));
         await expect(whatsapp.sendMessage('123@s.whatsapp.net', 'hello', { type: 'text', id: 'msg-2' })).rejects.toThrow('Connection Closed');
         const retry = await whatsapp.sendMessage('123@s.whatsapp.net', 'hello', { type: 'text', id: 'msg-2' });
-        expect(retry).toEqual({ duplicate: false });
+        expect(retry).toEqual({ duplicate: false, messageId: null });
         expect(whatsapp.sock.sendMessage).toHaveBeenCalledTimes(2);
     });
 

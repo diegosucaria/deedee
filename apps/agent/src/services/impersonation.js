@@ -321,6 +321,37 @@ Output a concise list of rules for this specific relationship.
         }
     }
 
+    /** Forget the messages buffered for a chat and stop their timer. */
+    dropBuffer(chatId) {
+        const buffer = this.messageBuffers.get(chatId);
+        if (!buffer) return false;
+        if (buffer.timer) clearTimeout(buffer.timer);
+        this.messageBuffers.delete(chatId);
+        return true;
+    }
+
+    /**
+     * Does an open errand hold this contact's chat (services/errands.js)?
+     * While one does, only the errand writes to her. A failed check counts
+     * as yes: a reply that waits does no harm.
+     */
+    _errandHolds(chatId, contactString, metadata, person) {
+        const errands = this.agent && this.agent.errands;
+        if (!errands || typeof errands.holds !== 'function') return false;
+        const meta = metadata || {};
+        const ids = [chatId, contactString, meta.chatId, meta.phoneNumber, meta.lid];
+        if (person) {
+            ids.push(person.phone);
+            if (person.identifiers && typeof person.identifiers === 'object') ids.push(person.identifiers.whatsapp, person.identifiers.whatsapp_lid);
+        }
+        try {
+            return !!errands.holds(ids.filter(Boolean).map(String));
+        } catch (e) {
+            console.warn(`[Impersonation] Errand check failed for ${contactString}; Autopilot stays out: ${e.message}`);
+            return true;
+        }
+    }
+
     /**
      * Process the buffered messages and generate a draft
      */
@@ -329,17 +360,18 @@ Output a concise list of rules for this specific relationship.
         if (!buffer) return;
 
         // Clean up immediately to prevent race conditions
-        this.messageBuffers.delete(chatId);
+        this.dropBuffer(chatId);
 
         const fullContent = buffer.content.join('\n\n');
 
         // Resolve Contact Name for better context
         let contactName = contactString;
+        let person = null;
         try {
             // Try resolving by strict ID (phone/jid)
             // contactString might be a phone number or JID
             const cleanId = contactString.includes('@') ? contactString.split('@')[0] : contactString;
-            const person = this.db.getPerson(cleanId);
+            person = this.db.getPerson(cleanId);
             if (person && person.name) {
                 contactName = person.name;
             } else if (buffer.metadata && buffer.metadata.notifyName) {
@@ -347,6 +379,13 @@ Output a concise list of rules for this specific relationship.
             }
         } catch (e) {
             console.warn('[Impersonation] Name resolution failed:', e.message);
+        }
+
+        // A reply buffered just before an errand started must not reach her
+        // while the errand holds her chat: the errand alone writes to her.
+        if (this._errandHolds(chatId, contactString, buffer.metadata, person)) {
+            console.log(`[Impersonation] An errand holds the chat with ${contactString}; no Autopilot draft.`);
+            return;
         }
 
         console.log(`[Impersonation] Processing buffered messages for ${contactName} (${contactString}): ${buffer.content.length} messages.`);
@@ -360,6 +399,12 @@ Output a concise list of rules for this specific relationship.
         };
 
         const result = await this.generateDraft(chatId, combinedMessage, contactName, fullContent, contactString);
+
+        // An errand may have started while the model drafted.
+        if (result && result.text && this._errandHolds(chatId, contactString, buffer.metadata, person)) {
+            console.log(`[Impersonation] An errand took the chat with ${contactString} during the draft; dropped it.`);
+            return;
+        }
 
         if (result && result.text) {
             const { text: draftText, cost } = result;
@@ -379,6 +424,8 @@ Output a concise list of rules for this specific relationship.
                 let failure = null;
                 try {
                     for (const msgContent of messages) {
+                        // Between parts too: an errand that starts now holds her chat.
+                        if (this._errandHolds(chatId, contactString, buffer.metadata, person)) { failure = 'an errand now holds this chat'; break; }
                         const payload = {
                             source: buffer.source || 'whatsapp',
                             content: msgContent,

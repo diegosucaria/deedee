@@ -67,6 +67,9 @@ const SERVICE_CATEGORIES = {
   impersonation_analyze: 'Autopilot',
   impersonation_learn: 'Autopilot',
   autopilot: 'Autopilot',
+  // Errands (services/errands.js): the voice and the reply reader
+  errand_draft: 'Autopilot',
+  errand_read: 'Autopilot',
   // Analysis
   analysis: 'Analysis',
   tool_scoper: 'Analysis',
@@ -78,6 +81,9 @@ const SERVICE_CATEGORIES = {
   // Approval guardian (real decisions and owner dry runs)
   guardian: 'Guardian',
   guardian_dry_run: 'Guardian',
+  // The guardian's errand checks: the message check and the card reader
+  guardian_message: 'Guardian',
+  guardian_reply: 'Guardian',
 };
 
 // Which interface owns a chat session. The web sidebar lists web chats only,
@@ -722,6 +728,70 @@ class AgentDB {
         breaker_trips INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (day, outcome, tool_name, source_kind, risk)
       );
+
+      -- Errands (services/errands.js, specs/050-errands.md): one task Deedee
+      -- runs with one contact, writing from the owner's WhatsApp. Closed rows
+      -- stay for the Autopilot tab's history.
+      CREATE TABLE IF NOT EXISTS errands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        goal TEXT NOT NULL,
+        mode TEXT NOT NULL DEFAULT 'ask',
+        state TEXT NOT NULL,
+        contact_jid TEXT NOT NULL,
+        contact_ids TEXT NOT NULL,
+        contact_name TEXT,
+        person_id TEXT,
+        request TEXT NOT NULL,
+        slot TEXT,
+        window_start TEXT,
+        window_end TEXT,
+        offer TEXT,
+        agreed TEXT,
+        event_title TEXT,
+        location TEXT,
+        duration_min INTEGER,
+        event_id TEXT,
+        pending_approval_id TEXT,
+        sent_count INTEGER NOT NULL DEFAULT 0,
+        auto_count INTEGER NOT NULL DEFAULT 0,
+        model_calls INTEGER NOT NULL DEFAULT 0,
+        last_sent_at TEXT,
+        last_contact_at TEXT,
+        no_reply_noted INTEGER NOT NULL DEFAULT 0,
+        next_check_at TEXT,
+        next_action TEXT,
+        slot_owned INTEGER NOT NULL DEFAULT 0,
+        time_owned INTEGER NOT NULL DEFAULT 0,
+        auto_ok INTEGER NOT NULL DEFAULT 1,
+        auto_why TEXT,
+        held_yes TEXT,
+        read_through INTEGER NOT NULL DEFAULT 0,
+        answered_at TEXT,
+        lang TEXT,
+        request_tainted INTEGER NOT NULL DEFAULT 0,
+        grace_until TEXT,
+        origin_chat_id TEXT,
+        origin_source TEXT,
+        cancel_requested_at TEXT,
+        ask TEXT,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        closed_at TEXT,
+        close_reason TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_errands_state ON errands(state);
+
+      CREATE TABLE IF NOT EXISTS errand_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        errand_id INTEGER NOT NULL,
+        at TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        detail TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_errand_events_errand ON errand_events(errand_id, id);
     `);
 
     // Seed wr_user_profile singleton (id=1) with preferred brands if missing
@@ -752,6 +822,27 @@ class AgentDB {
       this.db.exec("ALTER TABLE watchers ADD COLUMN taint_sources TEXT");
     } catch (e) {
       // Ignore if column exists
+    }
+
+    // Migration: errands keep a cancel he asked for while a step ran.
+    try {
+      this.db.exec("ALTER TABLE errands ADD COLUMN cancel_requested_at TEXT");
+    } catch (e) {
+      // Ignore if column exists
+    }
+    // Migration: errands keep his own typed words that started them, for the message check.
+    try {
+      this.db.exec("ALTER TABLE errands ADD COLUMN ask TEXT");
+    } catch (e) {
+      // Ignore if column exists
+    }
+    // One open errand per contact chat. services/errands.js checks this
+    // first; the index is the last guard. Rows from before it (two open
+    // errands on one chat) keep it from being built: the code check holds.
+    try {
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_errands_open_contact ON errands(contact_jid) WHERE closed_at IS NULL');
+    } catch (e) {
+      console.warn('[DB] idx_errands_open_contact not created:', e.message);
     }
 
     try {
@@ -2795,6 +2886,63 @@ class AgentDB {
     `).all(chatId, Math.max(1, Math.min(200, Number(limit) || 100)));
   }
 
+  /** The newest assistant row across these chat ids (one person's chat can carry several ids), or null. */
+  getLatestAssistantMessage(chatIds = []) {
+    const ids = [...new Set((chatIds || []).filter(Boolean).map(String))];
+    if (ids.length === 0) return null;
+    const row = this.db.prepare(`
+      SELECT id, chat_id, timestamp, metadata FROM messages
+      WHERE role = 'assistant' AND chat_id IN (${ids.map(() => '?').join(', ')})
+      ORDER BY timestamp DESC, rowid DESC
+      LIMIT 1
+    `).get(...ids);
+    if (!row) return null;
+    let metadata = null;
+    try { metadata = row.metadata ? JSON.parse(row.metadata) : null; } catch { metadata = null; }
+    return { ...row, metadata };
+  }
+
+  /**
+   * Rows of these chat ids (one person's chat can carry several ids) written
+   * at or after `sinceIso`, oldest first:
+   * { id, role, timestamp, metadata, head, source, chatId }.
+   * `excludeId`: the message being handled now. `more` is true when rows
+   * past `limit` were left out. `withCalls`: the model's tool calls of each
+   * run come too, as role 'model' rows with `calls: [{ name, args }]`.
+   */
+  listChatMessagesSince(chatIds = [], sinceIso, { excludeId = null, limit = 50, withCalls = false } = {}) {
+    const ids = [...new Set((chatIds || []).filter(Boolean).map(String))];
+    const since = Date.parse(sinceIso);
+    if (ids.length === 0 || !Number.isFinite(since)) return { rows: [], more: false };
+    const cap = Math.max(1, Math.min(Number(limit) || 50, 200));
+    // His words and Deedee's only: a run's tool steps are not messages to him.
+    const roles = withCalls ? "('user', 'assistant', 'model')" : "('user', 'assistant')";
+    const newest = this.db.prepare(`
+      SELECT id, role, timestamp, metadata, source, chat_id, substr(content, 1, 400) AS head,
+             CASE WHEN role = 'model' THEN parts ELSE NULL END AS parts
+      FROM messages
+      WHERE chat_id IN (${ids.map(() => '?').join(', ')}) AND id IS NOT ? AND role IN ${roles}
+      ORDER BY timestamp DESC, rowid DESC
+      LIMIT ?
+    `).all(...ids, excludeId === null || excludeId === undefined ? null : String(excludeId), cap + 1);
+    // Times compare as instants, whatever text form a row keeps.
+    const after = newest.filter(r => Date.parse(r.timestamp) >= since);
+    const rows = after.slice(0, cap).reverse().map(r => {
+      let metadata = null;
+      try { metadata = r.metadata ? JSON.parse(r.metadata) : null; } catch { metadata = null; }
+      // The first words, so a reader can tell a question from a statement.
+      const row = { id: r.id, role: r.role, timestamp: r.timestamp, metadata, head: typeof r.head === 'string' ? r.head : '', source: r.source || null, chatId: r.chat_id || null };
+      if (r.role === 'model') {
+        let parts = [];
+        try { parts = r.parts ? JSON.parse(r.parts) : []; } catch { parts = []; }
+        row.calls = (Array.isArray(parts) ? parts : []).filter(p => p && p.functionCall && typeof p.functionCall.name === 'string')
+          .map(p => ({ name: p.functionCall.name, args: p.functionCall.args && typeof p.functionCall.args === 'object' ? p.functionCall.args : {} }));
+      }
+      return row;
+    });
+    return { rows, more: after.length > cap };
+  }
+
   /** The newest role-user rows of one chat, newest first: { id, content }. */
   getRecentUserMessages(chatId, limit = 5) {
     if (!chatId) return [];
@@ -4165,6 +4313,12 @@ class AgentDB {
       options ? JSON.stringify(options) : null, expiresAt || null);
   }
 
+  /** A question's status by id ('pending', 'answered', 'expired', ...), or null. */
+  getQuestionStatus(id) {
+    if (!id) return null;
+    return this.db.prepare('SELECT status FROM pending_questions WHERE id = ?').get(String(id))?.status || null;
+  }
+
   /** The open question waiting on `replyChatId`, or undefined. */
   getPendingQuestion(replyChatId) {
     return this.db.prepare(`
@@ -4327,6 +4481,28 @@ class AgentDB {
     return this.getOutboxRow(rowId);
   }
 
+  /**
+   * Deliveries to any of these chats (as the target, or as the fallback)
+   * sent or tried since `sinceIso`, of any kind: { id, kind, origin }. For
+   * chats whose notes the message history does not keep (Telegram). A row
+   * made earlier but sent after `sinceIso` counts.
+   */
+  listOutboxSince(targets = [], sinceIso) {
+    const ids = [...new Set((targets || []).filter(Boolean).map(String))];
+    const since = Date.parse(sinceIso);
+    if (ids.length === 0 || !Number.isFinite(since)) return [];
+    const marks = ids.map(() => '?').join(', ');
+    return this.db.prepare(`
+      SELECT id, kind, origin, created_at, sent_at, fallback_at FROM notification_outbox o
+      WHERE (target IN (${marks}) OR fallback_target IN (${marks})) AND status != 'dead'
+        -- A delivery the chat history keeps (a card, a question, a reply) is read there.
+        AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = o.id)
+      ORDER BY created_at DESC LIMIT 100
+    `).all(...ids, ...ids)
+      .filter(r => [r.created_at, r.sent_at, r.fallback_at].some(t => t && Date.parse(t) >= since))
+      .map(r => ({ id: r.id, kind: r.kind, origin: r.origin }));
+  }
+
   getOutboxRow(id) {
     return this._mapOutboxRow(this.db.prepare('SELECT * FROM notification_outbox WHERE id = ?').get(id));
   }
@@ -4486,6 +4662,16 @@ class AgentDB {
       replyChatId, replyChannel || null, mode || 'interactive', toolName, JSON.stringify(args || {}),
       summary || null, reason || null, createdAt || now, expiresAt);
     return this.getPendingConfirmation(rowId);
+  }
+
+  /** Cards (any status) for one errand's steps, newest first. */
+  listErrandCards(errandId, { limit = 10 } = {}) {
+    const rows = this.db.prepare(`
+      SELECT * FROM pending_confirmations
+      WHERE tool_name = 'answerErrand' AND CAST(json_extract(args, '$.id') AS INTEGER) = ?
+      ORDER BY created_at DESC LIMIT ?
+    `).all(Number(errandId), Math.max(1, Math.min(Number(limit) || 10, 50)));
+    return rows.map(r => this._mapConfirmationRow(r));
   }
 
   getPendingConfirmation(id) {
@@ -5309,6 +5495,123 @@ class AgentDB {
     values.push(1);
     const result = this.db.prepare(`UPDATE wr_user_profile SET ${sets.join(', ')} WHERE id = ?`).run(...values);
     return result.changes > 0;
+  }
+
+  // --- Errands (services/errands.js) ---
+
+  _mapErrandRow(row) {
+    if (!row) return null;
+    const parse = (s, fb) => { if (s === null || s === undefined || s === '') return fb; try { return JSON.parse(s); } catch { return fb; } };
+    return {
+      ...row,
+      contact_ids: parse(row.contact_ids, []),
+      slot: parse(row.slot, null),
+      offer: parse(row.offer, null),
+      agreed: parse(row.agreed, null),
+      next_action: parse(row.next_action, null),
+      held_yes: parse(row.held_yes, null),
+      ask: parse(row.ask, null)
+    };
+  }
+
+  /** `ask`: { original: [...] }, his own typed words that started it. Only the message check reads it. */
+  createErrand(fields) {
+    const now = fields.createdAt || new Date().toISOString();
+    const json = (v) => (v === undefined || v === null ? null : JSON.stringify(v));
+    const info = this.db.prepare(`
+      INSERT INTO errands (goal, mode, state, contact_jid, contact_ids, contact_name, person_id, request, slot,
+        window_start, window_end, event_title, location, duration_min, origin_chat_id, origin_source,
+        expires_at, created_at, updated_at, slot_owned, time_owned, request_tainted, lang, ask)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(fields.goal, fields.mode || 'ask', fields.state || 'waiting_contact', fields.contactJid,
+      JSON.stringify(fields.contactIds || []), fields.contactName || null, fields.personId || null, fields.request,
+      json(fields.slot), fields.windowStart || null, fields.windowEnd || null, fields.eventTitle || null,
+      fields.location || null, Number.isFinite(fields.durationMin) ? fields.durationMin : null,
+      fields.originChatId || null, fields.originSource || null, fields.expiresAt, now, now,
+      fields.slotOwned ? 1 : 0, fields.timeOwned ? 1 : 0, fields.requestTainted ? 1 : 0, fields.lang || null, json(fields.ask));
+    return this.getErrand(info.lastInsertRowid);
+  }
+
+  getErrand(id) {
+    return this._mapErrandRow(this.db.prepare('SELECT * FROM errands WHERE id = ?').get(Number(id)));
+  }
+
+  /** Open errands (no closed_at), oldest first; with `all`, the newest `limit` rows of every state. */
+  listErrands({ all = false, limit = 50 } = {}) {
+    const rows = all
+      ? this.db.prepare('SELECT * FROM errands ORDER BY id DESC LIMIT ?').all(Math.max(1, Math.min(Number(limit) || 50, 500)))
+      : this.db.prepare('SELECT * FROM errands WHERE closed_at IS NULL ORDER BY id ASC').all();
+    return rows.map(r => this._mapErrandRow(r));
+  }
+
+  /**
+   * Set columns on an errand. JSON columns take objects; `null` clears.
+   * Returns the updated row, or null when there is no such errand.
+   */
+  updateErrand(id, patch = {}, { closed = false } = {}) {
+    const allowed = new Set(['state', 'mode', 'slot', 'window_start', 'window_end', 'offer', 'agreed', 'event_id',
+      'pending_approval_id', 'sent_count', 'auto_count', 'model_calls', 'last_sent_at', 'last_contact_at',
+      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'contact_ids', 'slot_owned', 'time_owned', 'grace_until', 'read_through', 'answered_at', 'auto_ok', 'auto_why', 'held_yes',
+      'cancel_requested_at']);
+    const jsonCols = new Set(['slot', 'offer', 'agreed', 'contact_ids', 'next_action', 'held_yes']);
+    const sets = [];
+    const values = [];
+    for (const [k, v] of Object.entries(patch)) {
+      if (!allowed.has(k)) continue;
+      sets.push(`${k} = ?`);
+      values.push(jsonCols.has(k) && v !== null && v !== undefined ? JSON.stringify(v) : (v === undefined ? null : v));
+    }
+    if (sets.length === 0) return this.getErrand(id);
+    sets.push('updated_at = ?');
+    values.push(new Date().toISOString(), Number(id));
+    // A closed errand keeps its outcome: a step still running when he
+    // cancelled must not write it back to life. Only callers that mean to
+    // (the calendar id, the watch after a booking) pass { closed: true }.
+    this.db.prepare(`UPDATE errands SET ${sets.join(', ')} WHERE id = ?${closed ? '' : ' AND closed_at IS NULL'}`).run(...values);
+    return this.getErrand(id);
+  }
+
+  /**
+   * Close an open errand. Only the first caller wins: the update is guarded
+   * on closed_at, so a sweep and an owner's cancel cannot both close it.
+   */
+  closeErrand(id, state, reason = null, { now: at = null } = {}) {
+    const now = at || new Date().toISOString();
+    const res = this.db.prepare(`
+      UPDATE errands SET state = ?, closed_at = ?, close_reason = ?, pending_approval_id = NULL, next_action = NULL, next_check_at = NULL, updated_at = ?
+      WHERE id = ? AND closed_at IS NULL
+    `).run(state, now, reason, now, Number(id));
+    return res.changes > 0 ? this.getErrand(id) : null;
+  }
+
+  addErrandEvent(errandId, kind, detail = null) {
+    let text = null;
+    if (detail !== null && detail !== undefined) {
+      try { text = JSON.stringify(detail); } catch { text = JSON.stringify(String(detail)); }
+      if (text.length > 4000) text = JSON.stringify({ truncated: text.slice(0, 3900) });
+    }
+    this.db.prepare('INSERT INTO errand_events (errand_id, at, kind, detail) VALUES (?, ?, ?, ?)')
+      .run(Number(errandId), new Date().toISOString(), String(kind), text);
+  }
+
+  /** How many events of this kind an errand has (every one, not a page). */
+  countErrandEvents(errandId, kind) {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM errand_events WHERE errand_id = ? AND kind = ?').get(Number(errandId), String(kind)).n;
+  }
+
+  /** An errand's steps, oldest first. `newest`: only the last N, still oldest first. */
+  listErrandEvents(errandId, { limit = 200, newest = null } = {}) {
+    const rows = newest
+      ? this.db.prepare('SELECT * FROM errand_events WHERE errand_id = ? ORDER BY id DESC LIMIT ?')
+        .all(Number(errandId), Math.max(1, Math.min(Number(newest) || 200, 1000))).reverse()
+      : this.db.prepare('SELECT * FROM errand_events WHERE errand_id = ? ORDER BY id ASC LIMIT ?')
+        .all(Number(errandId), Math.max(1, Math.min(Number(limit) || 200, 1000)));
+    return rows
+      .map(r => {
+        let detail = null;
+        if (r.detail) { try { detail = JSON.parse(r.detail); } catch { detail = r.detail; } }
+        return { ...r, detail };
+      });
   }
 }
 

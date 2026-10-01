@@ -5,7 +5,7 @@
  */
 const {
     GuardianService, buildGuardianInput, buildSystemInstruction, parseVerdict, redactArgs, RESPONSE_SCHEMA, USAGE_TAG,
-    DRY_RUN_USAGE_TAG, ARG_STRING_CHARS
+    DRY_RUN_USAGE_TAG, ARG_STRING_CHARS, MESSAGE_CHECK_MAX_MS, MESSAGE_RETRY_PAUSE_MS
 } = require('../src/services/guardian-service');
 const { TurnTaint } = require('../src/utils/untrusted-content');
 
@@ -146,6 +146,33 @@ describe('GuardianService.judge', () => {
 
     test('the default timeout is 8 seconds', () => {
         expect(new GuardianService(makeAgent(jest.fn())).timeoutMs).toBe(8000);
+    });
+
+    // errands.test.js checks that the errand's own wait is longer than this bound.
+    test('the message check\'s two tries and pause take at most 17 s, and the bound grows with GUARDIAN_TIMEOUT_MS', () => {
+        const svc = new GuardianService(makeAgent(jest.fn()));
+        expect(svc.retryPauseMs).toBe(MESSAGE_RETRY_PAUSE_MS);
+        expect(MESSAGE_RETRY_PAUSE_MS).toBe(1000);
+        expect(svc.messageCheckMaxMs).toBe(MESSAGE_CHECK_MAX_MS);
+        expect(MESSAGE_CHECK_MAX_MS).toBe(17000);
+        // A longer timeout set by GUARDIAN_TIMEOUT_MS grows the bound with it.
+        const saved = process.env.GUARDIAN_TIMEOUT_MS;
+        process.env.GUARDIAN_TIMEOUT_MS = '10000';
+        try {
+            expect(new GuardianService(makeAgent(jest.fn())).messageCheckMaxMs).toBe(21000);
+        } finally {
+            if (saved === undefined) delete process.env.GUARDIAN_TIMEOUT_MS;
+            else process.env.GUARDIAN_TIMEOUT_MS = saved;
+        }
+    });
+
+    test('judge is never retried: one failed call escalates, so a paused tool call waits one timeout at most', async () => {
+        const gen = jest.fn()
+            .mockRejectedValueOnce(new Error('503'))
+            .mockResolvedValue(answer({ verdict: 'allow', reason: 'fine', risk: 'low' }));
+        const out = await new GuardianService(makeAgent(gen), { retryPauseMs: 0 }).judge(baseParams);
+        expect(out).toMatchObject({ verdict: 'escalate', failed: true });
+        expect(gen).toHaveBeenCalledTimes(1);
     });
 
     test('an API error, an unreadable answer or no client escalates', async () => {

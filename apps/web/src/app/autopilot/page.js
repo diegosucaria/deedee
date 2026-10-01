@@ -3,13 +3,14 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, toggleAutopilotPin, getStyleProfile, saveStyleProfile, analyzeStyle, getContactStyle, saveContactStyle, analyzeContactStyle, updatePerson } from '../actions';
-import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search, Trash, Clock, RefreshCw, Pin, Heart } from 'lucide-react';
+import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search, Trash, Clock, RefreshCw, Pin, Heart, ClipboardList } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 import { useSocket } from '../../hooks/useSocket';
 import ScrollableTabs from '@/components/ScrollableTabs';
 import PageShell from '@/components/PageShell';
 import PartnerGreetings from '@/components/PartnerGreetings';
+import Errands from '@/components/Errands';
 import ContactStylePicker from '@/components/ContactStylePicker';
 
 // A draft's options JSON ({ cost } for replies, { kind, name } for greetings).
@@ -50,6 +51,7 @@ function AutopilotPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedDuration, setSelectedDuration] = useState(0); // 0 = Forever, 15, 60, 180
     const [greetingsKey, setGreetingsKey] = useState(0); // bumping it reloads the Greetings tab
+    const [errandsKey, setErrandsKey] = useState(0); // bumping it reloads the Errands tab
 
     // Style State
     const [styleProfile, setStyleProfile] = useState('');
@@ -225,7 +227,11 @@ function AutopilotPage() {
                 </div>
 
                 <button
-                    onClick={() => (activeTab === 'greetings' ? setGreetingsKey((k) => k + 1) : loadData(false))}
+                    onClick={() => {
+                        if (activeTab === 'greetings') setGreetingsKey((k) => k + 1);
+                        else if (activeTab === 'errands') setErrandsKey((k) => k + 1);
+                        else loadData(false);
+                    }}
                     disabled={loading}
                     className="p-1 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded transition-colors disabled:opacity-50"
                     title="Refresh Data"
@@ -240,6 +246,7 @@ function AutopilotPage() {
                     { id: 'settings', label: 'Settings', icon: Settings },
                     { id: 'style', label: 'Style', icon: Brain },
                     { id: 'greetings', label: 'Greetings', icon: Heart },
+                    { id: 'errands', label: 'Errands', icon: ClipboardList },
                 ]}
                 activeTab={activeTab}
                 onChange={setActiveTab}
@@ -494,6 +501,8 @@ function AutopilotPage() {
                 )}
 
                 {activeTab === 'greetings' && <PartnerGreetings key={greetingsKey} />}
+
+                {activeTab === 'errands' && <Errands key={errandsKey} />}
 
                 {activeTab === 'style' && (
                     <div className="space-y-6">

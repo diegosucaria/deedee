@@ -373,6 +373,51 @@ describe('DeliveryService', () => {
         });
     });
 
+    describe('approval cards whose question is settled', () => {
+        const card = (id, status = 'pending') => ({ content: `❓ ¿Le digo que sí a Alice? (${id})`, metadata: { approval: { id, status, toolName: 'answerErrand' } } });
+        const waiting = (id) => db.createPendingConfirmation({
+            id, replyChatId: OWNER_JID, replyChannel: 'whatsapp', mode: 'deferred', toolName: 'answerErrand',
+            args: { id: 1, action: 'accept', date: '2026-10-08', time: '10:30' }, expiresAt: new Date(Date.now() + 6 * 3600e3).toISOString()
+        });
+
+        test('a queued card that was withdrawn never goes out late, and raises no undelivered alert', async () => {
+            waiting('aaaaaa');
+            agent.interface.send.mockResolvedValue(false);
+            expect(await svc.deliver('approval', 'whatsapp', OWNER_JID, card('aaaaaa'), { id: 'card-a', origin: 'approval:aaaaaa', dedupe: false }))
+                .toMatchObject({ delivered: false, queued: true });
+            db.decidePendingConfirmation('aaaaaa', 'expired', { via: 'withdrawn' });
+            agent.interface.send.mockClear();
+            agent.interface.send.mockResolvedValue(true);
+            jest.advanceTimersByTime(BACKOFF_MS[0]);
+            await svc.tick();
+            expect(agent.interface.send).not.toHaveBeenCalled();
+            expect(db.getOutboxRow('card-a')).toMatchObject({ status: 'dead', last_error: 'the card no longer waits for an answer' });
+            expect(agent.notifications.create).not.toHaveBeenCalled();
+        });
+
+        test('a line about a settled card still goes out', async () => {
+            waiting('bbbbbb');
+            db.decidePendingConfirmation('bbbbbb', 'approved', { via: 'web' });
+            const res = await svc.deliver('approval', 'whatsapp', OWNER_JID, { content: 'Lo agendé.', metadata: { approval: { id: 'bbbbbb', status: 'approved' } } }, { origin: 'approval:bbbbbb', dedupe: false });
+            expect(res.delivered).toBe(true);
+        });
+
+        test('retire takes a waiting row out of line, a sent row stays sent, and Retry cannot bring a settled card back', async () => {
+            waiting('cccccc');
+            agent.interface.send.mockResolvedValueOnce(false);
+            await svc.deliver('approval', 'whatsapp', OWNER_JID, card('cccccc'), { id: 'card-c', origin: 'approval:cccccc', dedupe: false });
+            expect(svc.retire('card-c', 'the card no longer waits for an answer')).toBe(true);
+            expect(db.getOutboxRow('card-c').status).toBe('dead');
+            await svc.deliver('reminder', 'whatsapp', OWNER_JID, { content: 'hola' }, { id: 'r-1' });
+            expect(svc.retire('r-1', 'x')).toBe(false);
+            expect(db.getOutboxRow('r-1').status).toBe('sent');
+            db.decidePendingConfirmation('cccccc', 'denied', { via: 'web' });
+            agent.interface.send.mockClear();
+            expect(await svc.retryNow('card-c')).toMatchObject({ delivered: false, retired: true });
+            expect(agent.interface.send).not.toHaveBeenCalled();
+        });
+    });
+
     describe('without a ledger', () => {
         test('a stub DB still gets one direct send plus the immediate fallback', async () => {
             process.env.ALLOWED_TELEGRAM_IDS = TG_ID;

@@ -37,6 +37,19 @@ describe('HttpInterface', () => {
         consoleSpy.mockRestore();
     });
 
+    test('send() puts the WhatsApp id of what went out on the caller\'s object and still returns true', async () => {
+        axios.post.mockResolvedValue({ data: { success: true, messageId: 'WAID-3' } });
+        jest.spyOn(console, 'log').mockImplementation(() => { });
+        const payload = { source: 'whatsapp', content: 'hola', metadata: { chatId: '15550100@s.whatsapp.net', session: 'user' } };
+        await expect(httpInterface.send(payload)).resolves.toBe(true);
+        expect(payload.sentMessageId).toBe('WAID-3');
+        const plain = { source: 'telegram', content: 'hi', metadata: { chatId: '1' } };
+        axios.post.mockResolvedValue({ data: { success: true } });
+        await httpInterface.send(plain);
+        expect(plain.sentMessageId).toBeUndefined();
+        console.log.mockRestore();
+    });
+
     test('send() should include platform and isNotification in payload', async () => {
         axios.post.mockResolvedValue({ data: {} });
         const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => { });

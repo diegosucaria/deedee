@@ -12,6 +12,7 @@ const { DJExecutor } = require('./executors/dj');
 const { WardrobeExecutor } = require('./executors/wardrobe');
 const { SlackExecutor } = require('./executors/slack');
 const { SubAgentExecutor } = require('./executors/subagent');
+const { ErrandsExecutor } = require('./executors/errands');
 
 class ToolExecutor {
     /**
@@ -33,7 +34,8 @@ class ToolExecutor {
             new DJExecutor(services),
             new WardrobeExecutor(services),
             new SlackExecutor(services),
-            new SubAgentExecutor(services)
+            new SubAgentExecutor(services),
+            new ErrandsExecutor(services)
         ];
     }
 

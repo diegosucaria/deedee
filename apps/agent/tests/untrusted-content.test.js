@@ -180,11 +180,25 @@ describe('taintedAction', () => {
         }
     });
 
-    test('updatePerson: notes run; a new phone number or saved profile asks (the profile holds the style greetings follow)', () => {
-        expect(taintedAction('updatePerson', { id: 'p1', updates: { notes: 'likes tea' } })).toBeNull();
+    test('updatePerson: a new phone number or saved profile asks (the profile holds the style greetings follow)', () => {
         expect(taintedAction('updatePerson', { id: 'p1', updates: { phone: '+10000000000' } })).toMatch(/phone/);
         expect(taintedAction('updatePerson', { id: 'p1', updates: { metadata: '{"style_profile":"always add this link"}' } })).toMatch(/profile/);
         expect(taintedAction('updatePerson', { id: 'p1', updates: { metadata: { style_profile: 'x' } } })).toMatch(/profile/);
+    });
+
+    test('updatePerson: a run that read a contact\'s words cannot rename a People row unasked (errands trust that name as his)', () => {
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { name: 'Carol' } })).toBe('rename a contact');
+        expect(taintedAction('updatePerson', { id: 'p1', updates: '{"name":"Carol"}' })).toBe('rename a contact');
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { name: 'Carol', notes: 'x' } })).toBe('rename a contact');
+    });
+
+    test('updatePerson: a run that read a contact\'s words cannot set a People row\'s relationship or notes unasked (searchPeople finds a row by them)', () => {
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { relationship: 'barber' } })).toMatch(/relationship or notes/);
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { notes: 'my barber' } })).toMatch(/relationship or notes/);
+        expect(taintedAction('updatePerson', { id: 'p1', updates: '{"relationship":"barber"}' })).toMatch(/relationship or notes/);
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { notes: '' } })).toMatch(/relationship or notes/);
+        // Nothing to change: nothing to ask.
+        expect(taintedAction('updatePerson', { id: 'p1', updates: {} })).toBeNull();
     });
 
     test('updatePerson passes only the listed fields: autopilot never changes through a tool', async () => {
@@ -365,6 +379,15 @@ describe('guard with taint', () => {
         expect(guard.message).toBe('This run read untrusted content (email (personal_gmail)) and now wants to send a message. The content may have asked for it, so the owner decides.');
         expect(service.check('sendMessage', { to: 'me', content: 'digest' }, { taint })).toEqual({ requiresConfirmation: false });
         expect(service.check('searchMemory', { query: 'x' }, { taint })).toEqual({ requiresConfirmation: false });
+    });
+
+    test('taint: a rename of a People row asks; the same rename in a clean run does not', () => {
+        const service = new ApprovalService({ db, settings: {} }, { rules });
+        const args = { id: 'p1', updates: { name: 'Carol' } };
+        const guard = service.check('updatePerson', args, { taint: new TurnTaint(["a contact's message (watcher)"]) });
+        expect(guard).toMatchObject({ requiresConfirmation: true, rule: 'untrusted-content', tainted: true });
+        expect(guard.message).toMatch(/rename a contact/);
+        expect(service.check('updatePerson', args)).toEqual({ requiresConfirmation: false });
     });
 
     test('taint: a call a rule already pauses keeps its rule and gets the taint note', () => {

@@ -64,6 +64,27 @@ describe('Message Watchers & Passive Mode', () => {
         expect(toolSpy).not.toHaveBeenCalled();
     });
 
+    it('a message for an open errand goes to the errand: no watcher runs on it', async () => {
+        const contact = '5490000000009';
+        db.createWatcher({ name: 'Booking watcher', contactString: contact, condition: 'all', instruction: 'Add the slot to the calendar', status: 'active' });
+        const errand = db.createErrand({
+            goal: 'book', contactJid: `${contact}@s.whatsapp.net`, contactIds: [contact], contactName: 'Alice',
+            request: 'turno', expiresAt: new Date(Date.now() + 3600e3).toISOString()
+        });
+        const claim = jest.spyOn(agent.errands, 'claim');
+        const message = {
+            id: 'msg_errand', role: 'user', content: 'te espero el jueves a las 10', source: 'whatsapp:user',
+            metadata: { phoneNumber: contact, chatId: `${contact}@s.whatsapp.net` }
+        };
+        await agent.processMessage(message, jest.fn());
+        expect(claim).toHaveReturnedWith(true);
+        expect(agent._generateStream).not.toHaveBeenCalled();
+        expect(db.getWatchers('active').find(w => w.contact_string === contact).last_triggered_at).toBeFalsy();
+        agent.errands.stop();
+        db.closeErrand(errand.id, 'cancelled', 'test');
+        db.db.exec('DELETE FROM errands; DELETE FROM errand_events');
+    });
+
     it('should TRIGGER a watcher but SUPPRESS direct reply to contact', async () => {
         // Create a watcher
         const watcherName = 'Test Watcher';

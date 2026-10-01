@@ -411,9 +411,13 @@ app.get('/whatsapp/recent', (req, res) => {
   res.json(service.getRecentChats(l));
 });
 
+// exact=1 (errands): only this person's chat, never one guessed from the
+// last digits. An address the store cannot place reads as itself alone.
+const exactParam = (v) => v === '1' || v === 'true';
+
 app.get('/whatsapp/history', (req, res) => {
   if (isWhatsAppDisabled) return res.json([]);
-  const { session, jid, limit } = req.query;
+  const { session, jid, limit, exact } = req.query;
   if (!jid) return res.status(400).json({ error: 'Missing jid' });
 
   const targetSession = session || 'user';
@@ -421,7 +425,24 @@ app.get('/whatsapp/history', (req, res) => {
   if (!service) return res.status(400).json({ error: 'Invalid session' });
 
   const l = parseInt(limit) || 200;
-  res.json(service.getChatHistory(jid, l));
+  res.json(service.getChatHistory(jid, l, { exact: exactParam(exact) }));
+});
+
+// Numbers only (how often he opens a question with ¿, message length...):
+// services/voice.js in the agent turns them into rules. No message text.
+app.get('/whatsapp/style-stats', (req, res) => {
+  if (isWhatsAppDisabled) return res.json({ n: 0 });
+  const service = whatsappSessions[req.query.session || 'user'];
+  if (!service) return res.status(400).json({ error: 'Invalid session' });
+  try {
+    // His chat with Deedee's own number is not how he writes to people.
+    const me = whatsappSessions.assistant?.sock?.user;
+    const excludeJids = [me?.id, me?.lid].filter(Boolean);
+    res.json(service.getOwnStyleStats({ excludeJids }));
+  } catch (e) {
+    console.error('[Interfaces] style-stats failed:', e.message);
+    res.status(500).json({ error: 'style numbers unavailable' });
+  }
 });
 
 app.get('/whatsapp/resolve', (req, res) => {
@@ -433,7 +454,7 @@ app.get('/whatsapp/resolve', (req, res) => {
   const service = whatsappSessions[targetSession];
   if (!service) return res.status(400).json({ error: 'Invalid session' });
 
-  res.json(service.resolveIdentity(identifier));
+  res.json(service.resolveIdentity(identifier, { exact: exactParam(req.query.exact) }));
 });
 
 app.get('/whatsapp/global-history', (req, res) => {
@@ -812,6 +833,11 @@ app.post('/send', async (req, res) => {
       const targetSessionId = metadata?.session || 'assistant';
       const service = whatsappSessions[targetSessionId];
 
+      // A message that must leave from this account and no other (an errand
+      // writes as the owner): never fall back to the assistant's number.
+      if (!service && metadata?.strictSession === true) {
+        throw new Error(`WhatsApp session '${targetSessionId}' is not available`);
+      }
       if (!service) {
         console.warn(`[Interfaces] WhatsApp session '${targetSessionId}' not found. Falling back to assistant.`);
       }
@@ -828,10 +854,10 @@ app.post('/send', async (req, res) => {
       }
 
       const options = { type: type || 'text', caption: caption || null, id };
-      await finalService.sendMessage(metadata.chatId, content, options);
+      const out = await finalService.sendMessage(metadata.chatId, content, options);
       sentIds.add(id);
 
-      return res.json({ success: true });
+      return res.json({ success: true, ...(out?.messageId ? { messageId: out.messageId } : {}) });
     }
 
     if (actualSource === 'slack') {
@@ -968,4 +994,4 @@ if (require.main === module) {
 
 // `server` and `io` are exported so a test can listen on a spare port and
 // drive the socket handlers with a real client.
-module.exports = { app, server, io, makeInputGate, sentIds };
+module.exports = { app, server, io, makeInputGate, sentIds, whatsappSessions };

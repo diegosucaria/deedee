@@ -41,6 +41,7 @@ const { SkillService } = require('./services/skill-service');
 const { MemoryPruningService } = require('./services/memory-pruning');
 const { DreamService } = require('./services/dream-service');
 const { PartnerGreetingService } = require('./services/partner-greeting');
+const { ErrandService } = require('./services/errands');
 const { SubAgentService } = require('./services/subagent-service');
 const { AskUserService } = require('./services/ask-user');
 const { BrowserLive } = require('./services/browser-live');
@@ -226,6 +227,9 @@ class Agent {
     // Owner approvals: paused tool calls persist in the DB and reach the owner
     // through the delivery ledger (services/approval-service.js).
     this.approvals = new ApprovalService(this, { rules: this.confirmationManager });
+    // Errands: one task with one contact, written from the owner's own
+    // account in his voice (services/errands.js, specs/050-errands.md).
+    this.errands = new ErrandService(this);
     this.browserLive = new BrowserLive(this);
     this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
     this.notifications = new NotificationService(this.db, this.interface);
@@ -280,6 +284,7 @@ class Agent {
     }
     if (this.delivery) this.delivery.stop();
     if (this.approvals) this.approvals.stop();
+    if (this.errands) this.errands.stop();
     if (this.browserLive) {
       try { this.browserLive.close(); } catch (e) { console.warn('[Agent] browserLive close failed:', e.message); }
     }
@@ -409,7 +414,13 @@ class Agent {
         content,
         source: 'whatsapp:assistant',
         chatId,
-        metadata: { type: t, imagePath: payload.imagePath || null, ...(jobTaint.length > 0 ? { jobTaint: jobTaint.slice(0, 20).map(String) } : {}) }
+        metadata: {
+          type: t, imagePath: payload.imagePath || null, ...(jobTaint.length > 0 ? { jobTaint: jobTaint.slice(0, 20).map(String) } : {}),
+          // An errand's note asks him something: a bare yes after it is not for an older card.
+          ...(payload.metadata?.errandId !== undefined && payload.metadata?.errandId !== null ? { errandId: payload.metadata.errandId } : {}),
+          // "Still working..." asks nothing; it names its run (ApprovalService._stillAsking).
+          ...(payload.isProgress ? { progress: true, ...(payload.metadata?.turnRunId ? { turnRunId: payload.metadata.turnRunId } : {}) } : {})
+        }
       });
     } catch (e) {
       console.warn('[Mirror] saveMessageIfNew failed:', e.message);
@@ -735,6 +746,7 @@ class Agent {
     // retrying refused sends every minute.
     this.delivery.start();
     this.approvals.start();
+    this.errands.start();
 
     // Check for xAI config
     if (settings['provider:xai']?.apiKey) {
@@ -886,6 +898,9 @@ class Agent {
     const meta = message?.metadata || {};
     const source = String(message?.source || '');
     if (meta.isSubAgent || meta.isGroup) return false;
+    // A job run held in his chat (JOB_OWN_CHAT=0) carries that chat's source
+    // and id, but a job wrote its words, not he.
+    if (meta.jobName || meta.errandId !== undefined) return false;
     // Behind his login or his API token.
     if (OWNER_ONLY_SOURCES.has(source)) return true;
     // His own chat with the assistant. The mirror of his personal account
@@ -902,6 +917,7 @@ class Agent {
       const { chatId, status } = message.metadata || {};
       if (chatId && status) {
         this.impersonationService.handlePresenceUpdate(chatId, status);
+        try { this.errands?.handlePresence(chatId, status); } catch (e) { console.warn('[Agent] Errand presence failed:', e.message); }
       }
       return;
     }
@@ -1478,7 +1494,9 @@ class Agent {
           if (Array.isArray(sources) && sources.length > 0) approvedTaint = new TurnTaint(sources);
         } catch { approvedTaint = null; }
         console.log(`${logPrefix} User confirmed action: ${action.name}${action.approvalId ? ` (approval ${action.approvalId})` : ''}`);
-        const { result } = splitImages(await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
+        // The card's id rides along, so the tool knows which card he approved.
+        const approvedMessage = action.approvalId ? { ...message, metadata: { ...(message.metadata || {}), approvalId: action.approvalId } } : message;
+        const { result } = splitImages(await this._executeTool(action.name, action.args, approvedMessage, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
           const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
           this.db.logTokenUsage({
             model, promptTokens: pTokens, candidateTokens: cTokens,
@@ -1531,6 +1549,22 @@ class Agent {
         const senderLid = String(message.metadata?.lid || '').replace(/\D/g, '');
         const groupName = message.metadata?.groupName;
         const msgContent = message.content?.toLowerCase() || '';
+
+        // An open errand takes its contact's messages first (services/errands.js).
+        // Its watchers and Autopilot then skip them, so nothing answers or
+        // books twice. The errand reads them with a model that has no tools.
+        if (message.source === 'whatsapp:user' && !isFromMe && !groupName && this.errands) {
+          let claimed = false;
+          try { claimed = this.errands.claim(message, { contactString, senderLid }); } catch (e) {
+            console.warn(`${logPrefix} Errand claim failed: ${e.message}`);
+          }
+          if (claimed) {
+            // Autopilot may hold a reply to her from before the errand started: drop it.
+            try { this.impersonationService?.dropBuffer?.(chatId); } catch (e) { console.warn(`${logPrefix} Autopilot buffer drop failed: ${e.message}`); }
+            console.log(`${logPrefix} Message from ${contactString} goes to its open errand.`);
+            return executionSummary;
+          }
+        }
 
         // Fetch active watchers (skip for fromMe — outgoing media only needs extraction)
         const watchers = isFromMe ? [] : this.db.getWatchers('active');
@@ -2215,13 +2249,33 @@ class Agent {
       );
       // Time, goals, skills, vault and location change per message, so they go
       // in the user turn and the system instruction stays cacheable.
+      // Errands, in his own typed chat only: their rules, and the open ones,
+      // so a bare "sí" or "decile a las 11" finds its errand. Names from
+      // People and checked slots only. Jobs, watchers and voice calls get none.
+      let openErrands = null;
+      let errandTurn = false;
+      if (!isLightweight && this.errands?.enabled?.()) {
+        try { errandTurn = !!(await this._ownerTyped(message)); } catch (e) { errandTurn = false; }
+        if (errandTurn) {
+          try { openErrands = this.errands.turnContextLines(); } catch (e) { openErrands = null; }
+        }
+      }
+      // His bare yes or no that no card took (other messages came after it):
+      // the model cannot approve a card, but it can tell him how.
+      let waitingCard = null;
+      if (!isLightweight) {
+        try { waitingCard = this.approvals.undecidedCard?.(message) || null; } catch (e) { waitingCard = null; }
+      }
       const turnContext = isLightweight ? '' : getTurnContext({
         dateString: timeString,
         activeGoals,
         skillsContext,
         vaultContext,
         location: message.metadata?.location,
-        browserSecretNames: hasBrowserTools ? browserSecretNames : null
+        browserSecretNames: hasBrowserTools ? browserSecretNames : null,
+        openErrands,
+        errandRules: errandTurn,
+        waitingCard
       });
 
       console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens)${isLightweight ? ' (lightweight)' : ''}.`);
@@ -2232,7 +2286,8 @@ class Agent {
         systemInstruction += `\n
         \n === IMPERSONATION & TONE MATCHING ===
           IF you are asked to draft a message for the user, or if you are replying via the 'user' (whatsapp:user) session:
-        1. **His own messages**: in that chat his messages are the ones 'readChatHistory' marks "Me"; "Them" is the contact. Mirror him, never the contact.
+        ${errandTurn ? `0. **Errands first**: to write to someone for him, use 'startErrand' (send=false for a draft he wants to see first). It writes in his voice from his chat with that person.
+        ` : ''}1. **His own messages**: in that chat his messages are the ones 'readChatHistory' marks "Me"; "Them" is the contact. Mirror him, never the contact.
         2. **Match Tone**: Mimic his style, brevity, capitalization (lowercase?), and emoji usage.
         3. **Be Natural**: Do not sound like an AI. Use "I", not "Deedee".
         This never applies to what you say back to the owner, and never to a watcher report: there you write as Deedee.
@@ -2511,7 +2566,7 @@ class Agent {
           if (thinkText) {
             const updateMsg = createAssistantMessage(`Still working... (${thinkText})`);
             updateMsg.isProgress = true;
-            updateMsg.metadata = { chatId: message.metadata?.chatId };
+            updateMsg.metadata = { chatId: message.metadata?.chatId, turnRunId: approvalRun?.id || null };
             updateMsg.source = message.source;
             await activeSendCallback(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
           }
@@ -2674,7 +2729,7 @@ class Agent {
           if (thinkText) {
             const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
             thinkingMsg.isProgress = true;
-            thinkingMsg.metadata = { chatId: message.metadata?.chatId };
+            thinkingMsg.metadata = { chatId: message.metadata?.chatId, turnRunId: approvalRun?.id || null };
             thinkingMsg.source = message.source;
             await activeSendCallback(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
           }
@@ -3067,6 +3122,9 @@ class Agent {
             chatId: message.metadata?.chatId,
             model: decision.model,
             thinking: sessionThinking?.thinkingLevel || null,
+            // The run this reply ends: a card the same run raised stays the
+            // question a bare yes answers (ApprovalService._stillAsking).
+            ...(approvalRun?.id ? { turnRunId: approvalRun.id } : {}),
             ...approvedMeta(continuation)
           };
           reply.source = message.source; // Ensure reply source matches incoming message source
@@ -3119,9 +3177,10 @@ class Agent {
             this.db.saveMessage(createAssistantMessage('Audio sent.'));
           } else {
             const reply = createAssistantMessage(`✅ Action ${lastTool.name} completed.`);
-            // Said for the model, which gave no answer of its own.
+            // Said for the model, which gave no answer of its own. It ends
+            // this run, like a model reply (ApprovalService._stillAsking).
             reply.isImplicit = true;
-            reply.metadata = { chatId: message.metadata?.chatId };
+            reply.metadata = { chatId: message.metadata?.chatId, ...(approvalRun?.id ? { turnRunId: approvalRun.id } : {}) };
             reply.source = message.source;
 
             // Save implicit reply
