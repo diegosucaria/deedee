@@ -769,6 +769,7 @@ class AgentDB {
         grace_until TEXT,
         origin_chat_id TEXT,
         origin_source TEXT,
+        cancel_requested_at TEXT,
         expires_at TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -817,6 +818,21 @@ class AgentDB {
       this.db.exec("ALTER TABLE watchers ADD COLUMN taint_sources TEXT");
     } catch (e) {
       // Ignore if column exists
+    }
+
+    // Migration: errands keep a cancel he asked for while a step ran.
+    try {
+      this.db.exec("ALTER TABLE errands ADD COLUMN cancel_requested_at TEXT");
+    } catch (e) {
+      // Ignore if column exists
+    }
+    // One open errand per contact chat. services/errands.js checks this
+    // first; the index is the last guard. Rows from before it (two open
+    // errands on one chat) keep it from being built: the code check holds.
+    try {
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_errands_open_contact ON errands(contact_jid) WHERE closed_at IS NULL');
+    } catch (e) {
+      console.warn('[DB] idx_errands_open_contact not created:', e.message);
     }
 
     try {
@@ -5510,7 +5526,8 @@ class AgentDB {
   updateErrand(id, patch = {}, { closed = false } = {}) {
     const allowed = new Set(['state', 'mode', 'slot', 'window_start', 'window_end', 'offer', 'agreed', 'event_id',
       'pending_approval_id', 'sent_count', 'auto_count', 'model_calls', 'last_sent_at', 'last_contact_at',
-      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'contact_ids', 'slot_owned', 'time_owned', 'grace_until', 'read_through', 'answered_at', 'auto_ok', 'auto_why', 'held_yes']);
+      'no_reply_noted', 'next_check_at', 'next_action', 'expires_at', 'contact_ids', 'slot_owned', 'time_owned', 'grace_until', 'read_through', 'answered_at', 'auto_ok', 'auto_why', 'held_yes',
+      'cancel_requested_at']);
     const jsonCols = new Set(['slot', 'offer', 'agreed', 'contact_ids', 'next_action', 'held_yes']);
     const sets = [];
     const values = [];
@@ -5550,6 +5567,11 @@ class AgentDB {
     }
     this.db.prepare('INSERT INTO errand_events (errand_id, at, kind, detail) VALUES (?, ?, ?, ?)')
       .run(Number(errandId), new Date().toISOString(), String(kind), text);
+  }
+
+  /** How many events of this kind an errand has (every one, not a page). */
+  countErrandEvents(errandId, kind) {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM errand_events WHERE errand_id = ? AND kind = ?').get(Number(errandId), String(kind)).n;
   }
 
   /** An errand's steps, oldest first. `newest`: only the last N, still oldest first. */
