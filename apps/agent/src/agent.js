@@ -1494,7 +1494,9 @@ class Agent {
           if (Array.isArray(sources) && sources.length > 0) approvedTaint = new TurnTaint(sources);
         } catch { approvedTaint = null; }
         console.log(`${logPrefix} User confirmed action: ${action.name}${action.approvalId ? ` (approval ${action.approvalId})` : ''}`);
-        const { result } = splitImages(await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
+        // The card's id rides along, so the tool knows which card he approved.
+        const approvedMessage = action.approvalId ? { ...message, metadata: { ...(message.metadata || {}), approvalId: action.approvalId } } : message;
+        const { result } = splitImages(await this._executeTool(action.name, action.args, approvedMessage, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
           const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
           this.db.logTokenUsage({
             model, promptTokens: pTokens, candidateTokens: cTokens,

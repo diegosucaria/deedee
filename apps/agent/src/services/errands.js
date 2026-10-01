@@ -68,6 +68,10 @@ const GRANT_TTL_MS = 2 * 60e3;
 const PART_GAP_MS = 1500;
 const EXCERPT_CHARS = 300;
 const REQUEST_CHARS = 300;
+// A step of his that reached her this recently is not sent again.
+const REPEAT_MS = 10 * 60e3;
+// His words for a step: the most a card shows and a step uses, the same number.
+const WORDS_CHARS = 400;
 // A slot must start at least this far in the future to be accepted.
 const MIN_LEAD_MS = 15 * 60e3;
 // An errand that would end in quiet hours ends this long before they start.
@@ -493,6 +497,8 @@ const TEXTS = {
         checking: (n, id, step) => `${n} dijo que se fija y avisa (pedido #${id}). No mandé lo tuyo${step ? ` ("${step}")` : ''}; espero su respuesta.`,
         told: (n, t) => `Le dije a ${n}: "${t}".`,
         alreadyClosed: (id) => `El pedido #${id} ya estaba cerrado; no mandé nada.`,
+        alreadySent: (n, id, at) => `Eso ya le llegó a ${n} a las ${at} (pedido #${id}); no lo mando de nuevo.`,
+        alreadyWaits: (n, id) => `Eso ya está por salir para ${n} (pedido #${id}); sale solo, no lo mando dos veces.`,
         isClosed: (id) => `El pedido #${id} ya estaba cerrado.`,
         movedOn: (id) => `Esa pregunta ya no vale: el pedido #${id} cambió. No mandé nada.`,
         failed: (id) => `No pude hacerlo (pedido #${id}); no mandé nada.`,
@@ -616,6 +622,8 @@ const TEXTS = {
         checking: (n, id, step) => `${n} said they will check and answer (errand #${id}). Your step${step ? ` ("${step}")` : ''} has not gone out; I am waiting for their answer.`,
         told: (n, t) => `Told ${n}: "${t}".`,
         alreadyClosed: (id) => `Errand #${id} was already closed; nothing was sent.`,
+        alreadySent: (n, id, at) => `That already reached ${n} at ${at} (errand #${id}); I am not sending it again.`,
+        alreadyWaits: (n, id) => `That is already about to go out to ${n} (errand #${id}); it goes by itself, not twice.`,
         isClosed: (id) => `Errand #${id} was already closed.`,
         movedOn: (id) => `That question no longer stands: errand #${id} moved on. Nothing was sent.`,
         failed: (id) => `I could not do it (errand #${id}); nothing was sent.`,
@@ -1140,7 +1148,9 @@ class ErrandService {
      * cancel or write to them himself meanwhile (`stopped`: 'cancel' or
      * 'owner'); the rest then stays unsent.
      */
-    async _send(errand, parts, { auto = false } = {}) {
+    async _send(errand, parts, { auto = false, sig = null } = {}) {
+        // A part that failed but reached her counts before anything new goes out.
+        await this._reconcileTried(errand);
         const sent = [];
         let stopped = null;
         for (let i = 0; i < parts.length; i++) {
@@ -1167,9 +1177,49 @@ class ErrandService {
                 last_sent_at: new Date(this.clock()).toISOString(),
                 no_reply_noted: 0
             });
-            this._event(errand.id, 'sent', { parts: sent, auto });
+            this._event(errand.id, 'sent', { parts: sent, auto, ...(sig ? { sig } : {}) });
         }
+        // Tried and failed: kept with its step, in case it reached her anyway.
+        if (sent.length < parts.length && !stopped && sig) this._event(errand.id, 'tried', { sig, at: this.clock() });
         return { ok: sent.length === parts.length, sent, ...(stopped ? { stopped } : {}) };
+    }
+
+    /**
+     * Parts whose send failed in the last 10 minutes but that the chat shows
+     * from his account: they reached her. They count as sent (the cap, the
+     * gap), and the step they belonged to counts as done.
+     */
+    async _reconcileTried(errand) {
+        const events = this.db.listErrandEvents(errand.id, { newest: 100 });
+        const now = this.clock();
+        const done = new Set(events.filter(e => e.kind === 'reconciled').map(e => e.detail?.of));
+        const open = events.filter(e => e.kind === 'error' && e.detail?.step === 'send' && typeof e.detail?.attempted === 'string'
+            && !done.has(e.id) && now - (Number(e.detail.at) || 0) < REPEAT_MS);
+        if (open.length === 0) return;
+        let history = [];
+        try { history = await this._history(errand.contact_jid, 20); } catch { return; }
+        const mine = history.filter(m => m.role === 'assistant' || m.fromMe).map(m => draftKey(m.content));
+        for (const e of open) {
+            if (!mine.includes(draftKey(e.detail.attempted))) continue;
+            const tried = events.filter(x => x.kind === 'tried' && x.id > e.id).shift();
+            const row = this.db.getErrand(errand.id);
+            this.db.updateErrand(errand.id, { sent_count: (row?.sent_count || 0) + 1, last_sent_at: new Date(Number(e.detail.at) || now).toISOString() }, { closed: true });
+            this._event(errand.id, 'sent', { parts: [{ text: e.detail.attempted, id: null, at: new Date(Number(e.detail.at) || now).toISOString() }], auto: false, reconciled: true, ...(tried?.detail?.sig ? { sig: tried.detail.sig } : {}) });
+            this._event(errand.id, 'reconciled', { of: e.id });
+        }
+    }
+
+    /** One step of his, as a key: the action, the slot and his words. */
+    _stepSig(args) {
+        const a = args || {};
+        return [String(a.action || ''), String(a.date || ''), normTime(a.time) || '', draftKey(a.text || '')].join('|');
+    }
+
+    /** A 'sent' event for this very step in the last 10 minutes, or null. */
+    _sentStep(errand, sig) {
+        const now = this.clock();
+        return this.db.listErrandEvents(errand.id, { newest: 100 })
+            .filter(e => e.kind === 'sent' && e.detail?.sig === sig && now - (Date.parse(e.at) || 0) < REPEAT_MS).pop() || null;
     }
 
     /**
@@ -1476,8 +1526,8 @@ class ErrandService {
      *   Left out: any draft up to now.
      * @returns {boolean}
      */
-    isShownDraft(args, { before } = {}) {
-        return this.shownDraftAt(args, { before }) !== null;
+    isShownDraft(args, { before, chatIds, shownBy } = {}) {
+        return this.shownDraftAt(args, { before, chatIds, shownBy }) !== null;
     }
 
     /**
@@ -1486,8 +1536,12 @@ class ErrandService {
      * Thursday never sends for Friday. The gate reads the time, so a card
      * that reached him after the draft keeps his bare "dale".
      */
-    shownDraftAt(args, { before } = {}) {
+    shownDraftAt(args, { before, chatIds, shownBy } = {}) {
         if (!this.enabled()) return null;
+        // Shown means in his chat: a message of Deedee's there holds the words,
+        // before his message. A draft the model only summed up was not shown.
+        const chats = (Array.isArray(chatIds) ? chatIds : []).filter(Boolean).map(String);
+        if (chats.length === 0) return null;
         const a = args && typeof args === 'object' ? args : {};
         if (typeof a.text !== 'string' || !a.text.trim()) return null;
         const text = draftKey(a.text);
@@ -1504,7 +1558,20 @@ class ErrandService {
             && d.slot === slot
             && (!goal || !d.goal || d.goal === goal)
             && (d.contact === raw || [...digits].some(x => d.ids.has(x)))).pop();
-        return hit ? hit.at : null;
+        if (!hit) return null;
+        // Both rows carry our own clock: his message's time, as stored, bounds it.
+        const until = Number.isFinite(Number(shownBy)) ? Number(shownBy) : by;
+        return this._draftInChat(text, chats, hit.at, until) ? hit.at : null;
+    }
+
+    /** Did a message of Deedee's in these chats, between `from` and `to` (ms), quote every part of the draft? */
+    _draftInChat(text, chatIds, from, to) {
+        const norm = (v) => String(v ?? '').toLowerCase().replace(/["“”«»*_~`]/g, '').replace(/\s+/g, ' ').trim();
+        const parts = String(text).split(' [SPLIT] ').map(norm).filter(Boolean);
+        if (parts.length === 0 || typeof this.db.listChatMessagesSince !== 'function') return false;
+        let rows = [];
+        try { rows = this.db.listChatMessagesSince(chatIds, new Date(from - 1000).toISOString(), { limit: 200 }).rows || []; } catch { return false; }
+        return rows.some(m => m.role === 'assistant' && Date.parse(m.timestamp) <= to && parts.every(p => norm(m.head).includes(p)));
     }
 
     /** These words go out to this person now: a draft of them no longer counts as shown. */
@@ -1703,7 +1770,9 @@ class ErrandService {
         // no draft he saw before his message) go through the message check
         // first. Held, or no check: a card with the exact words, and his yes
         // on it sends them with no second check.
-        const seenWords = sawCard || (!!exact && this.isShownDraft(args, { before: this._sentAt(originMessage) ?? Number.NaN }));
+        let ownerChats = [originMessage?.metadata?.chatId];
+        try { ownerChats = [...ownerChats, ...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { /* his chat id alone */ }
+        const seenWords = sawCard || (!!exact && this.isShownDraft(args, { before: this._sentAt(originMessage) ?? Number.NaN, chatIds: ownerChats }));
         let checked = null;
         if (!seenWords) {
             const step = goal === 'book' ? 'request' : (goal === 'ask' ? 'question' : 'tell');
@@ -2589,7 +2658,8 @@ Answer in JSON.`;
                 cancel: t.gateCancel(name)
             }[a.action] || t.gateSay(name);
             // His words, or the exact words of an accept, a proposal or a no: he sees what goes out.
-            const said = a.action !== 'cancel' && typeof a.text === 'string' && a.text.trim() ? `"${flat(a.text, 200)}" ` : '';
+            // In full, up to what the step will use: the message check reads these as his words.
+            const said = a.action !== 'cancel' && typeof a.text === 'string' && a.text.trim() ? `"${flat(a.text, WORDS_CHARS)}" ` : '';
             // His dropped step is named, never asked about: the card asks one thing.
             const drop = dropped ? (typeof dropped === 'string' ? t.heldStep(dropped) : t.notSent) : '';
             return { question, detail: `${said}${t.gateWhy[why] || t.gateWhy.rules} ${t.gateErrand(a.id)}${drop}`, lang, denied: t.gateDenied };
@@ -2602,10 +2672,11 @@ Answer in JSON.`;
             try { person = raw ? this.db.getPerson(raw) : null; } catch { person = null; }
             const digits = digitsOf(person?.phone || raw);
             const name = person?.name ? safeName(person.name) : (digits.length >= 6 ? `+${digits.slice(0, 2)}…${digits.slice(-4)}` : (lang === 'es' ? 'el contacto' : 'the contact'));
-            const text = typeof a.text === 'string' && a.text.trim() ? `"${flat(a.text, 160)}" ` : '';
+            // The words and his request in full, up to what start() will use.
+            const text = typeof a.text === 'string' && a.text.trim() ? `"${flat(a.text, WORDS_CHARS)}" ` : '';
             return {
                 question: text ? t.gateStartText(name) : t.gateStart(name),
-                detail: `${text}${t.gateRequest(flat(a.request, text ? 60 : 170))} ${t.gateWhy[why] || t.gateWhy.rules}`,
+                detail: `${text}${t.gateRequest(flat(a.request, REQUEST_CHARS))} ${t.gateWhy[why] || t.gateWhy.rules}`,
                 lang, denied: t.gateDenied
             };
         }
@@ -3015,6 +3086,8 @@ Answer in JSON.`;
         const action = String(args.action || '');
         if (!this.enabled() && action !== 'cancel') return { success: false, error: 'Errands are turned off (ERRANDS=0). A cancel still works.' };
         if (!byOwner && !approved) return { success: false, error: 'Only the owner answers an errand: from his own chat, or by approving its card.' };
+        // An approval names its card: a call that says "approved" with no card behind it is refused.
+        if (approved && !byOwner && !approvalId) return { success: false, error: 'An approved step must come from its card.' };
         if (!ACTIONS.includes(action)) return { success: false, error: `action must be one of: ${ACTIONS.join(', ')}.` };
         if ((action === 'accept' || action === 'propose') && (!validDate(args.date) || !normTime(args.time))) {
             return { success: false, error: `${action} needs an explicit date (YYYY-MM-DD) and time (HH:MM); the slot on the table is in the turn context.` };
@@ -3096,6 +3169,21 @@ Answer in JSON.`;
         if ((args.action === 'accept' || args.action === 'propose') && errand.goal !== 'book') {
             return { success: false, error: `${args.action} is for booking errands; use say.`, ownerLine: t.failNotBook(errand.id) };
         }
+        // The same step of his twice (a retry after a send that reported a
+        // failure but arrived, or the model calling it again): it went once.
+        if (!auto) {
+            const sig = this._stepSig(args);
+            await this._reconcileTried(errand);
+            const already = this._sentStep(errand, sig);
+            if (already) {
+                const at = localParts(Date.parse(already.at), tz).time;
+                return { success: false, errandId: errand.id, error: `This step already reached ${name} at ${at}; it is not sent again. Do not retry.`, ownerLine: t.alreadySent(name, errand.id, at) };
+            }
+            const waiting = errand.next_action;
+            if (waiting?.owner && this._stepSig(waiting) === sig && !notify) {
+                return { success: false, errandId: errand.id, error: 'This step already waits to go out by itself. Do not call it again.', ownerLine: t.alreadyWaits(name, errand.id) };
+            }
+        }
         // A paused errand he answers is his again, and live: what came in
         // while it was paused stays in the chat for him, his step goes ahead,
         // and anything the contact writes from now on is read as usual.
@@ -3123,7 +3211,7 @@ Answer in JSON.`;
         const keyed = typeof args.cardKey === 'string' && args.cardKey.length > 0;
         const seen = keyed && args.cardKey === this._stepKey(errand.id, args);
         const given = typeof args.text === 'string' && args.text.trim() && (args.action !== 'say' || keyed) ? args.text : null;
-        const words = args.action === 'say' && !given ? clip(args.text, 400) : null;
+        const words = args.action === 'say' && !given ? clip(args.text, WORDS_CHARS) : null;
         if (args.action === 'say' && !words && !given) return { success: false, error: 'text is required for say: what to tell them.' };
 
         // He may have answered them himself since.
@@ -3219,7 +3307,14 @@ Answer in JSON.`;
         if (verdict && !verdict.ok) return this._askSend(current, args, d.parts, verdict, { live, runId, own: !auto, step: voiceStep });
 
         this._withdraw(current);
-        const out = await this._send(current, d.parts, { auto });
+        // Quiet hours are checked again at the moment it goes out: the draft
+        // and the check may have taken it past 22:00. It waits for 08:00.
+        if (auto && this._quiet(this.clock())) {
+            this.db.updateErrand(current.id, { next_action: { ...args, step }, next_check_at: new Date(this._quietEnd(this.clock())).toISOString() });
+            this._event(current.id, 'decided', { action: args.action, deferred: true, quiet: true });
+            return { success: false, deferred: true, error: 'Quiet hours began; it goes out at 08:00.' };
+        }
+        const out = await this._send(current, d.parts, { auto, sig: this._stepSig(args) });
         const said = clip(d.parts.join(' '), 120);
         // What she already got of a step cut short, quoted for him.
         const part = out.sent.length > 0 && !out.ok ? t.partSent(clip(out.sent.map(p => p.text).join(' '), 160)) : '';

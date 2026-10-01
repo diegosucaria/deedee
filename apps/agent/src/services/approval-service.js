@@ -304,10 +304,44 @@ function truncate(text, max) {
     return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+// A card that replaced another this recently waits for /confirm, not a bare word.
+const REPLACED_LATELY_MS = 60e3;
+// A card taken back this recently still holds a bare word (_cardHisWordMissed).
+const WITHDRAWN_LATELY_MS = 5 * 60e3;
+
+/** The card's own words for the owner (question and detail, or its preview), or null. */
+function cardText(row) {
+    const card = row?.origin_meta?.card;
+    if (card && typeof card.question === 'string') return [card.question, card.detail].filter(Boolean).join(' ');
+    return typeof row?.origin_meta?.preview === 'string' && row.origin_meta.preview ? row.origin_meta.preview : null;
+}
+
+/** Does approving this card send words (a message, a draft, a held step)? */
+function cardCarriesWords(row) {
+    const a = row?.args || {};
+    if (typeof a.text === 'string' && a.text.trim()) return true;
+    return ['startErrand', 'sendMessage', 'sendSlackMessage', 'sendEmail'].includes(String(row?.tool_name || ''));
+}
+
+/** A slot as he reads it: its weekday, date and time, and today's date. */
+function slotForReader(args, timeZone) {
+    const a = args || {};
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.date || ''))) return '';
+    const time = /^\d{1,2}:\d{2}$/.test(String(a.time || '')) ? ` ${a.time}` : '';
+    let weekday = '';
+    let today = '';
+    try {
+        weekday = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'long' }).format(new Date(`${a.date}T12:00:00Z`));
+        today = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' }).format(new Date());
+    } catch { /* plain date below */ }
+    return `${weekday ? `${weekday} ` : ''}${a.date}${time}${today ? ` (today is ${today})` : ''}`;
+}
+
 /** "to: alice@example.com · subject: \"Hi\" · password: <redacted>" */
 function summarizeArgs(args) {
     if (!args || typeof args !== 'object') return truncate(JSON.stringify(args ?? null), SUMMARY_CHARS);
-    const entries = Object.entries(args);
+    // The signature a card carries (cardKey) means nothing to a reader.
+    const entries = Object.entries(args).filter(([key]) => key !== 'cardKey');
     if (entries.length === 0) return '(no arguments)';
     const parts = entries.slice(0, SUMMARY_KEYS).map(([key, value]) => {
         if (SECRET_KEY_RE.test(key)) return `${key}: <redacted>`;
@@ -825,7 +859,14 @@ class ApprovalService {
         if (!decisionWord(text, { actionWords: true })) return null;
         let waiting = [];
         try { waiting = await this.pendingHere(message); } catch { waiting = []; }
-        if (waiting.length === 0) return null;
+        if (waiting.length === 0) {
+            // A card taken back a moment ago (her newer words): his word may be for it.
+            const gone = await this._withdrawnHere(message);
+            if (!gone) return null;
+            if (toolName === 'answerErrand' && Number(args?.id) === Number(gone.args?.id)) return { card: gone, same: false, withdrawn: true };
+            if (!writesToSomeone(toolName, args) && !OUTWARD_RULES.has(String(rule || ''))) return null;
+            return { card: gone, same: false, withdrawn: true };
+        }
         const key = stepKey(toolName, args);
         const same = waiting.find(r => r.tool_name === toolName
             && (toolName === 'answerErrand' ? sameErrandStep(r.args, args) : stepKey(r.tool_name, r.args) === key));
@@ -834,13 +875,29 @@ class ApprovalService {
         return { card: waiting[waiting.length - 1], same: false };
     }
 
+    /** An errand card in this chat that was taken back in the last few minutes, or null. */
+    async _withdrawnHere(message) {
+        const chatId = String(message?.metadata?.chatId || '');
+        if (!chatId || typeof this.db.listRecentConfirmations !== 'function') return null;
+        let recent = [];
+        try { recent = this.db.listRecentConfirmations({ limit: 50 }); } catch { return null; }
+        const now = Date.now();
+        for (const r of recent) {
+            if (r.tool_name !== 'answerErrand' || r.status !== 'expired' || r.decided_via !== 'withdrawn') continue;
+            if (!(now - (Date.parse(r.decided_at) || 0) <= WITHDRAWN_LATELY_MS)) continue;
+            if (r.reply_chat_id === chatId) return r;
+            if (splitChannel(message?.source).channel === 'whatsapp' && splitChannel(r.reply_channel).channel === 'whatsapp' && await this._isOwnerWaChat(r.reply_chat_id)) return r;
+        }
+        return null;
+    }
+
     /**
      * A startErrand that sends a draft the errand service showed him before
      * his message (ErrandService.isShownDraft). A draft made in this same
      * run came after his word, so it does not count. His client's clock
      * cannot put his message later than now.
      */
-    _shownDraft(toolName, args, message, waiting = []) {
+    _shownDraft(toolName, args, message, waiting = [], ownerIds = []) {
         if (toolName !== 'startErrand' || typeof args?.text !== 'string') return false;
         const errands = this.agent?.errands;
         if (typeof errands?.shownDraftAt !== 'function') return false;
@@ -848,7 +905,8 @@ class ApprovalService {
         const came = Date.parse(message?.timestamp);
         let at = null;
         try {
-            at = errands.shownDraftAt(args, { before: Number.isFinite(came) ? Math.min(came, now) : now });
+            const chatIds = [message?.metadata?.chatId, ...ownerIds];
+            at = errands.shownDraftAt(args, { before: Math.min(this._typedAt(message), Number.isFinite(came) ? came : now), chatIds, shownBy: Number.isFinite(came) ? came : now });
         } catch {
             return false;
         }
@@ -1055,13 +1113,19 @@ class ApprovalService {
         // before this message. His "dale, mandalo" is about that draft.
         const missed = await this._cardHisWordMissed(message, kind, toolName, args, guard.rule);
         let waitingHere = [];
-        if (missed) { try { waitingHere = await this.pendingHere(message); } catch { waitingHere = [missed.card]; } }
-        if (missed && !this._shownDraft(toolName, args, message, waitingHere)) {
+        let ownerIds = [];
+        if (missed) {
+            try { waitingHere = await this.pendingHere(message); } catch { waitingHere = [missed.card]; }
+            try { ownerIds = [...((await this.agent._getOwnerWaIds?.()) || [])]; } catch { ownerIds = []; }
+        }
+        if (missed && !this._shownDraft(toolName, args, message, waitingHere, ownerIds)) {
             const row = this._record({
                 ...base, outcome: 'escalated_duplicate', decidedBy: 'owner', approvalId: missed.card.id,
                 reason: 'His short yes or no did not decide the card that waits in his chat.'
             });
-            const info = missed.same ? sameStepInfo(missed.card.id)
+            const info = missed.withdrawn
+                ? `Nothing ran: his short yes or no was likely meant for card ${missed.card.id}, which was taken back because the contact wrote again. Do not call this again on that answer. Tell him, in his language, what changed, and ask him to say what he wants in his own words.`
+                : missed.same ? sameStepInfo(missed.card.id)
                 : `Nothing ran: his short yes or no did not decide card ${missed.card.id}, and it does not stand for this call. Do not call it again on that answer. If he meant the card, tell him, in his language, to reply /confirm ${missed.card.id} or /cancel ${missed.card.id}. If he meant something else, ask him to say it in his own words.`;
             return { run: false, status: 'paused', decisionId: row?.id, approvalId: missed.card.id, result: { info } };
         }
@@ -1831,8 +1895,10 @@ class ApprovalService {
         const chatId = message?.metadata?.chatId;
         if (!chatId) return [];
         const all = this.db.listPendingConfirmations();
-        const direct = all.filter(r => r.reply_chat_id === String(chatId));
         const channel = splitChannel(message?.source).channel;
+        // The same id on another channel is another chat: her WhatsApp
+        // address is also the id of her chat opened on the web.
+        const direct = all.filter(r => r.reply_chat_id === String(chatId) && (!r.reply_channel || splitChannel(r.reply_channel).channel === channel));
         if (channel !== 'whatsapp' || !(await this._isOwnerWaChat(chatId))) return direct;
         const seen = new Set(direct.map(r => r.id));
         const sameOwnerChat = [];
@@ -1890,7 +1956,8 @@ class ApprovalService {
     }
 
     _listText(pending, lead) {
-        const items = pending.map(r => `• ${r.id} — ${r.tool_name}: ${truncate(r.summary || '', 120)}`).join('\n');
+        // A card that carries words shows them in full: approving it sends exactly those.
+        const items = pending.map(r => `• ${r.id} — ${r.tool_name}: ${cardText(r) || truncate(r.summary || '', 120)}`).join('\n');
         return `${lead}\n${items}\nReply /confirm <id> or /cancel <id>.`;
     }
 
@@ -1909,6 +1976,12 @@ class ApprovalService {
         if (!chatId || message.metadata?.isSubAgent) return null;
         const text = typeof message.content === 'string' ? message.content.trim() : '';
         if (!text || text.startsWith('/')) return null;
+        // Only his own typed words decide a card: never a forward, never a
+        // contact writing in a chat that shares an id with one of his.
+        const meta = message.metadata || {};
+        if (Array.isArray(meta.untrustedTaint) && meta.untrustedTaint.length > 0) return null;
+        // His personal account's mirror carries his contacts' messages; a group, a job or an errand run is not him.
+        if (String(message.source || '') === 'whatsapp:user' || meta.isGroup || meta.jobName || meta.errandId !== undefined) return null;
         // A question ("y?", "dale?") asks something; it answers no card.
         if (/[?¿]/.test(text)) return null;
         // Cheap test first: a known yes or no word. His other words may
@@ -1938,6 +2011,12 @@ class ApprovalService {
         const decision = decisionWord(text, { toolName: pending[0].tool_name });
         if (!decision) return null;
         if (await this._questionOpen(message)) return null;
+        // A card that replaced another a moment ago: his word may have been
+        // typed to the old one and reached us late. Only /confirm decides it.
+        if (this._replacedLately(pending[0])) {
+            this._undecided.set(String(chatId), { id: pending[0].id, at: Date.now(), message });
+            return null;
+        }
         // Marked as an answer to this card: it never reached the model, so it
         // is no new question of his (see _stillAsking).
         try { this.db.saveMessage({ ...message, metadata: { ...(message.metadata || {}), answeredCard: pending[0].id } }); } catch { /* history is best effort */ }
@@ -1964,8 +2043,12 @@ class ApprovalService {
         if (pending.length !== 1) return null;
         if (!(await this._ownerTypedRun(message, sourceKind(message)))) return null;
         const row = pending[0];
+        // A card that sends words: only a plain yes decides it, since the
+        // reader never sees the words ("mandale que llego 20 minutos tarde").
+        if (cardCarriesWords(row)) return null;
         if (!this._cardReached(row, message) || (await this._stillAsking(row, message)) !== true) return null;
         if (await this._questionOpen(message)) return null;
+        if (this._replacedLately(row)) return null;
         const chatId = String(message.metadata.chatId);
         let read = null;
         try {
@@ -1991,7 +2074,7 @@ class ApprovalService {
     _cardAction(row) {
         const a = row.args || {};
         const lang = row.origin_meta?.card?.lang === 'es' ? 'es' : 'en';
-        const slot = [a.date, a.time].filter(v => /^[\d:-]{4,10}$/.test(String(v || ''))).join(' ');
+        const slot = slotForReader(a, this._timeZone());
         const plain = (v) => String(v || '').replace(/[^a-z_]/gi, '').slice(0, 40);
         let question;
         if (row.tool_name === 'answerErrand') {
@@ -2065,7 +2148,11 @@ class ApprovalService {
                 if (meta.approvalLine && !meta.model) continue;
                 // "Still working..." from the run that raised the card.
                 if (meta.progress && (!meta.turnRunId || meta.turnRunId === runId)) continue;
-                if (runId && meta.turnRunId === runId) continue;
+                // The run's own reply, unless it asks him something ("¿Querés que lo reformule?").
+                if (runId && meta.turnRunId === runId) {
+                    if (/[?¿]/.test(String(m.head ?? m.content ?? ''))) return false;
+                    continue;
+                }
                 if (meta.question?.id && typeof this.db.getQuestionStatus === 'function' && this.db.getQuestionStatus(meta.question.id) === 'answered') continue;
                 return false;
             }
@@ -2095,9 +2182,39 @@ class ApprovalService {
     _cardReached(row, message) {
         const sentAt = this._cardSentAt(row);
         if (sentAt === null) return false;
+        return sentAt <= this._typedAt(message);
+    }
+
+    /**
+     * When he typed it, in ms: the earlier of when it reached us and when his
+     * phone sent it (metadata.sentAt), never later than now.
+     */
+    _typedAt(message) {
         const now = Date.now();
         const came = Date.parse(message?.timestamp);
-        return sentAt <= (Number.isFinite(came) ? Math.min(came, now) : now);
+        const sent = Date.parse(message?.metadata?.sentAt);
+        return Math.min(now, Number.isFinite(came) ? came : now, Number.isFinite(sent) ? sent : now);
+    }
+
+    /**
+     * An errand's own card made within a minute of the one it replaced
+     * (withdrawn because she wrote again): a bare word may have been typed
+     * to the old one and reached us late. A card for a step of his own (the
+     * gate's, in his chat) is the one he just asked for, so it counts.
+     */
+    _replacedLately(row) {
+        if (!row || row.tool_name !== 'answerErrand' || row.origin_meta?.ownerChat === true) return false;
+        const made = Date.parse(row.created_at);
+        if (!Number.isFinite(made)) return false;
+        let recent = [];
+        try { recent = typeof this.db.listRecentConfirmations === 'function' ? this.db.listRecentConfirmations({ limit: 50 }) : []; } catch { recent = []; }
+        return recent.some(r => r.id !== row.id && r.tool_name === 'answerErrand' && Number(r.args?.id) === Number(row.args?.id)
+            && r.status === 'expired' && Math.abs(made - (Date.parse(r.decided_at) || 0)) <= REPLACED_LATELY_MS);
+    }
+
+    /** His time zone, as errands read it. */
+    _timeZone() {
+        try { return this.agent?.errands?.timeZone?.() || process.env.TZ || 'America/Argentina/Cordoba'; } catch { return 'America/Argentina/Cordoba'; }
     }
 
     /**
@@ -2388,8 +2505,10 @@ class ApprovalService {
 
     list({ limit = 50 } = {}) {
         if (!this.hasStore()) return { pending: [], recent: [], counts: { pending: 0, approved: 0, denied: 0, expired: 0 }, settings: this.settings() };
+        // A card that carries words shows them whole: approving it here sends exactly those.
+        const withText = (r) => { const text = cardText(r); return text ? { ...r, card_text: text } : r; };
         return {
-            pending: this.db.listPendingConfirmations(),
+            pending: this.db.listPendingConfirmations().map(withText),
             recent: this.db.listRecentConfirmations({ limit }),
             counts: this.db.countConfirmationsByStatus(),
             settings: this.settings()

@@ -3419,6 +3419,51 @@ describe('errands', () => {
             expect(waiting).toMatchObject({ owner: true, wordsTainted: true });
         });
 
+        test('an approved step with no card behind it is refused', async () => {
+            const errand = await startBooking();
+            const res = await service.answer({ id: errand.id, action: 'say', text: 'llego 10 minutos tarde' }, { approved: true });
+            expect(res).toMatchObject({ success: false });
+            expect(res.error).toMatch(/must come from its card/);
+            expect(sends).toHaveLength(1);
+        });
+
+        test('his step that reached her though the send reported a failure counts once and is not sent again', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            // WhatsApp delivers it, but the interface reports a timeout.
+            agent.interface.send.mockImplementationOnce(async (payload) => {
+                chat.push({ role: 'assistant', content: payload.content, timestamp: clock, id: 'late-1', fromMe: true });
+                throw new Error('timeout');
+            });
+            drafts.push({ text: 'llego 10 minutos tarde', date: '', time: '' });
+            const first = await service.answer({ id: errand.id, action: 'say', text: 'llego 10 minutos tarde' }, { byOwner: true });
+            expect(first.success).not.toBe(true);
+            clock += 60e3;
+            drafts.push({ text: 'llego 10 minutos tarde', date: '', time: '' });
+            const again = await service.answer({ id: errand.id, action: 'say', text: 'llego 10 minutos tarde' }, { byOwner: true });
+            expect(again.success).toBe(false);
+            expect(again.ownerLine).toMatch(/ya le llegó a Alice/);
+            expect(sends.filter(m => m.content === 'llego 10 minutos tarde')).toHaveLength(0);
+            expect(db.getErrand(errand.id).sent_count).toBe(2);
+        });
+
+        test('quiet hours that begin while the thanks is written hold it until 08:00', async () => {
+            process.env.VOICE_OWN_REPLY = '0';
+            const errand = await startBooking();
+            clock = at('2026-10-01', '21:59');
+            const real = generateContent.getMockImplementation();
+            generateContent.mockImplementation(async (req) => {
+                const out = await real(req);
+                // Writing the thanks takes it past 22:00.
+                if (/What to write now/.test(req.contents[0].parts[0].text)) clock = at('2026-10-01', '22:00') + 1000;
+                return out;
+            });
+            await contactAnswers(errand, 'dale jueves 10', confirms());
+            generateContent.mockImplementation(real);
+            expect(sends).toHaveLength(1);
+            expect(db.getErrand(errand.id).next_action).toMatchObject({ action: 'accept' });
+        });
+
         test('her "venite ya" offer, too soon to accept, is told as such, not as "no entendí"', async () => {
             const errand = await startBooking();
             clock = at('2026-10-01', '09:00');
@@ -4248,43 +4293,57 @@ describe('errands', () => {
 
         describe('a draft he saw, for "dale, mandalo"', () => {
             const draftArgs = { contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde' };
+            // Deedee's reply in his chat quotes the draft: that is what makes it shown.
+            let shownN = 0;
+            const showDraft = (d) => db.saveMessage({ id: `shown-${++shownN}`, role: 'assistant', content: `Le mandaría a Alice: "${String(d.draft).replace(/ \[SPLIT\] /g, '\n')}". ¿Lo mando?`, source: 'whatsapp', chatId: OWNER_CHAT, timestamp: new Date(clock).toISOString(), metadata: { chatId: OWNER_CHAT } });
+            const shown = (a, o = {}) => service.isShownDraft(a, { chatIds: [OWNER_CHAT], ...o });
 
             test('isShownDraft knows the draft start() showed him: the same person by number, WhatsApp ID or People id, and the same words', async () => {
                 drafts.push({ text: 'llego 10 minutos tarde [SPLIT] perdón!', date: '', time: '' });
                 const d = await service.start({ ...draftArgs, send: false }, origin());
+                showDraft(d);
                 expect(d).toMatchObject({ success: true, sent: false });
                 expect(sends).toHaveLength(0);
                 const args = { ...draftArgs, send: true, text: d.draft };
-                expect(service.isShownDraft(args)).toBe(true);
-                expect(service.isShownDraft({ ...args, text: '  llego 10 minutos  tarde[SPLIT]perdón! ' })).toBe(true);
-                expect(service.isShownDraft({ ...args, contact: `${CONTACT_LID}@lid` })).toBe(true);
-                expect(service.isShownDraft({ ...args, contact: ALICE_ID })).toBe(true);
-                expect(service.isShownDraft({ contact: CONTACT, text: d.draft })).toBe(true);
+                expect(shown(args)).toBe(true);
+                expect(shown({ ...args, text: '  llego 10 minutos  tarde[SPLIT]perdón! ' })).toBe(true);
+                expect(shown({ ...args, contact: `${CONTACT_LID}@lid` })).toBe(true);
+                expect(shown({ ...args, contact: ALICE_ID })).toBe(true);
+                expect(shown({ contact: CONTACT, text: d.draft })).toBe(true);
             });
 
             test('a draft he saw for Thursday is no draft he saw for Friday: the message check runs', async () => {
                 const book = { contact: CONTACT, goal: 'book', request: 'turno el jueves a las 10', date: '2026-10-08', time: '10:00' };
                 drafts.push({ text: 'Buenas! hay lugar el jueves a las 10?', date: '2026-10-08', time: '10:00' });
                 const d = await service.start({ ...book, send: false }, origin());
+                showDraft(d);
                 expect(d).toMatchObject({ success: true, sent: false });
-                expect(service.isShownDraft({ ...book, send: true, text: d.draft })).toBe(true);
-                expect(service.isShownDraft({ ...book, send: true, date: '2026-10-09', text: d.draft })).toBe(false);
-                expect(service.isShownDraft({ ...book, send: true, time: '11:00', text: d.draft })).toBe(false);
+                expect(shown({ ...book, send: true, text: d.draft })).toBe(true);
+                expect(shown({ ...book, send: true, date: '2026-10-09', text: d.draft })).toBe(false);
+                expect(shown({ ...book, send: true, time: '11:00', text: d.draft })).toBe(false);
             });
 
             test('isShownDraft says no to other words, another person, another goal, a draft over 30 minutes old, or no draft', async () => {
-                expect(service.isShownDraft({ ...draftArgs, send: true, text: 'llego 10 minutos tarde' })).toBe(false);
+                expect(shown({ ...draftArgs, send: true, text: 'llego 10 minutos tarde' })).toBe(false);
                 const d = await service.start({ ...draftArgs, send: false }, origin());
+                showDraft(d);
                 const args = { ...draftArgs, send: true, text: d.draft };
-                expect(service.isShownDraft(args)).toBe(true);
-                expect(service.isShownDraft({ ...args, text: 'llego 20 minutos tarde' })).toBe(false);
-                expect(service.isShownDraft({ ...args, text: `${d.draft} [SPLIT] te quiero` })).toBe(false);
-                expect(service.isShownDraft({ ...args, contact: OTHER })).toBe(false);
-                expect(service.isShownDraft({ ...args, goal: 'ask' })).toBe(false);
-                expect(service.isShownDraft({ ...args, text: '' })).toBe(false);
-                expect(service.isShownDraft(null)).toBe(false);
+                expect(shown(args)).toBe(true);
+                expect(shown({ ...args, text: 'llego 20 minutos tarde' })).toBe(false);
+                expect(shown({ ...args, text: `${d.draft} [SPLIT] te quiero` })).toBe(false);
+                expect(shown({ ...args, contact: OTHER })).toBe(false);
+                expect(shown({ ...args, goal: 'ask' })).toBe(false);
+                expect(shown({ ...args, text: '' })).toBe(false);
+                expect(shown(null)).toBe(false);
                 clock += 31 * 60e3;
-                expect(service.isShownDraft(args)).toBe(false);
+                expect(shown(args)).toBe(false);
+            });
+
+            test('a draft the model never put in his chat is no draft he saw: the message check runs', async () => {
+                const d = await service.start({ ...draftArgs, send: false }, origin());
+                expect(shown({ ...draftArgs, send: true, text: d.draft })).toBe(false);
+                showDraft(d);
+                expect(shown({ ...draftArgs, send: true, text: d.draft })).toBe(true);
             });
 
             test('a draft written after reading someone else\'s text never counts as shown', async () => {
@@ -4292,7 +4351,7 @@ describe('errands', () => {
                 drafts.push({ text: 'llego tarde, perdón', date: '', time: '' });
                 const d = await service.start({ ...draftArgs, send: false }, { ...origin(), taint: ['a web page'] });
                 expect(d).toMatchObject({ success: true, sent: false });
-                expect(service.isShownDraft({ ...draftArgs, send: true, text: d.draft })).toBe(false);
+                expect(shown({ ...draftArgs, send: true, text: d.draft })).toBe(false);
             });
         });
 
@@ -4383,6 +4442,8 @@ describe('errands', () => {
                 clock += 1000;
                 const d = await service.start({ ...args, send: false }, ask);
                 expect(d).toMatchObject({ success: true, sent: false, draft: 'llego 10 minutos tarde' });
+                // Deedee's reply quotes the draft in his chat.
+                db.saveMessage({ id: 'shown-a', role: 'assistant', content: `Le mandaría a Alice: "${d.draft}". ¿Lo mando?`, source: 'whatsapp', chatId: OWNER_CHAT, timestamp: iso(clock + 500), metadata: { chatId: OWNER_CHAT } });
                 clock += 60e3;
                 const yes = origin('in-b', { content: 'dale, mandalo', timestamp: iso(clock) });
                 const out = await service.start({ ...args, send: true, text: d.draft }, yes);
@@ -4526,7 +4587,7 @@ describe('errands', () => {
                 const fresh = new ErrandService(agent, { now: () => clock, timeZone: TZ, partGapMs: 0, bufferMs: 5 });
                 agent.errands = fresh;
                 const before = checkRequests().length;
-                const res = await fresh.answer(card.args, { approved: true });
+                const res = await fresh.answer(card.args, { approved: true, approvalId: card.id });
                 expect(res.success).toBe(true);
                 expect(sends.map(s => s.content)).toEqual(['Buenas! hay lugar el jueves 8 a las 10?', 'genial, gracias']);
                 expect(checkRequests()).toHaveLength(before + 1);
@@ -4614,16 +4675,18 @@ describe('errands', () => {
                 const args = { contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde' };
                 const madeAt = clock;
                 const d = await service.start({ ...args, send: false }, origin());
+                db.saveMessage({ id: 'shown-b', role: 'assistant', content: `"${d.draft}"`, source: 'whatsapp', chatId: OWNER_CHAT, timestamp: iso(madeAt), metadata: { chatId: OWNER_CHAT } });
                 const send = { ...args, send: true, text: d.draft };
-                expect(service.isShownDraft(send, { before: madeAt + 1000 })).toBe(true);
-                expect(service.isShownDraft(send, { before: madeAt })).toBe(false);
-                expect(service.isShownDraft(send, { before: madeAt - 1000 })).toBe(false);
-                expect(service.isShownDraft(send, { before: Number.NaN })).toBe(false);
+                const chats = { chatIds: [OWNER_CHAT] };
+                expect(service.isShownDraft(send, { before: madeAt + 1000, ...chats })).toBe(true);
+                expect(service.isShownDraft(send, { before: madeAt, ...chats })).toBe(false);
+                expect(service.isShownDraft(send, { before: madeAt - 1000, ...chats })).toBe(false);
+                expect(service.isShownDraft(send, { before: Number.NaN, ...chats })).toBe(false);
                 clock += 60e3;
                 const out = await service.start(send, origin('in-b', { timestamp: iso(clock) }));
                 expect(out.success).toBe(true);
-                expect(service.isShownDraft(send, { before: clock + 1000 })).toBe(false);
-                expect(service.isShownDraft(send)).toBe(false);
+                expect(service.isShownDraft(send, { before: clock + 1000, ...chats })).toBe(false);
+                expect(service.isShownDraft(send, chats)).toBe(false);
             });
 
             test('approving a repeat card that names the newest earlier errand raises no card for an older one', async () => {

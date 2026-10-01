@@ -434,7 +434,29 @@ An errand writes to one person from the owner's own WhatsApp
   that reached him after the draft (`ErrandService.shownDraftAt`). A card is
   decided by a bare yes only once it reached his chat, before his message.
   A withdrawn or decided card's queued delivery is retired, so it never
-  arrives late.
+  arrives late. Only his own words decide a card: a forward, a contact's
+  message on his personal account, a group, a job or an errand run never
+  does, and a card waits only in the chat and channel it went to (her
+  WhatsApp address is also the id of her chat opened on the web). A reply of
+  the run that raised the card that asks him something ("¿Querés que lo
+  reformule?") makes his next "sí" its answer, not the card's. A card the
+  errand raised within a minute of taking another back waits for
+  `/confirm`: his bare word may have been typed to the old one and arrived
+  late (the interfaces pass when his phone sent it, `metadata.sentAt`). A
+  card that sends words is decided only by plain yes and no words, never by
+  `readReply`, which cannot see them. A bare word meant for a card taken
+  back in the last few minutes runs nothing. A draft counts as one he saw
+  only when Deedee's reply in his chat quoted it before his message. An
+  approved errand step must come with its card's id.
+- **No repeats, counted sends.** A part whose send reported a failure but
+  that the chat shows from his account counts as sent (the cap, the gap). A
+  step of his that reached her in the last 10 minutes, or that already
+  waits to go out, is not sent again. Quiet hours are checked again at the
+  moment an automatic step goes out.
+- **Whole words on every card.** A gate card shows his words and his
+  request in full, up to what the step uses (400 and 300 characters).
+  Brain → Approvals and `/approvals` show a card's full words, so approving
+  there approves what he read.
 - **One person, once.** `start()` runs under a lock per person and checks
   again right before the insert; a unique index on open errands per chat is
   the last guard. A second start in the same run is refused and returns

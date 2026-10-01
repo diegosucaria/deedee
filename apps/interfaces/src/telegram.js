@@ -99,8 +99,9 @@ class TelegramService {
       this.startTyping(chatId);
 
       const message = createUserMessage(text, 'telegram', userId);
-      // Attach chatId to metadata so we know where to reply
-      message.metadata = { chatId, ...forwardTaint(ctx) };
+      // Attach chatId to metadata so we know where to reply; sentAt: when his phone sent it.
+      const sent = Number(ctx.message?.date);
+      message.metadata = { chatId, ...forwardTaint(ctx), ...(Number.isFinite(sent) && sent > 0 ? { sentAt: new Date(sent * 1000).toISOString() } : {}) };
 
       // Forward to Agent
       await axios.post(`${this.agentUrl}/webhook`, message);

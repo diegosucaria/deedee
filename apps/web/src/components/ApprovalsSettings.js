@@ -176,6 +176,8 @@ export default function ApprovalsSettings({ value, onSave }) {
                                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700">{originOf(row)}</span>
                                         <OriginLink row={row} className="text-[10px]" />
                                     </div>
+                                    {/* A card that carries words shows them whole: Approve sends exactly these. */}
+                                    {row.card_text && <p className="text-sm text-white mt-2 break-words whitespace-pre-wrap">{row.card_text}</p>}
                                     <p className="text-xs text-zinc-300 mt-2 break-words font-mono">{row.summary}</p>
                                     <p className="text-[11px] text-zinc-500 mt-1">{row.reason}</p>
                                     <p className="text-[10px] text-zinc-600 mt-1">asked {when(row.created_at)} · expires {when(row.expires_at)}</p>

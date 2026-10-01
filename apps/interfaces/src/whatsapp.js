@@ -78,6 +78,13 @@ function senderLid(key, isGroup) {
     return lid ? `${lid.split('@')[0].split(':')[0]}@lid` : null;
 }
 
+
+/** WhatsApp's message time (seconds, a number or a Long) as ISO, or null. */
+function sentAtOf(stamp) {
+    const n = Number(typeof stamp === 'object' && stamp !== null && typeof stamp.toNumber === 'function' ? stamp.toNumber() : stamp);
+    return Number.isFinite(n) && n > 0 ? new Date(n * 1000).toISOString() : null;
+}
+
 class SQLiteStore {
     constructor(filePath) {
         this.path = filePath;
@@ -1255,7 +1262,10 @@ class WhatsAppService {
                 session: this.sessionId,
                 isGroup,
                 fromMe: !!msg.key.fromMe,
-                groupName: isGroup ? 'Unknown Group' : undefined // We could fetch subject if needed
+                groupName: isGroup ? 'Unknown Group' : undefined, // We could fetch subject if needed
+                // When his phone sent it (WhatsApp's own stamp, seconds): a reply
+                // that reached us late still counts at the time he typed it.
+                ...(sentAtOf(msg.messageTimestamp) ? { sentAt: sentAtOf(msg.messageTimestamp) } : {})
             };
             // The sender's WhatsApp ID too, so a watcher saved with it still fires.
             // Personal session only: the assistant session stays as it was.

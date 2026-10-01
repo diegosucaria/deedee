@@ -216,8 +216,9 @@ describe('his draft, then "dale, mandalo", while a job card waits in his chat', 
         expect(await approvals.intercept(yes, jest.fn())).toBeNull();
         const sendArgs = { ...args, send: true, text: draft.draft };
         // Shown before his "dale, mandalo", not after it.
-        expect(service.isShownDraft(sendArgs, { before: Date.parse(yes.timestamp) })).toBe(true);
-        expect(service.isShownDraft(sendArgs, { before: madeAt - 1 })).toBe(false);
+        const chatIds = [yes.metadata.chatId];
+        expect(service.isShownDraft(sendArgs, { before: Date.parse(yes.timestamp), chatIds })).toBe(true);
+        expect(service.isShownDraft(sendArgs, { before: madeAt - 1, chatIds })).toBe(false);
         const review = await approvals.review({ message: yes, toolName: 'startErrand', args: sendArgs, historyUntrusted: false, foreignText: false });
         expect(review.run).toBe(true);
         const out = await run('startErrand', sendArgs, yes);

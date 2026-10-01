@@ -2908,7 +2908,7 @@ class AgentDB {
     const cap = Math.max(1, Math.min(Number(limit) || 50, 200));
     // His words and Deedee's only: a run's tool steps are not messages to him.
     const newest = this.db.prepare(`
-      SELECT id, role, timestamp, metadata FROM messages
+      SELECT id, role, timestamp, metadata, substr(content, 1, 400) AS head FROM messages
       WHERE chat_id IN (${ids.map(() => '?').join(', ')}) AND id IS NOT ? AND role IN ('user', 'assistant')
       ORDER BY timestamp DESC, rowid DESC
       LIMIT ?
@@ -2918,7 +2918,8 @@ class AgentDB {
     const rows = after.slice(0, cap).reverse().map(r => {
       let metadata = null;
       try { metadata = r.metadata ? JSON.parse(r.metadata) : null; } catch { metadata = null; }
-      return { id: r.id, role: r.role, timestamp: r.timestamp, metadata };
+      // The first words, so a reader can tell a question from a statement.
+      return { id: r.id, role: r.role, timestamp: r.timestamp, metadata, head: typeof r.head === 'string' ? r.head : '' };
     });
     return { rows, more: after.length > cap };
   }

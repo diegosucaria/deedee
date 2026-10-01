@@ -769,7 +769,7 @@ describe('ApprovalService', () => {
             expect(res.handled).toBe(true);
             expect(readReply).toHaveBeenCalledTimes(1);
             // Never the card's own text: it can quote a draft or someone else's words.
-            expect(readReply).toHaveBeenCalledWith({ question: expect.stringMatching(/^Accept the slot .*10:30 the contact offered/), detail: null, reply: 'aceptale las 10:30', lang: 'es', chatId: OWNER_JID });
+            expect(readReply).toHaveBeenCalledWith({ question: expect.stringMatching(/^Accept the slot Thursday 2026-10-08 10:30 \(today is .*\) the contact offered/), detail: null, reply: 'aceptale las 10:30', lang: 'es', chatId: OWNER_JID });
             expect(JSON.stringify(readReply.mock.calls[0][0])).not.toContain(CARD.detail);
             expect(db.getPendingConfirmation(card.id)).toMatchObject({ status: 'approved', decided_via: 'chat_read' });
             expect(agent._executeTool).toHaveBeenCalledWith('answerErrand', ACCEPT.args, expect.anything(), expect.any(Function), null, { approved: true });
@@ -784,6 +784,63 @@ describe('ApprovalService', () => {
             const res = await svc.intercept(msg('web', 'chat-1', 'de una'), jest.fn());
             expect(res).toEqual({ handled: false, row: expect.any(Object), execute: { name: 'commitAndPush', args: { message: 'feat: x' }, approvalId: card.id } });
             expect(readReply.mock.calls[0][0]).toMatchObject({ question: 'Run the action "commitAndPush" shown on the card.', detail: null, reply: 'de una', lang: 'en', chatId: 'chat-1' });
+        });
+
+        test('her "Ok" on WhatsApp never approves a card in her chat opened on the web (the same id, another channel)', async () => {
+            const HER = '5490000000002@s.whatsapp.net';
+            const card = await svc.request({ message: msg('web', HER, 'decile que llego tarde'), toolName: 'sendMessage', args: { to: '+5490000000002', content: 'llego tarde', session: 'user' }, reason: 'r' });
+            const hers = msg('whatsapp:user', HER, 'Ok', { phoneNumber: '5490000000002' });
+            expect(await svc.intercept(hers, jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+            expect(readReply).not.toHaveBeenCalled();
+        });
+
+        test('a forwarded "Dale" decides no card', async () => {
+            const card = await errandCard();
+            expect(await svc.intercept(ownerSays('Dale', { untrustedTaint: ['a forwarded message (whatsapp)'] }), jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+        });
+
+        test('a card that sends words is never read by the guardian: only a plain yes decides it', async () => {
+            const SAY = { toolName: 'answerErrand', args: { id: 7, action: 'say', text: 'llego 10 minutos tarde' } };
+            const card = await svc.request({ message: errandRun, ...SAY, reason: 'r', card: { question: '¿Le digo esto a Alice?', detail: '"llego 10 minutos tarde"', lang: 'es' } });
+            readReply.mockResolvedValue(read('yes'));
+            expect(await svc.intercept(ownerSays('mandale que llego 20 minutos tarde'), jest.fn())).toBeNull();
+            expect(readReply).not.toHaveBeenCalled();
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+        });
+
+        test('a card the errand raised a moment after taking another back waits for /confirm: his "sí" may be for the old one', async () => {
+            const old = await errandCard();
+            svc.withdraw(old.id, 'she wrote again', { quiet: true });
+            const NEW = { toolName: 'answerErrand', args: { id: 7, action: 'accept', date: '2026-10-08', time: '12:00' } };
+            const card = await svc.request({ message: errandRun, ...NEW, reason: 'r', card: CARD });
+            expect(await svc.intercept(ownerSays('sí'), jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+        });
+
+        test('a bare "sí" meant for a card taken back a moment ago runs nothing', async () => {
+            const old = await errandCard();
+            svc.withdraw(old.id, 'she is checking', { quiet: true });
+            const res = await svc.review({ message: ownerSays('sí'), ...ACCEPT, run: ApprovalService.newRun('r9'), historyUntrusted: false, foreignText: false });
+            expect(res.run).toBe(false);
+            expect(res.result.info).toMatch(/taken back/);
+        });
+
+        test('the run that raised a card then asks him something ("¿Querés que lo reformule?"): his "sí" answers that, never the card', async () => {
+            const card = await svc.askOwner({ message: errandRun, ...ACCEPT, reason: 'r', card: CARD, runId: 'run-his' });
+            db.saveMessage({ id: 'reply-q', role: 'assistant', content: 'La revisión frenó el mensaje y te dejé la tarjeta. ¿Querés que lo reformule?', source: 'whatsapp', chatId: OWNER_JID, timestamp: new Date(Date.now() + 5).toISOString(), metadata: { chatId: OWNER_JID, model: 'm', turnRunId: 'run-his' } });
+            const yes = { ...ownerSays('sí'), timestamp: new Date(Date.now() + 10).toISOString() };
+            expect(await svc.intercept(yes, jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+        });
+
+        test('the approvals list shows a card\'s full words, and no card signature', async () => {
+            const SAY = { toolName: 'answerErrand', args: { id: 7, action: 'say', text: 'llego 10 minutos tarde, se me complicó con el auto, esperame porfa', cardKey: 'abc123' } };
+            await svc.request({ message: errandRun, ...SAY, reason: 'r', card: { question: '¿Le mando esto a Alice?', detail: '«llego 10 minutos tarde, se me complicó con el auto, esperame porfa»', lang: 'es' } });
+            const [row] = svc.list().pending;
+            expect(row.card_text).toContain('esperame porfa');
+            expect(row.summary).not.toContain('abc123');
         });
 
         test('"no, cancelalo" typed on an errand card cancels the whole errand by the word list, with no model call', async () => {
@@ -934,7 +991,7 @@ describe('ApprovalService', () => {
             // His word is about the draft, never the job's card.
             expect(await svc.intercept(yes, jest.fn())).toBeNull();
             expect((await review(yes, start(DRAFT))).run).toBe(true);
-            expect(agent.errands.shownDraftAt).toHaveBeenCalledWith(start(DRAFT).args, { before: Date.parse(yes.timestamp) });
+            expect(agent.errands.shownDraftAt).toHaveBeenCalledWith(start(DRAFT).args, expect.objectContaining({ before: Date.parse(yes.timestamp), chatIds: expect.arrayContaining([OWNER_JID]) }));
             expect(db.getPendingConfirmation(card.id).status).toBe('pending');
             // A time from his client cannot be later than now.
             agent.errands.shownDraftAt.mockClear();
@@ -959,7 +1016,7 @@ describe('ApprovalService', () => {
             const card = await cardThenDraft();
             const res = await review(yes, start(DRAFT));
             expect(res).toMatchObject({ run: false, approvalId: card.id });
-            expect(agent.errands.shownDraftAt).toHaveBeenCalledWith(start(DRAFT).args, { before: Date.parse(yes.timestamp) });
+            expect(agent.errands.shownDraftAt).toHaveBeenCalledWith(start(DRAFT).args, expect.objectContaining({ before: Date.parse(yes.timestamp), chatIds: expect.arrayContaining([OWNER_JID]) }));
         });
     });
 });
