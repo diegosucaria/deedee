@@ -233,6 +233,143 @@ describe('voice: a steered draft never goes out (security review)', () => {
     });
 });
 
+describe('voice: bypasses of the first fixes (second security review)', () => {
+    const CYR_E = String.fromCharCode(0x0435);
+    const CYR_O = String.fromCharCode(0x043e);
+    const CYR_A = String.fromCharCode(0x0430);
+    const day = 'it named a day other than 2026-10-08';
+
+    test('English short day names, "mié", "tmrw" and a weekend or next week he never named are refused', () => {
+        for (const t of ['Great, thanks! See you Fri', 'thanks, see you sat', 'genial, nos vemos el mié', 'genial, nos vemos el mier', 'ok, see you tmrw', 'ok see you tmw']) {
+            expect(checkText([t], thanks)).toContain(day);
+        }
+        expect(checkText(['genial, nos vemos el finde'], thanks)).toContain('it named the weekend, which his words do not');
+        expect(checkText(['genial, nos vemos la semana que viene'], thanks)).toContain('it named the next week, which his words do not');
+        expect(checkText(['see you next week'], thanks)).toContain('it named the next week, which his words do not');
+        // His words have it, or the day is the slot's: it passes.
+        expect(checkText(['genial, nos vemos la semana que viene'], { ...thanks, ownWords: 'turno para la semana que viene' })).toEqual([]);
+        expect(checkText(['great, see you Thu'], thanks)).toEqual([]);
+    });
+
+    test('"10pm" and "10 de la noche" are 22:00 and never match a 10:00 slot; "tipo once" and "at eleven" are times', () => {
+        for (const t of ['genial, nos vemos a las 10 de la noche', 'dale, 10pm voy', 'dale, a las 10 p.m.', 'dale, a las 10 de la tarde']) {
+            expect(checkText([t], accept)).toContain('it named a time other than 10:00');
+        }
+        expect(checkText(['dale, jueves 10 de la noche'], accept)).toContain(day);
+        expect(timesIn('a las 10 de la noche')).toEqual([{ hour: 22, min: 0, exact: true }]);
+        expect(timesIn('a la una de la tarde')).toEqual([{ hour: 13, min: 0, exact: true }]);
+        expect(sameTime({ hour: 22, min: 0, exact: true }, '10:00')).toBe(false);
+        expect(sameTime({ hour: 10, min: 0, exact: true }, '22:00')).toBe(false);
+        for (const t of ['genial, gracias, llego tipo once', 'dale 10 voy, a eso de las once', 'dale 10 voy, paso once', 'ok 10:00, see you around eleven']) {
+            expect(checkText([t], accept)).toContain('it named a time other than 10:00');
+        }
+        // The morning, and the forms he types, still pass.
+        for (const t of ['dale, a las 10 de la mañana', 'dale, 10am voy', 'dale, a las diez voy', 'dale, a las 10 seguro']) expect(checkText([t], accept)).toEqual([]);
+        expect(checkText(['nos vemos a las 4 de la tarde'], { ...thanks, time: '16:00' })).toEqual([]);
+    });
+
+    test('money words the list missed are refused, and the everyday words beside them still pass', () => {
+        for (const t of ['genial, gracias, ok con el recargo', 'genial, precio ok', 'gracias, ok la tarifa', 'gracias, cuesta poco', 'gracias, te debo la seña',
+            'gracias, te paso la guita', 'gracias, son dos mangos', 'gracias, pago con tarjeta', 'gracias, con débito', 'gracias, mandame la factura', 'gracias, 20 luquitas',
+            'Thanks! Fine with the surcharge', 'Thanks, what is the price', 'Thanks, I owe you', 'Thanks, I will venmo you', 'Thanks, send me the bill', 'Thanks, send the invoice']) {
+            expect(checkText([t], thanks)).toContain('it talked about money');
+        }
+        for (const t of ['genial, debe ser el jueves', 'genial, llevo facturas', 'Thanks Bill', 'Thanks, you are in charge', 'genial, qué precioso']) {
+            expect(checkText([t], thanks)).toEqual([]);
+        }
+    });
+
+    test('a number in words counts like digits ("somos tres", "te llevo los veinte"); "mil gracias" and "uno de estos días" do not', () => {
+        const stray = 'it named a number that is not the slot\'s day or time';
+        expect(checkText(['genial, gracias! somos tres'], thanks)).toContain(stray);
+        expect(checkText(['dale, 10 voy, te llevo los veinte'], accept)).toContain(stray);
+        expect(checkText(['genial, gracias! somos tres'], { ...thanks, ownWords: 'turno para el jueves, somos 3' })).toEqual([]);
+        expect(checkText(['genial, mil gracias'], thanks)).toEqual([]);
+        expect(checkText(['genial, nos vemos uno de estos días'], { step: 'say', ownWords: 'decile que nos vemos' })).toEqual([]);
+        expect(checkText(['genial, cien por ciento'], thanks)).toEqual([]);
+    });
+
+    test('an accent inside a word or a look-alike letter from another alphabet hides no money, day or bot word', () => {
+        expect(checkText(['genial, gracias, te págo en efectívo'], thanks)).toContain('it talked about money');
+        expect(checkText([`genial, el vi${CYR_E}rnes nos vemos`], thanks)).toContain(day);
+        expect(checkText([`genial, el vi${CYR_E}rnes nos vemos`], thanks)).toContain('a word mixed letters of two alphabets');
+        // A word all in look-alikes mixes nothing, and still reads as money.
+        expect(checkText([`genial ${String.fromCharCode(0x0440)}${CYR_E}${String.fromCharCode(0x0455)}${CYR_O}`], thanks)).toContain('it talked about money');
+        expect(checkText([`soy un b${CYR_O}t`], { step: 'say' })).toContain('it had words aimed at an assistant');
+        expect(checkText([`p${CYR_A}go yo`], { step: 'say' })).toContain('it talked about money');
+        expect(checkText([`nos vemos el v${String.fromCharCode(0x0131)}ernes`], thanks)).toContain(day);
+        expect(checkText([`genial ${String.fromCharCode(0x0665, 0x0660, 0x0660)}`], thanks)).toContain('it had digits of another script');
+        // What goes out keeps its accents: only the checks read the folded form.
+        expect(cleanText(['nos vemos el miércoles, mañana'], null)).toEqual(['nos vemos el miércoles, mañana']);
+    });
+
+    test('with money in his words, no number he never gave goes out on any step ("500", "la seña de 20", "quinientos")', () => {
+        const say = { step: 'say', allowMoney: true, ownWords: 'turno para el jueves que viene\nle pago el jueves', now: NOW, timeZone: TZ };
+        expect(checkText(['te pago el jueves'], say)).toEqual([]);
+        for (const t of ['te pago 500 el jueves', 'te pago la seña de 20', 'te pago quinientos el jueves']) {
+            expect(checkText([t], say)).toContain('it named a number he never gave');
+        }
+    });
+
+    test('a decline, say or tell names only his days, times and numbers: his "no" carries no counter-offer', () => {
+        const decline = { step: 'decline', ownWords: 'turno para el jueves que viene', now: NOW, timeZone: TZ };
+        expect(checkText(['uh no puedo, gracias igual'], decline)).toEqual([]);
+        const offer = checkText(['uh no puedo, pero el viernes a las 11 sí'], decline);
+        expect(offer).toContain('it named a time he never gave');
+        expect(offer).toContain('it named a day he never gave');
+        expect(checkText(['uh no puedo, mañana sí'], decline)).toContain('it named a day he never gave');
+        const tell = { step: 'tell', ownWords: 'que llego 10 minutos tarde', now: NOW, timeZone: TZ };
+        expect(checkText(['llego 10 minutos tarde'], tell)).toEqual([]);
+        expect(checkText(['llego 15 minutos tarde'], tell)).toContain('it named a number he never gave');
+        expect(checkText(['llego 10 minutos tarde, nos vemos el viernes'], tell)).toContain('it named a day he never gave');
+        expect(checkText(['te pago el jueves a las 10'], { step: 'say', allowMoney: true, ownWords: 'le pago el jueves' })).toContain('it named a time he never gave');
+        // His own words for a time match its 12-hour reading.
+        expect(checkText(['llego a las 16'], { step: 'tell', ownWords: 'que llego a las 4' })).toEqual([]);
+        // A text he dictated (no ownWords) is his: these rules do not apply.
+        expect(checkText(['llego 15 minutos tarde el viernes'], { step: 'tell' })).toEqual([]);
+    });
+
+    test('a money word of his may be passed on ("pedile la lista de precios"), but no other', () => {
+        const ask = { step: 'question', ownWords: 'pedile la lista de precios', now: NOW, timeZone: TZ };
+        expect(checkText(['me pasás la lista de precios?'], ask)).toEqual([]);
+        expect(checkText(['me pasás el precio?'], ask)).toEqual([]);
+        expect(checkText(['me pasás la lista de precios? te pago ya'], ask)).toContain('it talked about money');
+        // A booking step never takes his money word as leave.
+        expect(checkText(['dale, 10 voy, ok el precio'], { ...accept, ownWords: 'turno el jueves y preguntale el precio' })).toContain('it talked about money');
+    });
+
+    test('a propose may turn down the day she offered ("el jueves no puedo"), but names no other', async () => {
+        const answer = (obj) => ({ text: JSON.stringify(obj), usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } });
+        const draftWith = async (history, text) => {
+            const generateContent = jest.fn().mockResolvedValue(answer({ text, date: '2026-10-09', time: '11:00' }));
+            const svc = new VoiceService({ client: { models: { generateContent } }, db: { logTokenUsage: jest.fn() } });
+            return svc.draft({ stats: OWNER_STATS, step: 'propose', history, brief: { request: 'turno para el jueves que viene', slotText: 'Fri 09/10 11:00' },
+                timeZone: TZ, now: NOW, requireTime: '11:00', requireDate: '2026-10-09' });
+        };
+        const offered = [
+            { role: 'assistant', content: 'Buenas! hay lugar el jueves 8 a las 10?', timestamp: NOW - 3600e3 },
+            { role: 'user', content: 'el jueves no tengo, te sirve el miércoles a las 9?', timestamp: NOW - 60e3 }
+        ];
+        expect((await draftWith(offered, 'el jueves no puedo, y el viernes a las 11?')).ok).toBe(true);
+        expect((await draftWith(offered, 'el miércoles no puedo, y el viernes a las 11?')).ok).toBe(true);
+        // A day she never offered, or her day in anything but a "no": refused.
+        const other = await draftWith(offered, 'el lunes no puedo, y el viernes a las 11?');
+        expect(other.ok).toBe(false);
+        expect(other.problems).toContain('it named a day other than 2026-10-09');
+        expect((await draftWith(offered, 'el miércoles sí, y el viernes a las 11?')).ok).toBe(false);
+    });
+
+    test('his everyday words still pass the new checks', () => {
+        for (const t of ['dale, 10 voy', 'jaja dale, 10 voy 👍', 'dale, el jueves 8 a las 10', 'dale, el jue a las 10']) expect(checkText([t], accept)).toEqual([]);
+        for (const t of ['genial, mil gracias', 'genial, gracias! nos vemos el jueves 🙌', 'listo, nos vemos el jue', 'genial 😀😀']) {
+            expect(checkText([t], thanks)).toEqual([]);
+        }
+        expect(checkText(['a las 10, puede ser?'], request)).toEqual([]);
+        expect(checkText(['Buenas! tenés lugar el jueves 8/10 a las 10hs?'], request)).toEqual([]);
+        expect(checkText(['Hi! any slot on Thu at 10?'], request)).toEqual([]);
+    });
+});
+
 describe('voice: what he never types, code removes', () => {
     test('an opening ¿ or ¡ and a final period go when he almost never uses them', () => {
         expect(cleanText(['¿Tendrás un turno el jueves?', '¡Gracias.'], OWNER_STATS)).toEqual(['Tendrás un turno el jueves?', 'Gracias']);
