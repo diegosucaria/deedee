@@ -3,7 +3,8 @@
  * (services/errands.js). Autopilot in full mode used to send a reply it
  * buffered from just before the errand started. Real AgentDB in a temp
  * folder and the real ImpersonationService; the errand check is a small
- * stand-in for ErrandService.holds(idList). Placeholders only.
+ * stand-in for ErrandService.holds(idList), and the real ErrandService in
+ * its own block. Placeholders only.
  */
 const fs = require('fs');
 const os = require('os');
@@ -121,6 +122,72 @@ describe('Autopilot keeps out of a chat an errand holds', () => {
         await service.processBufferedMessage(CHAT, CONTACT);
         expect(sends).toHaveLength(2);
         expect(drafts().map(d => d.status)).toEqual(['approved', 'approved']);
+    });
+});
+
+describe('Autopilot against the real ErrandService', () => {
+    const { ErrandService } = require('../src/services/errands');
+    let dir, db, agent, sends;
+
+    beforeEach(() => {
+        jest.spyOn(console, 'log').mockImplementation(() => { });
+        jest.spyOn(console, 'warn').mockImplementation(() => { });
+        jest.spyOn(console, 'error').mockImplementation(() => { });
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-autopilot-real-errands-'));
+        db = new AgentDB(dir);
+        db.init();
+        db.db.prepare("INSERT INTO people (id, name, phone, identifiers, autopilot_status) VALUES ('p1', 'Alice', ?, ?, 'full')")
+            .run(CONTACT, JSON.stringify({ whatsapp: CONTACT, whatsapp_lid: CONTACT_LID }));
+        sends = [];
+        agent = {
+            db,
+            interface: { send: jest.fn(async (p) => { sends.push(p); return true; }), broadcast: jest.fn() },
+            delivery: { resolveOwnerTarget: () => ({ channel: 'whatsapp', target: OWNER_CHAT }), deliver: jest.fn().mockResolvedValue({ delivered: true }) },
+            client: { models: { generateContent: jest.fn() } }
+        };
+        agent.errands = new ErrandService(agent);
+    });
+
+    afterEach(() => {
+        agent.errands.stop();
+        db.close();
+        jest.restoreAllMocks();
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    const openErrand = () => db.createErrand({
+        goal: 'book', state: 'waiting_contact', contactJid: CHAT, contactIds: [CONTACT, CONTACT_LID], contactName: 'Alice',
+        personId: 'p1', request: 'turno para el jueves', expiresAt: new Date(Date.now() + 86400e3).toISOString()
+    });
+
+    test('holds() answers at once with true or false: a promise or a missing method would let Autopilot read it wrong', () => {
+        expect(typeof agent.errands.holds).toBe('function');
+        expect(agent.errands.holds([CHAT, CONTACT])).toBe(false);
+        openErrand();
+        expect(agent.errands.holds([CHAT, CONTACT])).toBe(true);
+        expect(agent.errands.holds([LID_CHAT])).toBe(true);
+        expect(agent.errands.holds(['5490000000003@s.whatsapp.net'])).toBe(false);
+    });
+
+    const autopilotReplies = async () => {
+        const autopilot = new ImpersonationService(agent);
+        jest.spyOn(autopilot, 'generateDraft').mockResolvedValue({ text: 'dale, 10:30 me viene perfecto', cost: 0 });
+        await autopilot.handleMessage(CHAT, { source: 'whatsapp:user', content: 'holaa', metadata: { chatId: CHAT, phoneNumber: CONTACT } }, CONTACT);
+        const buf = autopilot.messageBuffers.get(CHAT);
+        if (buf?.timer) clearTimeout(buf.timer);
+        await autopilot.processBufferedMessage(CHAT, CONTACT);
+    };
+
+    test('an open errand with Alice keeps Autopilot (full) from writing to her', async () => {
+        openErrand();
+        await autopilotReplies();
+        expect(sends).toEqual([]);
+        expect(db.db.prepare('SELECT COUNT(*) AS n FROM autopilot_drafts').get().n).toBe(0);
+    });
+
+    test('with no errand open, Autopilot (full) answers her as before', async () => {
+        await autopilotReplies();
+        expect(sends.map(s => s.content)).toEqual(['dale, 10:30 me viene perfecto']);
     });
 });
 

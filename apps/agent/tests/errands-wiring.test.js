@@ -93,3 +93,117 @@ describe('errands in shared places', () => {
         expect(getTurnContext({ dateString: 'T' })).not.toContain('A CARD WAITS');
     });
 });
+
+describe('his draft, then "dale, mandalo", while a job card waits in his chat', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const { AgentDB } = require('../src/db');
+    const { ErrandService } = require('../src/services/errands');
+    const { ApprovalService } = require('../src/services/approval-service');
+    const { ErrandsExecutor } = require('../src/executors/errands');
+
+    const OWNER = '5490000000001';
+    const OWNER_CHAT = `${OWNER}@s.whatsapp.net`;
+    const OWNER_LID = '100000000000099@lid';
+    const CONTACT = '5490000000002';
+    const CONTACT_LID = '100000000000091';
+    const CONTACT_JID = `${CONTACT}@s.whatsapp.net`;
+    const STATS = {
+        n: 5000, questions: 600, openQuestion: 0.001, openExclamation: 0, exclamation: 0.05, endsWithPeriod: 0.001,
+        startsLower: 0.2, comma: 0.1, emoji: 0.03, laugh: 0.07, multiline: 0.01, medianLength: 15, p90Length: 48, perBurst: 2.7
+    };
+    let dir, db, agent, approvals, service, executor, chat, sends, wall;
+
+    // A line in his chat with Deedee, a second after the one before.
+    const said = (role, content) => {
+        wall += 1000;
+        const msg = { id: `m${wall}`, role, content, source: 'whatsapp', chatId: OWNER_LID, timestamp: new Date(wall).toISOString(), metadata: { chatId: OWNER_LID } };
+        if (role === 'assistant') db.saveMessage(msg);
+        return msg;
+    };
+    const run = async (name, args, message) => executor.execute(name, args, { message, approved: false, ownerTyped: await agent._ownerTyped(message) });
+
+    beforeEach(() => {
+        jest.spyOn(console, 'log').mockImplementation(() => { });
+        jest.spyOn(console, 'warn').mockImplementation(() => { });
+        jest.spyOn(console, 'error').mockImplementation(() => { });
+        delete process.env.ERRANDS;
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-errands-draft-'));
+        db = new AgentDB(dir);
+        db.init();
+        db.setAgentSetting('owner_phone', OWNER);
+        db.db.prepare("INSERT INTO people (id, name, phone, relationship, identifiers) VALUES ('p-alice-0000-0000-0000-000000000001', 'Alice', ?, 'barber', ?)")
+            .run(CONTACT, JSON.stringify({ whatsapp: CONTACT, whatsapp_lid: CONTACT_LID }));
+        chat = [{ role: 'assistant', content: 'Buenas! hay lugar el jueves a las 10hs?', timestamp: Date.now() - 20 * 86400e3, id: 'H1', fromMe: true }];
+        sends = [];
+        wall = Date.now();
+        axios.get.mockImplementation(async (url, opts) => {
+            if (url.endsWith('/whatsapp/history')) return { data: chat.slice(-(opts?.params?.limit || 60)) };
+            if (url.endsWith('/whatsapp/resolve')) {
+                return { data: { phoneJid: CONTACT_JID, lid: `${CONTACT_LID}@lid`, name: 'Alice', allJids: [CONTACT_JID, `${CONTACT_LID}@lid`] } };
+            }
+            if (url.endsWith('/whatsapp/style-stats')) return { data: STATS };
+            if (url.endsWith('/whatsapp/status')) return { data: { assistant: { me: { id: '5490000000007' } }, user: { me: { id: OWNER } } } };
+            throw new Error(`unexpected GET ${url}`);
+        });
+        agent = {
+            db,
+            client: { models: { generateContent: jest.fn(async () => ({ text: JSON.stringify({ text: 'llego 10 minutos tarde', date: '', time: '' }), usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } })) } },
+            notifications: { create: jest.fn() },
+            interface: {
+                broadcast: jest.fn().mockResolvedValue(true),
+                send: jest.fn(async (payload) => {
+                    payload.sentMessageId = `W${sends.length + 1}`;
+                    sends.push(payload);
+                    chat.push({ role: 'assistant', content: payload.content, timestamp: Date.now(), id: payload.sentMessageId, fromMe: true });
+                    return true;
+                })
+            },
+            delivery: {
+                resolveOwnerTarget: () => ({ channel: 'whatsapp', target: OWNER_CHAT }),
+                isOwnerTarget: (channel, target) => String(target || '').replace(/@.*$/, '') === OWNER,
+                deliver: jest.fn().mockResolvedValue({ delivered: true })
+            },
+            processMessage: jest.fn().mockResolvedValue({}),
+            _getOwnerWaIds: async () => new Set([OWNER_CHAT, OWNER_LID]),
+            _ownerTyped: async (m) => m?.source === 'whatsapp' && !m?.metadata?.jobName && [OWNER_CHAT, OWNER_LID].includes(m?.metadata?.chatId)
+        };
+        approvals = new ApprovalService(agent);
+        agent.approvals = approvals;
+        service = new ErrandService(agent, { partGapMs: 0, bufferMs: 5 });
+        agent.errands = service;
+        executor = new ErrandsExecutor({ agent });
+    });
+
+    afterEach(() => {
+        service.stop();
+        approvals.stop();
+        db.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+        jest.restoreAllMocks();
+    });
+
+    test('he asks for a draft ("no lo mandes todavía"), sees it and says "dale, mandalo": the draft goes out, and the job card still waits', async () => {
+        const job = await approvals.request({ message: { source: 'scheduler', metadata: { jobName: 'facturas', chatId: 'scheduled_facturas' } }, toolName: 'sendEmail', args: { to: 'user@example.com', subject: 'x' }, reason: 'r' });
+        const ask = said('user', 'decile a Alice que llego 10 minutos tarde, no lo mandes todavía');
+        const args = { contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde', send: false };
+        expect((await approvals.review({ message: ask, toolName: 'startErrand', args, historyUntrusted: false, foreignText: false })).run).toBe(true);
+        const draft = await run('startErrand', args, ask);
+        expect(draft).toMatchObject({ success: true, sent: false, draft: 'llego 10 minutos tarde' });
+        expect(sends).toHaveLength(0);
+        said('assistant', `Le mandaría a Alice: "${draft.preview}". ¿Lo mando?`);
+        // His "dale, mandalo" is about the draft, never the job's card.
+        const yes = said('user', 'dale, mandalo');
+        expect(await approvals.intercept(yes, jest.fn())).toBeNull();
+        const sendArgs = { ...args, send: true, text: draft.draft };
+        expect(service.isShownDraft(sendArgs)).toBe(true);
+        const review = await approvals.review({ message: yes, toolName: 'startErrand', args: sendArgs, historyUntrusted: false, foreignText: false });
+        expect(review.run).toBe(true);
+        const out = await run('startErrand', sendArgs, yes);
+        expect(out).toMatchObject({ success: true, sent: true });
+        expect(sends.map(s => s.content)).toEqual(['llego 10 minutos tarde']);
+        expect(sends[0].metadata).toEqual({ chatId: CONTACT_JID, session: 'user', strictSession: true });
+        expect(db.getPendingConfirmation(job.id).status).toBe('pending');
+    });
+});

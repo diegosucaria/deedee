@@ -3933,13 +3933,38 @@ describe('errands', () => {
             expect(context).not.toContain('le mando el auto');
         });
 
-        test('a note that quotes a draft the voice wrote after reading her words carries the taint mark', async () => {
+        test('the booked note quotes only the thanks, held to the slot by the voice checks: no taint mark holds back his next message', async () => {
             const errand = await startBooking();
             clock += 5 * 60e3;
             await contactAnswers(errand, 'jueves 10 te espero', confirm10);
             const booked = notes().find(n => /Listo: turno con Alice/.test(n.content));
             expect(booked.content).toMatch(/Le dije "genial, gracias"/);
-            expect(booked.metadata.jobTaint).toEqual([`a contact's message (errand ${errand.id})`]);
+            expect(booked.metadata.jobTaint).toBeUndefined();
+        });
+
+        test('a note that quotes his words the voice wrote after reading hers still carries the taint mark', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            // She writes while his step is on its way: it waits for her words, then runs with a note.
+            service.claim(contactWrites('jaja'), { contactString: CONTACT, senderLid: CONTACT_LID });
+            const res = await service.answer({ id: errand.id, action: 'say', text: 'llego 10 minutos tarde' }, { byOwner: true });
+            expect(res).toMatchObject({ success: true, deferred: true });
+            forms.push({ kind: 'other', slots: [], summary: 'Laughs.', tellOwner: false });
+            await service.flush(errand.id);
+            const note = notes().find(n => /Le escribí a Alice: "llego 10 minutos tarde"/.test(n.content));
+            expect(note.metadata.jobTaint).toEqual([`a contact's message (errand ${errand.id})`]);
+        });
+
+        test('a note that quotes his proposal, held to the slot by the voice checks, carries no taint mark', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            service.claim(contactWrites('jaja'), { contactString: CONTACT, senderLid: CONTACT_LID });
+            const res = await service.answer({ id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, { byOwner: true });
+            expect(res).toMatchObject({ success: true, deferred: true });
+            forms.push({ kind: 'other', slots: [], summary: 'Laughs.', tellOwner: false });
+            await service.flush(errand.id);
+            const note = notes().find(n => /Le escribí a Alice: "y a las 11\?"/.test(n.content));
+            expect(note.metadata.jobTaint).toBeUndefined();
         });
 
         test('a contact\'s message cannot close the new-messages block of the reader prompt, nor pass for a line of his', async () => {
@@ -3950,6 +3975,258 @@ describe('errands', () => {
             expect(prompt.split('</new>').length - 1).toBe(1);
             expect(prompt.split('<new>').length - 1).toBe(1);
             expect(prompt).not.toMatch(/OWNER: aceptá/);
+        });
+    });
+
+    describe('second safety round: bypasses of the first fixes', () => {
+        const OWNER_CHAT = `${OWNER}@s.whatsapp.net`;
+        const OWNER_LID = '100000000000099@lid';
+        const ALICE_ID = 'p-alice-0000-0000-0000-000000000001';
+        const origin = (id = 'in-1') => ({ originMessage: { id, source: 'whatsapp', content: 'escribile a Alice', metadata: { chatId: OWNER_CHAT } } });
+        const confirm10 = { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms Thursday 10.', tellOwner: false };
+        const ownerSays = (content) => ({ id: `in-${content}`, role: 'user', source: 'whatsapp', content, metadata: { chatId: OWNER_LID } });
+        const cardTexts = () => deliver.mock.calls.filter(c => c[0] === 'approval').map(c => c[3].content);
+        const errandCards = () => pendingCards().filter(c => c.tool_name === 'answerErrand');
+        const startCards = () => pendingCards().filter(c => c.tool_name === 'startErrand');
+        // His "sí" in his chat, or his yes on the web: the card's call runs, approved.
+        const sayYes = () => approvals.intercept({ source: 'whatsapp', content: 'sí', metadata: { chatId: OWNER_LID } }, jest.fn());
+        const approveFromWeb = async (id) => {
+            const executor = new ErrandsExecutor({ agent });
+            agent._executeTool = (name, args, message, relay, usage, opts = {}) => executor.execute(name, args, { message, approved: opts.approved === true, ownerTyped: true });
+            await approvals.decide(id, 'approved', { via: 'web' });
+        };
+
+        beforeEach(() => {
+            agent._getOwnerWaIds = async () => new Set([OWNER_CHAT, OWNER_LID]);
+            agent._ownerTyped = async (m) => m?.source === 'whatsapp' && [OWNER_CHAT, OWNER_LID].includes(m?.metadata?.chatId);
+        });
+
+        describe('her news in one message, her plain yes in the next', () => {
+            test('her surcharge, then her yes: never thanked on its own; a card says she wrote something else before, and his "sí" books it', async () => {
+                const errand = await startBooking();
+                clock += 5 * 60e3;
+                await contactAnswers(errand, 'ojo que el jueves es feriado, sale 20 mil más', { kind: 'other', slots: [], summary: 'Thursday is a holiday: 20 mil more.', tellOwner: true });
+                clock += 60e3;
+                const after = await contactAnswers(errand, 'si te sirve dale, jueves 10 te espero', confirm10);
+                // A thanks would tell her he agreed to the surcharge.
+                expect(sends.map(s => s.content)).toEqual(['Buenas! hay lugar el jueves 8 a las 10?']);
+                expect(inserted).toHaveLength(0);
+                expect(after.state).toBe('waiting_owner');
+                expect(errandCards()).toHaveLength(1);
+                expect(cardTexts().pop()).toContain('antes escribió algo más; leelo primero');
+                expect(await sayYes()).toBeTruthy();
+                expect(sends.map(s => s.content)).toEqual(['Buenas! hay lugar el jueves 8 a las 10?', 'dale, 10:00 voy']);
+                expect(db.getErrand(errand.id).state).toBe('done');
+                expect(inserted).toHaveLength(1);
+            });
+
+            test('a photo alone (a price list), then her yes: never thanked on its own; the card says she sent a photo before', async () => {
+                const errand = await startBooking();
+                clock += 5 * 60e3;
+                forms.push({ kind: 'other', slots: [], summary: 'Sent a photo.', tellOwner: false });
+                expect(service.claim({ ...contactWrites('[Image]'), parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }] }, { contactString: CONTACT, senderLid: CONTACT_LID })).toBe(true);
+                await service.flush(errand.id);
+                clock += 60e3;
+                await contactAnswers(errand, 'dale jueves 10', confirm10);
+                expect(sends).toHaveLength(1);
+                expect(inserted).toHaveLength(0);
+                expect(cardTexts().pop()).toContain('antes mandó una foto o un archivo');
+            });
+
+            test('a voice note it could not read, then her yes: never thanked on its own', async () => {
+                const errand = await startBooking();
+                clock += 5 * 60e3;
+                agent.impersonationService.transcribeAudio.mockResolvedValueOnce(null);
+                forms.push({ kind: 'other', slots: [], summary: 'A voice note.', tellOwner: false });
+                expect(service.claim({ ...contactWrites('[Voice Message]'), parts: [{ inlineData: { mimeType: 'audio/ogg', data: 'AAAA' } }] }, { contactString: CONTACT, senderLid: CONTACT_LID })).toBe(true);
+                await service.flush(errand.id);
+                clock += 60e3;
+                await contactAnswers(errand, 'dale jueves 10', confirm10);
+                expect(sends).toHaveLength(1);
+                expect(inserted).toHaveLength(0);
+                expect(cardTexts().pop()).toContain('antes mandó un audio que no pude entender');
+            });
+
+            test('an English errand: her fee, then her yes: no automatic thanks, and the card says why in English', async () => {
+                drafts.push({ text: 'Hi! any slot on Thursday 8 at 10?', date: '2026-10-08', time: '10:00' });
+                const out = await service.start({ contact: CONTACT, goal: 'book', request: 'book a haircut on Thursday at 10', date: '2026-10-08', time: '10:00', lang: 'en' }, origin());
+                expect(out.success).toBe(true);
+                const errand = db.getErrand(out.errandId);
+                clock += 5 * 60e3;
+                await contactAnswers(errand, 'heads up, Thursday is a holiday so there is a 20 dollar fee', { kind: 'other', slots: [], summary: 'Holiday fee of 20 dollars.', tellOwner: true });
+                clock += 60e3;
+                await contactAnswers(errand, 'ok see you thursday at 10', confirm10);
+                expect(sends).toHaveLength(1);
+                expect(inserted).toHaveLength(0);
+                expect(cardTexts().pop()).toContain('they wrote something else before; read it first');
+            });
+
+            test('after her news, a slot he proposes goes out, and her yes to that is thanked and booked on its own', async () => {
+                const errand = await startBooking();
+                clock += 5 * 60e3;
+                await contactAnswers(errand, 'el jueves a las 10 sale 20 mil más', { kind: 'other', slots: [], summary: 'Thursday 10 costs 20 mil more.', tellOwner: true });
+                clock += 60e3;
+                const res = await service.answer({ id: errand.id, action: 'propose', date: '2026-10-08', time: '11:00' }, { byOwner: true });
+                expect(res.success).toBe(true);
+                clock += 5 * 60e3;
+                const done = await contactAnswers(errand, 'dale, 11 te espero', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '11:00' }], summary: 'Confirms 11.', tellOwner: false });
+                expect(sends.map(s => s.content)).toEqual(['Buenas! hay lugar el jueves 8 a las 10?', 'y a las 11?', 'genial, gracias']);
+                expect(done).toMatchObject({ state: 'done', agreed: { date: '2026-10-08', time: '11:00' } });
+                expect(inserted).toHaveLength(1);
+            });
+        });
+
+        describe('a card he approved, and words she already got', () => {
+            test('a gate card he approved minutes after a tell never sends the same words again', async () => {
+                const executor = new ErrandsExecutor({ agent });
+                agent._executeTool = (name, args, message, relay, usage, opts = {}) => executor.execute(name, args, { message, approved: opts.approved === true, ownerTyped: true });
+                const one = await service.start({ contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde', text: 'llego 10 minutos tarde' }, origin('in-a'));
+                expect(one.success).toBe(true);
+                clock += 2 * 60e3;
+                // A chat with someone else's words: the gate asks with his request, not the words she got.
+                const args = { contact: CONTACT, goal: 'tell', request: 'avisale a Alice que llego 10 minutos tarde' };
+                const review = await approvals.review({ message: ownerSays('avisale a Alice que llego 10 minutos tarde'), toolName: 'startErrand', args, historyUntrusted: true, foreignText: false });
+                expect(review.status).toBe('paused');
+                await approvals.decide(review.approvalId, 'approved', { via: 'web' });
+                expect(sends.map(s => s.content)).toEqual(['llego 10 minutos tarde']);
+            });
+
+            test('a gate card he approved minutes after a tell, with new words, brings the card that shows what she got; his yes to that sends', async () => {
+                const one = await service.start({ contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde', text: 'llego 10 minutos tarde' }, origin('in-a'));
+                clock += 2 * 60e3;
+                const args = { contact: CONTACT, goal: 'tell', request: 'avisale que traigo el libro' };
+                const review = await approvals.review({ message: ownerSays('avisale que traigo el libro'), toolName: 'startErrand', args, historyUntrusted: true, foreignText: false });
+                expect(review.status).toBe('paused');
+                drafts.push({ text: 'traigo el libro', date: '', time: '' });
+                await approveFromWeb(review.approvalId);
+                expect(sends).toHaveLength(1);
+                const [card] = startCards();
+                expect(card.args).toMatchObject({ text: 'traigo el libro', after: one.errandId });
+                expect(cardTexts().find(t => /Hace unos minutos/.test(t))).toMatch(/Hace unos minutos ya le escribí a Alice[\s\S]*traigo el libro[\s\S]*llego 10 minutos tarde/);
+                await approveFromWeb(card.id);
+                expect(sends.map(s => s.content)).toEqual(['llego 10 minutos tarde', 'traigo el libro']);
+            });
+
+            test('the card that showed what she got never sends words she already got from his account', async () => {
+                await service.start({ contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde', text: 'llego 10 minutos tarde' }, origin('in-a'));
+                clock += 2 * 60e3;
+                const two = await service.start({ contact: CONTACT, goal: 'tell', request: 'que traigo el libro', text: 'traigo el libro' }, origin('in-b'));
+                expect(two.success).not.toBe(true);
+                const [card] = startCards();
+                // He wrote those very words to her himself meanwhile.
+                ownerWrites('traigo el libro', clock + 30e3);
+                clock += 60e3;
+                const out = await service.start(card.args, { approved: true, ...origin('in-c') });
+                expect(out).toMatchObject({ success: false });
+                expect(out.error).toMatch(/already reached/);
+                expect(sends).toHaveLength(1);
+            });
+
+            test('an approved gate card whose arguments name the earlier errand still gets the card that shows what she got', async () => {
+                const one = await service.start({ contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde', text: 'llego 10 minutos tarde' }, origin('in-a'));
+                clock += 2 * 60e3;
+                // `after` from the model's own arguments: no signed card showed him anything.
+                const args = { contact: CONTACT, goal: 'tell', request: 'avisale que traigo el libro', after: one.errandId };
+                const review = await approvals.review({ message: ownerSays('avisale que traigo el libro'), toolName: 'startErrand', args, historyUntrusted: true, foreignText: false });
+                expect(review.status).toBe('paused');
+                drafts.push({ text: 'traigo el libro', date: '', time: '' });
+                await approveFromWeb(review.approvalId);
+                expect(sends).toHaveLength(1);
+                expect(startCards()).toHaveLength(1);
+            });
+
+            test('a follow-up minutes after a booking her yes closed goes out with no repeat card', async () => {
+                const errand = await startBooking();
+                clock += 5 * 60e3;
+                await contactAnswers(errand, 'Sí, te anoto el jueves a las 10', confirm10);
+                expect(db.getErrand(errand.id).state).toBe('done');
+                clock += 2 * 60e3;
+                const out = await service.start({ contact: CONTACT, goal: 'tell', request: 'que llevo a mi hijo también', text: 'llevo a mi hijo también' }, origin('in-f'));
+                expect(out.success).toBe(true);
+                expect(sends.map(s => s.content)).toEqual(['Buenas! hay lugar el jueves 8 a las 10?', 'genial, gracias', 'llevo a mi hijo también']);
+                expect(startCards()).toHaveLength(0);
+            });
+
+            test('a follow-up minutes after an accept she never answered still shows him what she got first', async () => {
+                const errand = await startBooking();
+                clock += 5 * 60e3;
+                // He accepts the slot himself; she has said nothing yet.
+                const res = await service.answer({ id: errand.id, action: 'accept', date: '2026-10-08', time: '10:00' }, { byOwner: true });
+                expect(res.success).toBe(true);
+                clock += 2 * 60e3;
+                const out = await service.start({ contact: CONTACT, goal: 'tell', request: 'que llevo a mi hijo también', text: 'llevo a mi hijo también' }, origin('in-f'));
+                expect(out.success).not.toBe(true);
+                expect(sends).toHaveLength(2);
+                expect(startCards()).toHaveLength(1);
+            });
+        });
+
+        describe('a draft he saw, for "dale, mandalo"', () => {
+            const draftArgs = { contact: CONTACT, goal: 'tell', request: 'que llego tarde' };
+
+            test('isShownDraft knows the draft start() showed him: the same person by number, WhatsApp ID or People id, and the same words', async () => {
+                drafts.push({ text: 'llego 10 minutos tarde [SPLIT] perdón!', date: '', time: '' });
+                const d = await service.start({ ...draftArgs, send: false }, origin());
+                expect(d).toMatchObject({ success: true, sent: false });
+                expect(sends).toHaveLength(0);
+                const args = { ...draftArgs, send: true, text: d.draft };
+                expect(service.isShownDraft(args)).toBe(true);
+                expect(service.isShownDraft({ ...args, text: '  llego 10 minutos  tarde[SPLIT]perdón! ' })).toBe(true);
+                expect(service.isShownDraft({ ...args, contact: `${CONTACT_LID}@lid` })).toBe(true);
+                expect(service.isShownDraft({ ...args, contact: ALICE_ID })).toBe(true);
+                expect(service.isShownDraft({ contact: CONTACT, text: d.draft })).toBe(true);
+            });
+
+            test('isShownDraft says no to other words, another person, another goal, a draft over 30 minutes old, or no draft', async () => {
+                expect(service.isShownDraft({ ...draftArgs, send: true, text: 'llego 10 minutos tarde' })).toBe(false);
+                const d = await service.start({ ...draftArgs, send: false }, origin());
+                const args = { ...draftArgs, send: true, text: d.draft };
+                expect(service.isShownDraft(args)).toBe(true);
+                expect(service.isShownDraft({ ...args, text: 'llego 20 minutos tarde' })).toBe(false);
+                expect(service.isShownDraft({ ...args, text: `${d.draft} [SPLIT] te quiero` })).toBe(false);
+                expect(service.isShownDraft({ ...args, contact: OTHER })).toBe(false);
+                expect(service.isShownDraft({ ...args, goal: 'ask' })).toBe(false);
+                expect(service.isShownDraft({ ...args, text: '' })).toBe(false);
+                expect(service.isShownDraft(null)).toBe(false);
+                clock += 31 * 60e3;
+                expect(service.isShownDraft(args)).toBe(false);
+            });
+
+            test('a draft written after reading someone else\'s text never counts as shown', async () => {
+                const d = await service.start({ ...draftArgs, send: false }, { ...origin(), taint: ['a web page'] });
+                expect(d).toMatchObject({ success: true, sent: false });
+                expect(service.isShownDraft({ ...draftArgs, send: true, text: d.draft })).toBe(false);
+            });
+        });
+
+        describe('a number saved without its country code', () => {
+            const CAROL_ID = 'p-carol-0000-0000-0000-000000000003';
+            const SHORT = '3510000003';
+
+            test('a People phone with fewer than 11 digits that his WhatsApp cannot place is refused, never sent to as a number in another country', async () => {
+                db.db.prepare("INSERT INTO people (id, name, phone, relationship, identifiers) VALUES (?, 'Carol', ?, 'friend', '{}')").run(CAROL_ID, SHORT);
+                const out = await service.start({ contact: CAROL_ID, goal: 'tell', request: 'que llego 10 minutos tarde' }, origin());
+                expect(out.success).toBe(false);
+                expect(out.error).toMatch(/country code/);
+                const typed = await service.start({ contact: SHORT, goal: 'tell', request: 'que llego 10 minutos tarde' }, origin());
+                expect(typed.success).toBe(false);
+                expect(typed.error).toMatch(/country code/);
+                expect(sends).toHaveLength(0);
+                expect(startCards()).toHaveLength(0);
+            });
+
+            test('a short number his WhatsApp knows by name still goes out', async () => {
+                const real = axios.get.getMockImplementation();
+                axios.get.mockImplementation(async (url, opts) => {
+                    if (url.endsWith('/whatsapp/resolve') && String(opts?.params?.identifier || '').replace(/\D/g, '') === SHORT) {
+                        return { data: { phoneJid: `${SHORT}@s.whatsapp.net`, lid: null, name: 'Carol', allJids: [`${SHORT}@s.whatsapp.net`] } };
+                    }
+                    return real(url, opts);
+                });
+                const out = await service.start({ contact: SHORT, goal: 'tell', request: 'que llego 10 minutos tarde', text: 'llego 10 minutos tarde' }, origin());
+                expect(out.success).toBe(true);
+                expect(sends.map(s => s.metadata.chatId)).toEqual([`${SHORT}@s.whatsapp.net`]);
+            });
         });
     });
 });
