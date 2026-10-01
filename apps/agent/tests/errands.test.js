@@ -3220,6 +3220,59 @@ describe('errands', () => {
             expect(notes().some(n => /muy pronto/.test(n.content))).toBe(false);
         });
 
+        test('small talk after her offer does not hide the lapse of its card', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'a las 10 no, tengo 10:30', offer('10:30'));
+            clock += 2 * 60e3;
+            await contactAnswers(errand, 'perdón la demora!', { kind: 'other', slots: [], summary: 'Sorry for the delay.', tellOwner: false });
+            db.decidePendingConfirmation(pendingCards()[0].id, 'expired', { via: 'sweeper' });
+            clock += 6 * 3600e3;
+            await service.sweep();
+            expect(notes().some(n => /10:30/.test(n.content) && /sigue esperando/.test(n.content))).toBe(true);
+        });
+
+        test('her yes, then "me fijo" with another slot: the card still names her yes', async () => {
+            const errand = await startBooking();
+            clock = at('2026-09-30', '23:10');
+            await contactAnswers(errand, 'dale jueves 10 te espero', confirms());
+            clock = at('2026-09-30', '23:20');
+            await contactAnswers(errand, 'igual si te sirve tengo 11 también, me fijo si se libera 9:30', { kind: 'later', slots: [{ date: '2026-10-08', time: '11:00' }], summary: 'Also has 11, checks 9:30.', tellOwner: false });
+            expect(lastCard()).toMatch(/Estaba por aceptarle a Alice el jue 08\/10 a las 10:00/);
+        });
+
+        test('"mañana a cualquier hora" asked the evening before: no "no contestó" that same evening', async () => {
+            clock = at('2026-10-05', '18:30');
+            drafts.push({ text: 'Buenas! tenés lugar mañana?', date: '2026-10-06', time: '' });
+            await service.start({ contact: CONTACT, goal: 'book', request: 'turno mañana a cualquier hora', windowStart: '2026-10-06T00:00', windowEnd: '2026-10-07T00:00' });
+            clock = at('2026-10-05', '21:45');
+            await service.sweep();
+            expect(notes().some(n => /no contestó/.test(n.content))).toBe(false);
+        });
+
+        test('in a range, two slots with one outside: the card asks about the one inside, and says he is free', async () => {
+            drafts.push({ text: 'Buenas! hay lugar el jueves a la mañana?', date: '2026-10-08', time: '' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves de 9 a 12', windowStart: '2026-10-08T09:00', windowEnd: '2026-10-08T12:00' });
+            clock += 5 * 60e3;
+            await contactAnswers(db.getErrand(out.errandId), 'tengo 8:30 o 11', { kind: 'offer', slots: [{ date: '2026-10-08', time: '08:30' }, { date: '2026-10-08', time: '11:00' }], summary: 'Offers 8:30 or 11.', tellOwner: false });
+            expect(pendingCards()[0].args).toMatchObject({ action: 'accept', time: '11:00' });
+            expect(lastCard()).toMatch(/dentro de tu rango \(jue 08\/10 de 09:00 a 12:00\) y tenés libre/);
+        });
+
+        test('when he writes to her himself, the note says nothing was booked', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            ownerWrites('dale, nos vemos');
+            await contactAnswers(errand, 'a las 10 no, tengo 11:30', offer('11:30'));
+            expect(notes().pop().content).toMatch(/Le escribiste vos a Alice.*No agendé nada/);
+        });
+
+        test('when he named no time, the start reply tells the model which time it asked for', async () => {
+            drafts.push({ text: 'Buenas! hay lugar el jueves a las 10?', date: '2026-10-08', time: '10:00' });
+            const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves', date: '2026-10-08' });
+            expect(out.info).toMatch(/He named no time: it asked for 10:00/);
+        });
+
         test('her "venite ya" offer, too soon to accept, is told as such, not as "no entendí"', async () => {
             const errand = await startBooking();
             clock = at('2026-10-01', '09:00');

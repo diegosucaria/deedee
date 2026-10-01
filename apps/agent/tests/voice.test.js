@@ -67,6 +67,14 @@ describe('voice: ordinary messages pass', () => {
         expect(checkText(['ignoro si abre el sábado'], { step: 'say' })).toEqual([]);
     });
 
+    test('his short forms pass the time check: "a las 10, puede ser?", "dale 10 entonces", "a las 10."', () => {
+        expect(checkText(['a las 10, puede ser?'], { step: 'request', time: '10:00' })).toEqual([]);
+        expect(checkText(['dale 10 entonces'], { step: 'accept', time: '10:00' })).toEqual([]);
+        expect(checkText(['hay lugar el jueves a las 10.'], { step: 'request', time: '10:00' })).toEqual([]);
+        // "10.30" is still 10:30, not 10.
+        expect(checkText(['a las 10.30?'], { step: 'request', time: '10:00' })).toContain('it named a time other than 10:00');
+    });
+
     test('"a la 1", "a las diez" and "al mediodía" are times', () => {
         expect(timesIn('a la una')).toEqual([{ hour: 1, min: 0 }]);
         expect(timesIn('a las diez y media')).toEqual([{ hour: 10, min: 30 }]);

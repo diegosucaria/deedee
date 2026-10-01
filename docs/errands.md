@@ -50,7 +50,10 @@ It never writes the message itself.
    - the contact confirms the slot he asked for on his day, and his
      calendar is free then: Deedee answers on her own and books. A range
      (window mode) never books on its own: every offer comes as a card that
-     says whether it is inside his range. Only until he decides otherwise:
+     says whether it is inside his range (a slot inside it comes first).
+     When he named no time, the start reply says which time the errand
+     asked for. If he writes to the contact himself, the note says nothing
+     was booked. Only until he decides otherwise:
      after his "no" to a card, any step of his (even one that failed to go
      out), a step of his on hold, a pause, or her own "no tengo lugar", the errand acts on nothing
      by itself (`auto_ok`) until a slot he proposed goes out. A card or a note

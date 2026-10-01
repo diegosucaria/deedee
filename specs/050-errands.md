@@ -155,7 +155,7 @@ Errands add no new kind of card. They use the approval service as it is.
   Deedee cannot read. Deedee asks with a card for `answerErrand`. It reads
   as a question in his language, without the tool name or the safety
   lines, and says why it asks: his calendar is busy then (or could not be
-  read), the slot is outside his window or too soon, or the day or time was
+  read), the slot is inside (every range asks) or outside his window or too soon, or the day or time was
   one the draft picked. "sí" runs it, "no" sends nothing, "cancelar"
   cancels the errand, and other words go to the model, which calls
   `answerErrand` with an explicit date and time. A bare yes decides an

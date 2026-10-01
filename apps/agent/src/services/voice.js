@@ -158,7 +158,8 @@ function timesIn(text) {
     };
     for (const m of s.matchAll(/(?<![\d])(\d{1,2})[:.,](\d{2})(?!\d)/g)) add(m[1], m[2]);
     for (const m of s.matchAll(/(?<![\d:.,])(\d{1,2})\s*(?:hs?|am|pm)\b/g)) add(m[1]);
-    for (const m of s.matchAll(/\b(?:a las|las|tipo|a eso de|como a las)\s+(\d{1,2})(?![\d:.,])(?!\s*(?:hs?|am|pm)\b)(?!\s+y\s+(?:media|cuarto)\b)/g)) add(m[1]);
+    // "a las 10", "a las 10, puede ser?", "a las 10." (a comma or a period after it is not a time's minutes).
+    for (const m of s.matchAll(/\b(?:a las|las|tipo|a eso de|como a las)\s+(\d{1,2})(?!\d|[:.,]\d)(?!\s*(?:hs?|am|pm)\b)(?!\s+y\s+(?:media|cuarto)\b)/g)) add(m[1]);
     for (const m of s.matchAll(/(?<![\d])(\d{1,2})\s+y\s+media\b/g)) add(m[1], 30);
     for (const m of s.matchAll(/(?<![\d])(\d{1,2})\s+y\s+cuarto\b/g)) add(m[1], 15);
     // "a la 1", "a la una", "a las diez", "a las dos y media", "al mediodía".
@@ -166,7 +167,7 @@ function timesIn(text) {
     for (const m of s.matchAll(/\b(?:a las|las)\s+(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\b(\s+y\s+media)?/g)) add(NUMBER_WORDS[m[1]], m[2] ? 30 : 0);
     if (/\bmediod[ií]a\b/.test(s)) add(12, 0);
     // "10 voy", "9:30 está perfecto": an hour right before a word of agreement.
-    for (const m of s.matchAll(/(?<!(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|el|del)\s+)(?<![\d:.,/])(\d{1,2})\s+(?:voy|est[aá]|va|me sirve|me queda|perfecto|genial|dale|listo)\b/g)) add(m[1]);
+    for (const m of s.matchAll(/(?<!(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|el|del)\s+)(?<![\d:.,/])(\d{1,2})\s+(?:voy|est[aá]|va|me sirve|me queda|perfecto|genial|dale|listo|entonces)\b/g)) add(m[1]);
     return out;
 }
 
