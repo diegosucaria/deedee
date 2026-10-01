@@ -62,6 +62,85 @@ describe('errand support in the WhatsApp service', () => {
         expect(rows.map(r => r.content)).toEqual(['dale, jueves 10', '[Media: documentMessage]']);
     });
 
+    // Errands read with exact: true (GET /whatsapp/history?exact=1). The old
+    // last-digits guess read another person's chat as the contact's, and an
+    // errand thanked and booked on that person's "dale".
+    describe('exact mode reads only the same person', () => {
+        const ALICE = '5490000000002@s.whatsapp.net';
+        const ALICE_LID = '100000000000091@lid';
+        const CAROL = '5490000000003@s.whatsapp.net';
+        // A number he never wrote to that shares only Carol's last digits.
+        const NEW_NUMBER = '5493000000003@s.whatsapp.net';
+        const contact = (id, name, lid = null) => store.db.prepare('INSERT INTO contacts (id, name, notify, lid, data) VALUES (?, ?, ?, ?, ?)')
+            .run(id, name, null, lid, JSON.stringify({ id, name, lid }));
+
+        test('a new number never reads the chat of a contact whose last 7 digits match', () => {
+            contact(CAROL, 'Carol');
+            insert('C1', CAROL, true, 1000, 'hola');
+            insert('C2', CAROL, false, 1001, 'dale!');
+            // Other callers keep the guess.
+            expect(wa.getChatHistory(NEW_NUMBER, 10).map(m => m.id)).toEqual(['C1', 'C2']);
+            for (const jid of [NEW_NUMBER, '5493000000003']) {
+                expect(wa.getChatHistory(jid, 10, { exact: true })).toEqual([]);
+            }
+        });
+
+        // The agent takes two numbers that end in the same 10 digits for one
+        // line, so the guess swapped in a number from another country.
+        test('a number never resolves to a contact in another country that shares its last digits', () => {
+            const BOB = '13000000003@s.whatsapp.net';
+            contact(BOB, 'Bob');
+            expect(wa.resolveIdentity(NEW_NUMBER).phoneJid).toBe(BOB);
+            for (const input of [NEW_NUMBER, '5493000000003', '+54 9 300 000-0003']) {
+                expect(wa.resolveIdentity(input, { exact: true })).toEqual({ phoneJid: NEW_NUMBER, lid: null, name: null, allJids: [NEW_NUMBER] });
+            }
+        });
+
+        test('exact still reads her chat under her number and under the WhatsApp ID contacts give her, both ways', () => {
+            contact(ALICE, 'Alice', ALICE_LID);
+            insert('A1', ALICE, true, 1000, 'hola');
+            insert('A2', ALICE_LID, false, 1001, 'dale');
+            for (const jid of [ALICE, ALICE_LID, '5490000000002']) {
+                expect(wa.getChatHistory(jid, 10, { exact: true }).map(m => m.id)).toEqual(['A1', 'A2']);
+            }
+            expect(wa.resolveIdentity(ALICE_LID, { exact: true })).toEqual({ phoneJid: ALICE, lid: ALICE_LID, name: 'Alice', allJids: [ALICE, ALICE_LID] });
+        });
+
+        test('exact still follows a link saved from a message key, both ways', () => {
+            store.linkLid(ALICE, ALICE_LID);
+            insert('A1', ALICE_LID, false, 1000, 'dale');
+            expect(wa.getChatHistory(ALICE, 10, { exact: true }).map(m => m.id)).toEqual(['A1']);
+            expect(wa.resolveIdentity(ALICE_LID, { exact: true }).phoneJid).toBe(ALICE);
+        });
+
+        test('a WhatsApp ID the store never saw comes back with no lid; one it saw keeps it', () => {
+            expect(wa.resolveIdentity(ALICE_LID, { exact: true })).toEqual({ phoneJid: null, lid: null, name: null, allJids: [ALICE_LID] });
+            insert('A1', ALICE_LID, false, 1000, 'dale');
+            expect(wa.resolveIdentity(ALICE_LID, { exact: true })).toEqual({ phoneJid: null, lid: ALICE_LID, name: null, allJids: [ALICE_LID] });
+            expect(wa.getChatHistory(ALICE_LID, 10, { exact: true }).map(m => m.id)).toEqual(['A1']);
+        });
+
+        // A send to "<ID digits>@s.whatsapp.net" goes to that phone number,
+        // not to the WhatsApp ID, so the ID's chat is someone else's.
+        test('a phone address made of WhatsApp ID digits never reads that ID\'s chat', () => {
+            insert('A1', ALICE_LID, false, 1000, 'dale');
+            const asPhone = '100000000000091@s.whatsapp.net';
+            expect(wa.getChatHistory(asPhone, 10).map(m => m.id)).toEqual(['A1']);
+            expect(wa.getChatHistory(asPhone, 10, { exact: true })).toEqual([]);
+            // Bare digits may still name the ID.
+            expect(wa.resolveIdentity('100000000000091', { exact: true }).lid).toBe(ALICE_LID);
+        });
+
+        test('a group or a name never reads anyone else\'s chat', () => {
+            contact(CAROL, 'Carol');
+            insert('C1', CAROL, false, 1000, 'dale');
+            for (const jid of ['100000000000000003@g.us', 'Carol', '0000003']) {
+                expect(wa.getChatHistory(jid, 10, { exact: true })).toEqual([]);
+                expect(wa.resolveIdentity(jid, { exact: true }).lid).toBeNull();
+            }
+        });
+    });
+
     test('style numbers come from his own one-to-one texts only, and hold no text', () => {
         for (let i = 0; i < 30; i++) insert(`O${i}`, '15550100@s.whatsapp.net', true, 2000 + i * 200, i % 3 === 0 ? 'tenes turno el jueves?' : 'dale');
         insert('G1', '120000000000001@g.us', true, 9000, '¿Esto es un grupo?');

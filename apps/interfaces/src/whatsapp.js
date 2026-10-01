@@ -376,12 +376,18 @@ class SQLiteStore {
      * All other code should use this instead of ad-hoc resolution.
      *
      * @param {string} identifier - Phone JID, LID, or raw digits
-     * @param {{ guess?: boolean }} [opts] - guess: false skips the suffix match.
+     * @param {{ guess?: boolean, exact?: boolean }} [opts] - guess: false skips the suffix match.
      *   handleMessage passes it: the sender's address is exact, and a guess
      *   there could pass a stranger through the assistant allowlist.
+     *   exact: true finds only the same person: the same number or WhatsApp
+     *   ID, or the one that contacts or a saved link tie to it. It never
+     *   guesses by the last digits, and "<digits>@s.whatsapp.net" never turns
+     *   into the WhatsApp ID with those digits (bare digits still may). An
+     *   address it cannot place comes back alone, with no lid. Errands use
+     *   it: a guess there reads another person's chat as the contact's.
      * @returns {{ phoneJid: string|null, lid: string|null, name: string|null, allJids: string[] }}
      */
-    resolveIdentity(identifier, { guess = true } = {}) {
+    resolveIdentity(identifier, { guess = true, exact = false } = {}) {
         if (!identifier) return { phoneJid: null, lid: null, name: null, allJids: [] };
 
         const digits = identifier.replace(/[^0-9]/g, '');
@@ -389,10 +395,17 @@ class SQLiteStore {
         const isPhoneJid = identifier.includes('@s.whatsapp.net');
         // Typed digits and phone JIDs may be a phone number; group ids and the like never are.
         const maybePhone = isPhoneJid || !identifier.includes('@');
+        // May the digits name a WhatsApp ID? In exact mode only bare digits may:
+        // an address with a suffix means what it says.
+        const maybeIdDigits = exact ? !identifier.includes('@') : maybePhone;
+        if (exact) guess = false;
 
         try {
             const byId = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?');
             const byLid = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE lid = ?');
+            // The store has seen this WhatsApp ID: a contact row, a link or a chat.
+            const seenLid = (lid) => !!(byId.get(lid) || this._keyLink('lid', lid)
+                || this.db.prepare('SELECT 1 FROM messages WHERE remote_jid = ? LIMIT 1').get(lid));
             let contact = null;
             let knownLid = null;
 
@@ -402,7 +415,7 @@ class SQLiteStore {
             }
 
             // Strategy 2: Direct lookup by LID
-            if (!contact && (isLid || digits.length > 14)) {
+            if (!contact && (isLid || (digits.length > 14 && (!exact || maybeIdDigits)))) {
                 const lid = isLid ? identifier : `${digits}@lid`;
                 contact = byLid.get(lid);
             }
@@ -415,13 +428,11 @@ class SQLiteStore {
 
             // Strategy 3b: the digits of a WhatsApp ID we have seen, typed or turned
             // into "<digits>@s.whatsapp.net", are that ID and never a phone number.
-            if (!contact && maybePhone && digits.length >= 7) {
+            // In exact mode only typed digits are.
+            if (!contact && maybeIdDigits && digits.length >= 7) {
                 const asLid = `${digits}@lid`;
                 contact = byLid.get(asLid);
-                if (!contact && (byId.get(asLid) || this._keyLink('lid', asLid)
-                    || this.db.prepare('SELECT 1 FROM messages WHERE remote_jid = ? LIMIT 1').get(asLid))) {
-                    knownLid = asLid;
-                }
+                if (!contact && seenLid(asLid)) knownLid = asLid;
             }
 
             // Links read from message keys (see linkLid). Contacts win: a link is
@@ -439,7 +450,7 @@ class SQLiteStore {
                 if (link) contact = { ...contact, lid: link.lid };
             }
             if (!contact && (isLid || maybePhone)) {
-                const lidJid = isLid ? identifier : (knownLid || (digits.length > 14 ? `${digits}@lid` : null));
+                const lidJid = isLid ? identifier : (knownLid || (digits.length > 14 && maybeIdDigits ? `${digits}@lid` : null));
                 const phoneJid = !isLid && !knownLid && digits.length >= 7 ? (isPhoneJid ? identifier : `${digits}@s.whatsapp.net`) : null;
                 const link = fresh(lidJid && this._keyLink('lid', lidJid)) || fresh(phoneJid && this._keyLink('phone', phoneJid));
                 if (link) {
@@ -455,9 +466,13 @@ class SQLiteStore {
                 contact = this.db.prepare("SELECT id, name, notify, lid FROM contacts WHERE id LIKE ?").get(`%${suffix}@s.whatsapp.net`);
             }
 
+            if (!contact && exact && isLid && seenLid(identifier)) knownLid = identifier;
+
             if (!contact && knownLid) {
                 return { phoneJid: null, lid: knownLid, name: null, allJids: [knownLid] };
             }
+
+            if (!contact && exact) return this._unplaced(identifier, digits);
 
             if (!contact) {
                 // No contact found — return what we can infer
@@ -474,11 +489,23 @@ class SQLiteStore {
             return { phoneJid, lid, name, allJids };
         } catch (err) {
             console.error(`[WhatsApp Store] resolveIdentity failed for "${identifier}":`, err.message);
+            if (exact) return this._unplaced(identifier, digits);
             // Graceful fallback: return best-effort inferred identity
             const phoneJid = isPhoneJid ? identifier : (!isLid && digits.length <= 14 ? `${digits}@s.whatsapp.net` : null);
             const lid = isLid ? identifier : (digits.length > 14 ? `${digits}@lid` : null);
             return { phoneJid, lid, name: null, allJids: [phoneJid, lid].filter(Boolean) };
         }
+    }
+
+    /**
+     * What exact mode returns for an address nothing ties to a person: that
+     * address alone, and no WhatsApp ID. Bare digits stand for that number.
+     */
+    _unplaced(identifier, digits) {
+        const bareNumber = !identifier.includes('@') && digits.length >= 7 && digits.length <= 15;
+        const jid = bareNumber ? `${digits}@s.whatsapp.net` : identifier;
+        const phoneJid = bareNumber || identifier.includes('@s.whatsapp.net') ? jid : null;
+        return { phoneJid, lid: null, name: null, allJids: [jid] };
     }
 
     /** A link read from a message key, or null. WHATSAPP_LID_ALT=0 ignores them all. */
@@ -1488,11 +1515,12 @@ class WhatsAppService {
 
     /**
      * Resolve any identifier to canonical identity using centralized resolver.
-     * Exposed for HTTP endpoint and cross-service use.
+     * Exposed for HTTP endpoint and cross-service use. exact: true never
+     * guesses (see SQLiteStore.resolveIdentity).
      */
-    resolveIdentity(identifier) {
+    resolveIdentity(identifier, { exact = false } = {}) {
         if (!this.store) return { phoneJid: null, lid: null, name: null, allJids: [] };
-        return this.store.resolveIdentity(identifier);
+        return this.store.resolveIdentity(identifier, { exact });
     }
 
     /**
@@ -1547,14 +1575,20 @@ class WhatsAppService {
         return this.store.getRecentChats(limit);
     }
 
-    getChatHistory(jid, limit = 50) {
+    /**
+     * exact: true reads only this person's chat, never one found by a guess
+     * on the last digits; an address the resolver cannot place reads as
+     * itself alone. Errands pass it: another person's "dale" must never
+     * read as the contact's answer.
+     */
+    getChatHistory(jid, limit = 50, { exact = false } = {}) {
         if (!this.store) {
             console.warn(`${this.logPrefix} Store empty.`);
             return [];
         }
 
         // Use centralized resolver to find all JIDs for this contact
-        const identity = this.store.resolveIdentity(jid);
+        const identity = this.store.resolveIdentity(jid, { exact });
         const targetJids = identity.allJids.length > 0 ? identity.allJids : [jid.includes('@') ? jid : `${jid}@s.whatsapp.net`];
 
         console.log(`${this.logPrefix} Fetching history for ${jid}. Resolved targets: ${targetJids.join(', ')}`);

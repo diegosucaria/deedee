@@ -411,9 +411,13 @@ app.get('/whatsapp/recent', (req, res) => {
   res.json(service.getRecentChats(l));
 });
 
+// exact=1 (errands): only this person's chat, never one guessed from the
+// last digits. An address the store cannot place reads as itself alone.
+const exactParam = (v) => v === '1' || v === 'true';
+
 app.get('/whatsapp/history', (req, res) => {
   if (isWhatsAppDisabled) return res.json([]);
-  const { session, jid, limit } = req.query;
+  const { session, jid, limit, exact } = req.query;
   if (!jid) return res.status(400).json({ error: 'Missing jid' });
 
   const targetSession = session || 'user';
@@ -421,7 +425,7 @@ app.get('/whatsapp/history', (req, res) => {
   if (!service) return res.status(400).json({ error: 'Invalid session' });
 
   const l = parseInt(limit) || 200;
-  res.json(service.getChatHistory(jid, l));
+  res.json(service.getChatHistory(jid, l, { exact: exactParam(exact) }));
 });
 
 // Numbers only (how often he opens a question with ¿, message length...):
@@ -450,7 +454,7 @@ app.get('/whatsapp/resolve', (req, res) => {
   const service = whatsappSessions[targetSession];
   if (!service) return res.status(400).json({ error: 'Invalid session' });
 
-  res.json(service.resolveIdentity(identifier));
+  res.json(service.resolveIdentity(identifier, { exact: exactParam(req.query.exact) }));
 });
 
 app.get('/whatsapp/global-history', (req, res) => {
