@@ -231,4 +231,28 @@ describe('his draft, then "dale, mandalo", while a job card waits in his chat', 
         expect(checked).toHaveLength(0);
         expect(service.isShownDraft(sendArgs)).toBe(false);
     });
+
+    test('through the tools, the message check gets his typed words: his ask for the start, his next line for a step', async () => {
+        const spy = jest.spyOn(approvals.guardian, 'checkMessage');
+        // The agent stores his line before the run; Deedee's own line between his two does not count.
+        const typed = (content) => { const m = said('user', content); db.saveMessage(m); return m; };
+        typed('preguntale a Alice si tiene el libro');
+        said('assistant', '¿Algo más?');
+        const ask = typed('y si me lo guarda hasta el lunes');
+        const request = 'Ask Alice whether she has the book and can keep it';
+        const out = await run('startErrand', { contact: CONTACT, goal: 'ask', request, text: 'tenés el libro? me lo guardás?' }, ask);
+        expect(out).toMatchObject({ success: true, sent: true });
+        expect(spy.mock.calls[0][0]).toMatchObject({
+            step: 'question', summary: request,
+            ask: { original: ['preguntale a Alice si tiene el libro', 'y si me lo guarda hasta el lunes'], now: [] }
+        });
+        const step = typed('decile que llego 10 minutos tarde');
+        const res = await run('answerErrand', { id: out.errandId, action: 'say', text: 'llego 10 minutos tarde' }, step);
+        expect(res.success).toBe(true);
+        expect(spy.mock.calls[1][0]).toMatchObject({
+            step: 'say', hisWords: 'llego 10 minutos tarde',
+            ask: { original: ['preguntale a Alice si tiene el libro', 'y si me lo guarda hasta el lunes'], now: ['decile que llego 10 minutos tarde'] }
+        });
+        expect(sends.map(s => s.content)).toEqual(['tenés el libro? me lo guardás?', 'llego 10 minutos tarde']);
+    });
 });

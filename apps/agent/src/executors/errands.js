@@ -28,12 +28,14 @@ class ErrandsExecutor extends BaseExecutor {
             case 'answerErrand':
                 // taint: his words for say were written by a run that read someone else's text.
                 // runId: a card this step raises belongs to this run.
+                // originMessage: his typed words in it go to the message check.
                 return errands.answer(a, {
                     byOwner: ownerTyped,
                     approved,
                     approvalId: context?.message?.metadata?.approvalId || null,
                     taint: context?.untrustedTaint || [],
-                    runId: context?.approvalRunId || null
+                    runId: context?.approvalRunId || null,
+                    originMessage: context?.message || null
                 });
             case 'listErrands':
                 return { success: true, errands: errands.list({ all: a.all === true }) };
