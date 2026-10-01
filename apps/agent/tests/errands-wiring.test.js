@@ -147,9 +147,17 @@ describe('his draft, then "dale, mandalo", while a job card waits in his chat', 
             if (url.endsWith('/whatsapp/status')) return { data: { assistant: { me: { id: '5490000000007' } }, user: { me: { id: OWNER } } } };
             throw new Error(`unexpected GET ${url}`);
         });
+        // The guardian's message check and card reader get their own answers; every other call drafts.
+        const generateContent = jest.fn(async (req) => {
+            const usage = { promptTokenCount: 1, candidatesTokenCount: 1 };
+            const sys = typeof req?.config?.systemInstruction === 'string' ? req.config.systemInstruction : (req?.config?.systemInstruction?.parts || []).map(p => p.text || '').join('');
+            if (/^You check one WhatsApp message/.test(sys)) return { text: JSON.stringify({ ok: true, reason: 'fine' }), usageMetadata: usage };
+            if (/^You read the owner's reply to one card/.test(sys)) return { text: JSON.stringify({ answer: 'other', reason: '' }), usageMetadata: usage };
+            return { text: JSON.stringify({ text: 'llego 10 minutos tarde', date: '', time: '' }), usageMetadata: usage };
+        });
         agent = {
             db,
-            client: { models: { generateContent: jest.fn(async () => ({ text: JSON.stringify({ text: 'llego 10 minutos tarde', date: '', time: '' }), usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } })) } },
+            client: { models: { generateContent } },
             notifications: { create: jest.fn() },
             interface: {
                 broadcast: jest.fn().mockResolvedValue(true),
@@ -171,6 +179,15 @@ describe('his draft, then "dale, mandalo", while a job card waits in his chat', 
         };
         approvals = new ApprovalService(agent);
         agent.approvals = approvals;
+        // GuardianService.checkMessage comes in a change of its own: until it
+        // lands, a stand-in with its contract asks the same fake model.
+        if (typeof approvals.guardian.checkMessage !== 'function') {
+            approvals.guardian.checkMessage = async (p) => {
+                const res = await agent.client.models.generateContent({ contents: [{ role: 'user', parts: [{ text: JSON.stringify(p) }] }], config: { systemInstruction: 'You check one WhatsApp message.' } });
+                const a = JSON.parse(res.text);
+                return { ok: a.ok === true, reason: String(a.reason || ''), failed: false };
+            };
+        }
         service = new ErrandService(agent, { partGapMs: 0, bufferMs: 5 });
         agent.errands = service;
         executor = new ErrandsExecutor({ agent });
@@ -189,6 +206,7 @@ describe('his draft, then "dale, mandalo", while a job card waits in his chat', 
         const ask = said('user', 'decile a Alice que llego 10 minutos tarde, no lo mandes todavía');
         const args = { contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde', send: false };
         expect((await approvals.review({ message: ask, toolName: 'startErrand', args, historyUntrusted: false, foreignText: false })).run).toBe(true);
+        const madeAt = Date.now();
         const draft = await run('startErrand', args, ask);
         expect(draft).toMatchObject({ success: true, sent: false, draft: 'llego 10 minutos tarde' });
         expect(sends).toHaveLength(0);
@@ -197,7 +215,9 @@ describe('his draft, then "dale, mandalo", while a job card waits in his chat', 
         const yes = said('user', 'dale, mandalo');
         expect(await approvals.intercept(yes, jest.fn())).toBeNull();
         const sendArgs = { ...args, send: true, text: draft.draft };
-        expect(service.isShownDraft(sendArgs)).toBe(true);
+        // Shown before his "dale, mandalo", not after it.
+        expect(service.isShownDraft(sendArgs, { before: Date.parse(yes.timestamp) })).toBe(true);
+        expect(service.isShownDraft(sendArgs, { before: madeAt - 1 })).toBe(false);
         const review = await approvals.review({ message: yes, toolName: 'startErrand', args: sendArgs, historyUntrusted: false, foreignText: false });
         expect(review.run).toBe(true);
         const out = await run('startErrand', sendArgs, yes);
@@ -205,5 +225,9 @@ describe('his draft, then "dale, mandalo", while a job card waits in his chat', 
         expect(sends.map(s => s.content)).toEqual(['llego 10 minutos tarde']);
         expect(sends[0].metadata).toEqual({ chatId: CONTACT_JID, session: 'user', strictSession: true });
         expect(db.getPendingConfirmation(job.id).status).toBe('pending');
+        // He saw these words: no message check, and the draft is used up.
+        const checked = agent.client.models.generateContent.mock.calls.filter(c => /^You check one WhatsApp message/.test(String(c[0]?.config?.systemInstruction || '')));
+        expect(checked).toHaveLength(0);
+        expect(service.isShownDraft(sendArgs)).toBe(false);
     });
 });

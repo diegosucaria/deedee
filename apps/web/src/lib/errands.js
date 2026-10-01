@@ -236,6 +236,13 @@ export function eventLine(event, opts = {}) {
         return d.why ? `Paused: ${clip(d.why, 160)}` : 'Paused';
     case 'resumed':
         return 'You answered, so it goes on';
+    case 'checked': {
+        // The message check before words he had not seen went out.
+        const what = d.step ? ` (${clip(d.step, 20)})` : '';
+        if (d.ok === true) return `Checked the message${what}: fine`;
+        if (d.failed) return `Could not check the message${what}, so it asked you first`;
+        return `The check held the message${what}, so it asked you first${d.reason ? `: ${clip(d.reason, 160)}` : ''}`;
+    }
     case 'refused': {
         if (d.dryRun) return d.text ? `Dry run, not sent: ${quote(d.text, 200)}` : 'Dry run, not sent';
         const problems = Array.isArray(d.problems) ? d.problems.filter((p) => typeof p === 'string') : [];
