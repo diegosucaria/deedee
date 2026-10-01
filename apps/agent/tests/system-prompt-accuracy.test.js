@@ -169,3 +169,54 @@ describe('the voice prompt', () => {
         expect(text).not.toContain('SMART HOME RULES');
     });
 });
+
+describe('the errand rules and the waiting-card line against the approval gate', () => {
+    const os = require('os');
+    const { AgentDB } = require('../src/db');
+    const { DeliveryService } = require('../src/services/delivery-service');
+    const { ApprovalService } = require('../src/services/approval-service');
+    const { ERRAND_RULES, getTurnContext } = require('../src/prompts/system');
+    const OWNER_JID = '15550100@s.whatsapp.net';
+
+    test('errand rule 4 gives no bare "sí" as an answer to act on', () => {
+        const rule4 = ERRAND_RULES.split('\n').find(l => l.startsWith('4.'));
+        expect(rule4).not.toMatch(/"s[ií]"/i);
+        expect(rule4).toContain('his bare yes or no sends nothing through you');
+    });
+
+    test('a card his short word did not decide: calling its tool again does not answer it, and nothing that writes runs', async () => {
+        jest.spyOn(console, 'log').mockImplementation(() => { });
+        jest.spyOn(console, 'warn').mockImplementation(() => { });
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-prompt-card-'));
+        const db = new AgentDB(dir);
+        try {
+            const agent = {
+                db, settings: { owner_phone: '+15550100' }, notifications: { create: jest.fn() },
+                interface: { send: jest.fn().mockResolvedValue(true), broadcast: jest.fn().mockResolvedValue(true) },
+                _executeTool: jest.fn().mockResolvedValue({ success: true }),
+                _getOwnerWaIds: jest.fn().mockResolvedValue(new Set([OWNER_JID]))
+            };
+            agent.delivery = new DeliveryService(agent);
+            const svc = new ApprovalService(agent);
+            const call = { toolName: 'answerErrand', args: { id: 7, action: 'accept', date: '2026-10-08', time: '10:30' } };
+            const card = await svc.request({ message: { role: 'user', content: 'ERRAND 7', source: 'errand', metadata: { chatId: 'errand_7', errandId: 7 } }, ...call, reason: 'r' });
+            // Deedee asks him something else after the card; his "sí" may answer that.
+            db.saveMessage({ id: 'q-after', role: 'assistant', content: '¿Apago las luces?', source: 'whatsapp:assistant', chatId: OWNER_JID, timestamp: new Date(Date.now() + 1000).toISOString(), metadata: { chatId: OWNER_JID } });
+            const yes = { id: 'yes-1', role: 'user', content: 'sí', source: 'whatsapp:assistant', timestamp: new Date().toISOString(), metadata: { chatId: OWNER_JID } };
+            expect(await svc.intercept(yes, jest.fn())).toBeNull();
+            const line = getTurnContext({ dateString: 'T', waitingCard: svc.undecidedCard(yes) });
+            expect(line).toContain(`A CARD WAITS IN THIS CHAT: ${card.id} (answerErrand)`);
+            expect(line).toContain('calling its tool again does not answer it, and nothing that writes to anyone runs on his short word');
+            const review = (c) => svc.review({ message: yes, ...c, historyUntrusted: false, foreignText: false });
+            const again = await review(call);
+            expect(again.run).toBe(false);
+            expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+            expect((await review({ toolName: 'sendMessage', args: { to: '+15550101', content: 'dale', session: 'user' } })).run).toBe(false);
+            expect(agent._executeTool).not.toHaveBeenCalled();
+        } finally {
+            db.close();
+            fs.rmSync(dir, { recursive: true, force: true });
+            jest.restoreAllMocks();
+        }
+    });
+});

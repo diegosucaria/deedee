@@ -260,7 +260,7 @@ const ERRAND_RULES = `ERRANDS (writing to someone for the owner):
 1. When he asks you to write to someone for him (book a slot, ask something, pass on a message), call 'startErrand'. Never write that message yourself: the errand writes it in his voice from his chat with that person, waits for the answer and books an agreed slot. Use 'sendMessage' with session 'user' only for exact words he dictates.
 2. Find the person first: 'searchContacts' for a name, 'searchPeople' for a role or a place ("la peluquería", "el dentista"). Pass the exact number or People id. If more than one person fits, ask him which one.
 3. If he says not to send yet, call 'startErrand' with send=false and show him the draft and the day and time it asks for. If he then says to send it, call it again with the same arguments, send=true, and text set to that draft.
-4. When he answers about an open errand ("sí", "la de las 9:30", "decile que mejor el viernes", "cancelalo"), call 'answerErrand' with that errand's id. Give accept and propose an explicit date and time. If several errands wait for him and his answer does not say which, ask which one. If the open errands show a card for exactly that step, do not call it again: tell him to reply /confirm with the card's id.
+4. When he answers about an open errand ("la de las 9:30", "decile que mejor el viernes", "cancelalo"), call 'answerErrand' with that errand's id. Give accept and propose an explicit date and time. If several errands wait for him and his answer does not say which, ask which one. If the open errands show a card for exactly that step, do not call it again: tell him to reply /confirm with the card's id. While a card waits in his chat, his bare yes or no sends nothing through you: it may be his answer to the card.
 5. An errand books by itself only when the contact confirms the exact day and time he asked for and his calendar is free; any other slot, and every slot in a range, comes to him as a card. There is no pause: to stop an errand, call 'answerErrand' with action cancel.`;
 
 function getTurnContext({ dateString, activeGoals, skillsContext, vaultContext, location, browserSecretNames, openErrands, errandRules = false, waitingCard = null } = {}) {
@@ -270,8 +270,8 @@ function getTurnContext({ dateString, activeGoals, skillsContext, vaultContext, 
         lines.push(`ACTIVE GOALS (your in-flight multi-session work):\n${activeGoals ? activeGoals : 'None.'}`);
         if (errandRules) lines.push(ERRAND_RULES);
         if (waitingCard && waitingCard.id) {
-                const how = `If his message answers that card, tell him to reply /confirm ${waitingCard.id} or /cancel ${waitingCard.id}. You cannot approve it yourself, and calling its tool again does not answer it.`;
-                lines.push(`A CARD WAITS IN THIS CHAT: ${waitingCard.id} (${waitingCard.toolName}). His short yes or no did not decide it, because other messages came after it. ${how} If it answers your own last question, go on as usual.`);
+                const how = `If his message answers that card, tell him to reply /confirm ${waitingCard.id} or /cancel ${waitingCard.id}. You cannot approve it yourself: calling its tool again does not answer it, and nothing that writes to anyone runs on his short word.`;
+                lines.push(`A CARD WAITS IN THIS CHAT: ${waitingCard.id} (${waitingCard.toolName}). His short yes or no did not decide it, because other messages came after it or it had not reached him yet. ${how} If it answers your own last question, go on as usual.`);
         }
         if (Array.isArray(openErrands) && openErrands.length > 0) {
                 lines.push(`OPEN ERRANDS (people you write to as the owner; his answers about them go to 'answerErrand'):\n${openErrands.map(l => `- ${l}`).join('\n')}`);

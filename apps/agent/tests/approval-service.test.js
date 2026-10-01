@@ -577,4 +577,150 @@ describe('ApprovalService', () => {
             expect(bare.loadOnBoot()).toBe(0);
         });
     });
+
+    describe('a card he never got, or got late', () => {
+        const EMAIL = { toolName: 'sendEmail', args: { to: 'user@example.com', subject: 'Hi' } };
+        const ownerSays = (content) => msg('whatsapp:assistant', OWNER_JID, content);
+        const deferredCard = () => svc.request({ message: schedulerMsg(), ...EMAIL, reason: 'r' });
+        const cardsSent = (id) => sentTexts(agent).filter(m => m.metadata?.approval?.id === id && m.metadata.approval.status === 'pending');
+
+        beforeEach(() => {
+            // Queued rows are due at once, so one tick of the ledger sends them.
+            agent.delivery = new DeliveryService(agent, { backoffMs: [0, 0, 0, 0] });
+        });
+
+        test('a bare yes does not decide a card still in the queue: it never reached him', async () => {
+            agent.interface.send.mockResolvedValue(false);
+            const req = await deferredCard();
+            agent.interface.send.mockResolvedValue(true);
+            const yes = ownerSays('sí');
+            expect(await svc.intercept(yes, jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+            // The model hears that the card waits, so it can tell him how to answer it.
+            expect(svc.undecidedCard(yes)).toEqual({ id: req.id, toolName: 'sendEmail' });
+            // The ledger delivers it; his next yes comes after it and decides it.
+            agent.interface.send.mockClear();
+            await agent.delivery.tick();
+            expect(cardsSent(req.id)).toHaveLength(1);
+            const res = await svc.intercept(ownerSays('sí'), jest.fn());
+            expect(res.handled).toBe(true);
+            expect(db.getPendingConfirmation(req.id).status).toBe('approved');
+        });
+
+        test('a yes he typed before the card went out does not decide it', async () => {
+            const typed = { ...ownerSays('dale'), timestamp: new Date(Date.now() - 5000).toISOString() };
+            const req = await deferredCard();
+            expect(await svc.intercept(typed, jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+            expect(agent._executeTool).not.toHaveBeenCalled();
+        });
+
+        test('a card that reached him only on Telegram is not decided by a bare yes in his WhatsApp chat', async () => {
+            agent.interface.send.mockImplementation(async (m) => m.source === 'telegram');
+            const req = await deferredCard();
+            expect(sentTexts(agent).filter(m => m.source === 'telegram')).toHaveLength(1);
+            agent.interface.send.mockResolvedValue(true);
+            expect(await svc.intercept(ownerSays('sí'), jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+        });
+
+        test('a withdrawn card still in the queue never goes out late', async () => {
+            agent.interface.send.mockResolvedValue(false);
+            const req = await deferredCard();
+            expect(svc.withdraw(req.id, 'it moved on', { quiet: true })).toBe(true);
+            agent.interface.send.mockClear();
+            agent.interface.send.mockResolvedValue(true);
+            await agent.delivery.tick();
+            expect(cardsSent(req.id)).toEqual([]);
+            expect(db.listRecentOutbox({ limit: 5 }).find(r => r.origin === `approval:${req.id}`)).toMatchObject({ status: 'dead' });
+            // Nothing failed, so no "undelivered" alert.
+            expect(agent.notifications.create).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'delivery_dead' }));
+        });
+
+        test('a card decided on the web, replaced or expired while it waits in the queue never goes out late', async () => {
+            agent.interface.send.mockResolvedValue(false);
+            const decided = await deferredCard();
+            const replaced = await svc.request({ message: schedulerMsg(), toolName: 'commitAndPush', args: { message: 'm' }, reason: 'r' });
+            const lapsed = await svc.request({ message: schedulerMsg(), toolName: 'deleteVault', args: { id: 'v' }, reason: 'r' });
+            agent.interface.send.mockClear();
+            agent.interface.send.mockResolvedValue(true);
+            await svc.decide(decided.id, 'approved', { via: 'web' });
+            svc._supersede([db.getPendingConfirmation(replaced.id)], 'a newer card asks for the same action');
+            db.db.prepare('UPDATE pending_confirmations SET expires_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), lapsed.id);
+            svc.sweep();
+            await agent.delivery.tick();
+            for (const id of [decided.id, replaced.id, lapsed.id]) expect(cardsSent(id)).toEqual([]);
+            // A line about a settled card still goes out: the result of the one he approved.
+            expect(sentTexts(agent).some(m => m.metadata?.approval?.id === decided.id && m.metadata.approval.status === 'approved')).toBe(true);
+        });
+
+        test('a message the ledger delivers after the card, even one made before it, means his bare yes is not for the card', async () => {
+            // Deedee's question to him failed to send and waits in the queue.
+            const question = { id: 'q-late', role: 'assistant', content: '¿Querés que te lo recuerde mañana?', source: 'whatsapp:assistant', chatId: OWNER_JID, timestamp: new Date(Date.now() - 2000).toISOString(), metadata: { chatId: OWNER_JID } };
+            db.saveMessage(question);
+            await agent.delivery.enqueueFailed('reply', 'whatsapp', OWNER_JID, question, { id: question.id });
+            // The card goes out at once; the queued question reaches him after it.
+            const req = await deferredCard();
+            await agent.delivery.tick();
+            expect(sentTexts(agent).map(m => m.content).pop()).toBe(question.content);
+            const yes = ownerSays('sí');
+            expect(await svc.intercept(yes, jest.fn())).toBeNull();
+            expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+            expect(svc.undecidedCard(yes)).toEqual({ id: req.id, toolName: 'sendEmail' });
+        });
+    });
+
+    describe('a bare yes or no that no card took', () => {
+        const BOOK = { toolName: 'book_appointment', args: { slot_ref: 'ref-1', confirm: true }, serverName: 'allende' };
+        const ownerSays = (content) => msg('whatsapp:assistant', OWNER_JID, content);
+        const review = (message, call) => svc.review({ message, ...call, run: ApprovalService.newRun('r1'), historyUntrusted: false, foreignText: false });
+
+        // A job's card waits in his chat; then Deedee asks him something else.
+        async function cardThenQuestion(call = BOOK) {
+            const req = await svc.request({ message: schedulerMsg(), ...call, reason: 'r' });
+            db.saveMessage({ id: 'q-after', role: 'assistant', content: '¿Apago las luces?', source: 'whatsapp:assistant', chatId: OWNER_JID, timestamp: new Date(Date.now() + 1000).toISOString(), metadata: { chatId: OWNER_JID } });
+            const yes = ownerSays('dale');
+            expect(await svc.intercept(yes, jest.fn())).toBeNull();
+            return { req, yes };
+        }
+
+        test('never runs the card\'s own action: calling its tool again does not answer it', async () => {
+            const { req, yes } = await cardThenQuestion();
+            const res = await review(yes, BOOK);
+            expect(res).toMatchObject({ run: false, status: 'paused', approvalId: req.id });
+            expect(res.result.info).toContain(`/confirm ${req.id}`);
+            expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+        });
+
+        test('never writes to anyone', async () => {
+            const { req, yes } = await cardThenQuestion();
+            const send = await review(yes, { toolName: 'sendMessage', args: { to: '+15550100', content: 'dale, 10:30 voy', session: 'user' } });
+            expect(send).toMatchObject({ run: false, approvalId: req.id });
+            expect(send.result.info).toMatch(/Nothing ran/);
+            const email = await review(yes, { toolName: 'sendEmail', args: { to: 'user@example.com', subject: 'x' } });
+            expect(email.run).toBe(false);
+            // A call that writes to no one is not his answer to the card either way.
+            expect((await review(yes, { toolName: 'getWeather', args: {} })).run).toBe(true);
+        });
+
+        test('his own words still write; with no card waiting, his bare yes answers Deedee as before', async () => {
+            await cardThenQuestion();
+            const call = { toolName: 'sendMessage', args: { to: '+15550100', content: 'llego 10 minutos tarde', session: 'user' } };
+            expect((await review(ownerSays('mandale a Alice que llego 10 minutos tarde'), call)).run).toBe(true);
+            for (const r of db.listPendingConfirmations()) svc.withdraw(r.id, 'test', { quiet: true });
+            expect((await review(ownerSays('dale'), call)).run).toBe(true);
+        });
+
+        test('his word on an errand step whose card already waits returns the card\'s id and sends nothing', async () => {
+            const args = { id: 7, action: 'accept', date: '2026-10-08', time: '10:30' };
+            const card = await svc.request({ message: { role: 'user', content: 'ERRAND 7', source: 'errand', metadata: { chatId: 'errand_7', errandId: 7 } }, toolName: 'answerErrand', args, reason: 'r' });
+            // Not a bare word: his own sentence about that very step.
+            const res = await review(ownerSays('aceptale las 10:30 a Alice'), { toolName: 'answerErrand', args: { ...args, time: '10:30' } });
+            expect(res).toMatchObject({ run: false, status: 'paused', approvalId: card.id });
+            expect(res.result.info).toContain(`/confirm ${card.id}`);
+            expect(agent._executeTool).not.toHaveBeenCalled();
+            // Another step of that errand is his new word, and runs.
+            expect((await review(ownerSays('mejor proponele las 11'), { toolName: 'answerErrand', args: { id: 7, action: 'propose', date: '2026-10-08', time: '11:00' } })).run).toBe(true);
+        });
+    });
 });
