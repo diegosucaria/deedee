@@ -1557,6 +1557,8 @@ class Agent {
             console.warn(`${logPrefix} Errand claim failed: ${e.message}`);
           }
           if (claimed) {
+            // Autopilot may hold a reply to her from before the errand started: drop it.
+            try { this.impersonationService?.dropBuffer?.(chatId); } catch (e) { console.warn(`${logPrefix} Autopilot buffer drop failed: ${e.message}`); }
             console.log(`${logPrefix} Message from ${contactString} goes to its open errand.`);
             return executionSummary;
           }
