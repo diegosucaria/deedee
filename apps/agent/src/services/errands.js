@@ -133,6 +133,12 @@ function digitsOf(value) {
 }
 
 /** A draft's words for comparing: parts trimmed, spaces collapsed, one " [SPLIT] " between parts. */
+/** The day, time and window a startErrand names: a shown draft counts only for the same. */
+function slotKey(args) {
+    const a = args || {};
+    return [a.date, a.time, a.windowStart, a.windowEnd].map(v => String(v ?? '').trim()).join('|');
+}
+
 function draftKey(text) {
     return String(text ?? '').split(/\s*\[\s*SPLIT\s*\]\s*/i).map(p => p.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' [SPLIT] ');
 }
@@ -1436,7 +1442,7 @@ class ErrandService {
     _rememberDraft(ids, args, goal, text) {
         const now = this.clock();
         this._drafts = this._drafts.filter(d => now - d.at < SHOWN_DRAFT_MS).slice(-(SHOWN_DRAFTS_MAX - 1));
-        this._drafts.push({ ids: new Set(ids), contact: String(args.contact || '').trim(), goal, text: draftKey(text), at: now });
+        this._drafts.push({ ids: new Set(ids), contact: String(args.contact || '').trim(), goal, text: draftKey(text), slot: slotKey(args), at: now });
     }
 
     /** The digits a startErrand contact names: the number or ID, or a People row's phone and WhatsApp ID. */
@@ -1471,21 +1477,34 @@ class ErrandService {
      * @returns {boolean}
      */
     isShownDraft(args, { before } = {}) {
-        if (!this.enabled()) return false;
+        return this.shownDraftAt(args, { before }) !== null;
+    }
+
+    /**
+     * When start() showed him that draft (ms), or null. The same rules as
+     * isShownDraft, and the same day, time or window: a draft he saw for
+     * Thursday never sends for Friday. The gate reads the time, so a card
+     * that reached him after the draft keeps his bare "dale".
+     */
+    shownDraftAt(args, { before } = {}) {
+        if (!this.enabled()) return null;
         const a = args && typeof args === 'object' ? args : {};
-        if (typeof a.text !== 'string' || !a.text.trim()) return false;
+        if (typeof a.text !== 'string' || !a.text.trim()) return null;
         const text = draftKey(a.text);
         const raw = String(a.contact || '').trim();
-        if (!raw) return false;
+        if (!raw) return null;
         const now = this.clock();
         const given = before !== undefined && before !== null;
         const by = given ? Number(before) : now;
-        if (!Number.isFinite(by)) return false;
+        if (!Number.isFinite(by)) return null;
         const digits = this._contactDigits(raw);
         const goal = String(a.goal || '').toLowerCase();
-        return this._drafts.some(d => !d.used && now - d.at < SHOWN_DRAFT_MS && (given ? d.at < by : d.at <= by) && d.text === text
+        const slot = slotKey(a);
+        const hit = this._drafts.filter(d => !d.used && now - d.at < SHOWN_DRAFT_MS && (given ? d.at < by : d.at <= by) && d.text === text
+            && d.slot === slot
             && (!goal || !d.goal || d.goal === goal)
-            && (d.contact === raw || [...digits].some(x => d.ids.has(x))));
+            && (d.contact === raw || [...digits].some(x => d.ids.has(x)))).pop();
+        return hit ? hit.at : null;
     }
 
     /** These words go out to this person now: a draft of them no longer counts as shown. */
@@ -2174,9 +2193,9 @@ class ErrandService {
             }
             // Small talk. A step he approved that waited for these words to be read goes ahead now.
             if (waiting?.owner) {
-                const { owner, ...act } = waiting;
+                const { owner, wordsTainted, ...act } = waiting;
                 this.db.updateErrand(id, { next_action: null, next_check_at: null });
-                return this._perform(this.db.getErrand(id), act, { auto: false, notify: true });
+                return this._perform(this.db.getErrand(id), act, { auto: false, notify: true, wordsTainted: !!wordsTainted });
             }
             return null;
         }
@@ -3087,7 +3106,7 @@ Answer in JSON.`;
             this._event(errand.id, 'resumed', { by: 'owner' });
         } else if (this._hasUnread(errand)) {
             // The contact wrote again since this step was decided: read that first.
-            return this._deferForNews(errand, args, { auto, step });
+            return this._deferForNews(errand, args, { auto, step, wordsTainted });
         }
         if (args.action === 'accept' && zonedMs(args.date, normTime(args.time), tz) < this.clock() + 5 * 60e3) {
             const s = fmtSlot({ date: args.date, time: normTime(args.time) }, tz, lang);
@@ -3187,7 +3206,7 @@ Answer in JSON.`;
         // Cancelled, or the contact wrote, while the draft was written and checked: stop here.
         const current = this.db.getErrand(errand.id);
         if (!current || current.closed_at) return { success: false, error: `Errand #${errand.id} closed meanwhile; nothing was sent.`, ownerLine: t.alreadyClosed(errand.id) };
-        if (this._hasUnread(current)) return this._deferForNews(current, args, { auto, step });
+        if (this._hasUnread(current)) return this._deferForNews(current, args, { auto, step, wordsTainted });
         // He stepped in while its own step was drafted (a card of his): he decides.
         if (auto && (!current.auto_ok || this._hisPendingCard(current))) {
             if (slot) return this._askAccept(current, [slot]);
@@ -3276,7 +3295,7 @@ Answer in JSON.`;
      * ahead if they were small talk; the errand's own step runs again at the
      * next sweep unless the new words changed things.
      */
-    _deferForNews(errand, args, { auto = false, step = null } = {}) {
+    _deferForNews(errand, args, { auto = false, step = null, wordsTainted = false } = {}) {
         const name = safeName(errand.contact_name);
         const t = this._t(errand);
         const due = this.clock() + (auto ? LIMITS.minGapMs : 0);
@@ -3289,7 +3308,8 @@ Answer in JSON.`;
         const heldYes = keeps ? found : null;
         this.db.updateErrand(errand.id, {
             ...(found && !keeps ? { held_yes: null } : {}),
-            next_action: auto ? { ...args, step } : { ...args, owner: true, ...(heldYes ? { heldYes } : {}) },
+            // Words a tainted run wrote stay marked when the step runs later.
+            next_action: auto ? { ...args, step } : { ...args, owner: true, ...(heldYes ? { heldYes } : {}), ...(wordsTainted ? { wordsTainted: true } : {}) },
             next_check_at: new Date(due).toISOString(),
             // His own step waits: nothing is accepted over it.
             ...(auto ? {} : { auto_ok: 0 })
@@ -3403,8 +3423,8 @@ Answer in JSON.`;
             const action = errand.next_action;
             if (ownerStep) {
                 this.db.updateErrand(errand.id, { next_action: null, next_check_at: null });
-                const { owner, ...act } = action;
-                return this._perform(this.db.getErrand(errand.id), act, { auto: false, notify: true });
+                const { owner, wordsTainted, ...act } = action;
+                return this._perform(this.db.getErrand(errand.id), act, { auto: false, notify: true, wordsTainted: !!wordsTainted });
             }
             let history = [];
             try { history = await this._history(errand.contact_jid); } catch { return; }

@@ -565,6 +565,9 @@ class GuardianService {
             if (!draft.trim()) return refuse('El mensaje está vacío.', 'The message is empty.');
             if (draft.length > DRAFT_CHARS) return refuse('El mensaje es demasiado largo para revisarlo.', 'The message is too long to check.');
             if (hasHiddenChars(draft)) return refuse('El mensaje tiene caracteres invisibles.', 'The message holds hidden characters.');
+            // A slot time we cannot read would loosen the check to the day alone.
+            const rawTime = p.slot && typeof p.slot === 'object' ? p.slot.time : null;
+            if (rawTime !== null && rawTime !== undefined && rawTime !== '' && !/^\d{2}:\d{2}$/.test(String(rawTime))) return fail('a slot time it cannot read');
             const built = buildMessageCheckInput({ ...pickMessageParams(p), step, lang, draft });
             if (SLOT_STEPS.has(step) && !built.structured.slot) return fail('no slot to check against');
             if (step === 'request' && !built.structured.slot && !built.structured.window) return fail('no slot or window to check against');

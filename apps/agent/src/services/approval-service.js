@@ -204,11 +204,18 @@ function normalizeWord(text) {
 const APPROVE_CORE = new Set(['yes', 'si', 'sí', 'ok', 'okay', 'dale', 'approve', 'approved', 'confirm', 'confirmed', 'confirmo',
     'confirmado', 'proceed', 'adelante', 'hacelo', 'hazlo', 'yep', 'yeah', 'sure', 'claro', '👍', '👌', '✅']);
 // "y" ("and") only joins words: "dale y agendalo" is yes, "y decile" is not.
-const APPROVE_FILLER = new Set(['y', 'please', 'pls', 'por', 'favor', 'porfa', 'go', 'ahead', 'do', 'it', 'just', 'nomas', 'nomás',
-    'reservalo', 'resérvalo', 'reservala', 'resérvala', 'reserva', 'reservá', 'bookealo', 'agendalo', 'agéndalo',
+// Words that name an action ("mandalo", "agendalo") are not here: "dale,
+// mandalo" may be about a draft, not the card. The guardian reads those
+// against what the card does (_readReply).
+const APPROVE_FILLER = new Set(['y', 'please', 'pls', 'por', 'favor', 'porfa', 'go', 'ahead', 'do', 'it', 'just', 'nomas', 'nomás']);
+// Still a short yes for the guard that keeps a word no card took from
+// running anything (_cardHisWordMissed): "dale, mandalo" is a bare yes there.
+const ACTION_FILLER = new Set(['reservalo', 'resérvalo', 'reservala', 'resérvala', 'reserva', 'reservá', 'bookealo', 'agendalo', 'agéndalo',
     'mandalo', 'mándalo', 'envialo', 'envíalo', 'borralo', 'bórralo', 'pagalo', 'págalo',
     'mandale', 'mandáselo', 'mandaselo', 'decile', 'decíselo', 'deciselo', 'escribile']);
-const DENY_CORE = new Set(['no', 'n', 'nope', 'not', 'deny', 'denied', 'reject', 'rechazar', 'rechazo', 'cancel', 'cancelar', '👎', '❌']);
+// "cancelalo" and "olvidalo" on an errand's card cancel the whole errand (decide()).
+const DENY_CORE = new Set(['no', 'n', 'nope', 'not', 'deny', 'denied', 'reject', 'rechazar', 'rechazo', 'cancel', 'cancelar', '👎', '❌',
+    'cancelalo', 'cancélalo', 'cancelala', 'cancélala', 'olvidalo', 'olvídalo', 'olvidate', 'olvídate']);
 const DENY_FILLER = new Set(['please', 'por', 'favor', 'gracias', 'thanks', 'dejalo', 'déjalo', 'mejor', 'todavia', 'todavía',
     'not', 'yet', 'aun', 'aún', 'ahora']);
 // On an errand's card, a "no" with one of these cancels the whole errand.
@@ -217,7 +224,7 @@ const CANCEL_ERRAND_RE = /(?<![\p{L}])(?:cancel\p{L}*|canc[eé]l\p{L}*|olvid\p{L
 const CANCEL_VERBS = new Set(['cancel', 'cancelar', 'cancelalo', 'cancélalo', 'cancelala', 'cancélala', 'cancelá', 'cancela']);
 const MAX_DECISION_WORDS = 5;
 // Every word the lists above know.
-const KNOWN_WORDS = new Set([...APPROVE_CORE, ...APPROVE_FILLER, ...DENY_CORE, ...DENY_FILLER, ...CANCEL_VERBS]);
+const KNOWN_WORDS = new Set([...APPROVE_CORE, ...APPROVE_FILLER, ...ACTION_FILLER, ...DENY_CORE, ...DENY_FILLER, ...CANCEL_VERBS]);
 // Skin tones, emoji style marks and invisible marks: "👍🏻" is "👍".
 const EMOJI_MARK_RE = /[\u{1F3FB}-\u{1F3FF}\uFE0E\uFE0F]|\p{Cf}/gu;
 // An emoji typed against a word stands apart: "dale👍" is "dale 👍".
@@ -242,7 +249,7 @@ function listWord(word) {
  * @param {{ toolName?: string }} [opts] - the waiting card's tool: on a cancel
  *   card, a bare "cancel" could mean either answer, so it is 'ambiguous'.
  */
-function decisionWord(text, { toolName = '' } = {}) {
+function decisionWord(text, { toolName = '', actionWords = false } = {}) {
     const raw = normalizeWord(text);
     if (!raw) return null;
     const cancelCard = /cancel/i.test(String(toolName || ''));
@@ -254,7 +261,7 @@ function decisionWord(text, { toolName = '' } = {}) {
     }
     if (APPROVE_WORDS.has(word)) return 'approved';
     if (DENY_WORDS.has(word) && !(cancelCard && CANCEL_VERBS.has(word))) return 'denied';
-    const approveOk = (w) => APPROVE_CORE.has(w) || APPROVE_FILLER.has(w) || (cancelCard && CANCEL_VERBS.has(w));
+    const approveOk = (w) => APPROVE_CORE.has(w) || APPROVE_FILLER.has(w) || (actionWords && ACTION_FILLER.has(w)) || (cancelCard && CANCEL_VERBS.has(w));
     if (words.some(w => APPROVE_CORE.has(w)) && words.every(approveOk)) return 'approved';
     const denyOk = (w) => (DENY_CORE.has(w) && !(cancelCard && CANCEL_VERBS.has(w))) || DENY_FILLER.has(w);
     if (words.some(w => DENY_CORE.has(w) && !(cancelCard && CANCEL_VERBS.has(w))) && words.every(denyOk)) return 'denied';
@@ -815,7 +822,7 @@ class ApprovalService {
         if (kind !== 'chat' || continuationOf(message)) return null;
         const text = typeof message?.content === 'string' ? message.content.trim() : '';
         if (!text || text.startsWith('/') || text.length > 80) return null;
-        if (!decisionWord(text)) return null;
+        if (!decisionWord(text, { actionWords: true })) return null;
         let waiting = [];
         try { waiting = await this.pendingHere(message); } catch { waiting = []; }
         if (waiting.length === 0) return null;
@@ -833,17 +840,24 @@ class ApprovalService {
      * run came after his word, so it does not count. His client's clock
      * cannot put his message later than now.
      */
-    _shownDraft(toolName, args, message) {
+    _shownDraft(toolName, args, message, waiting = []) {
         if (toolName !== 'startErrand' || typeof args?.text !== 'string') return false;
         const errands = this.agent?.errands;
-        if (typeof errands?.isShownDraft !== 'function') return false;
+        if (typeof errands?.shownDraftAt !== 'function') return false;
         const now = Date.now();
         const came = Date.parse(message?.timestamp);
+        let at = null;
         try {
-            return errands.isShownDraft(args, { before: Number.isFinite(came) ? Math.min(came, now) : now }) === true;
+            at = errands.shownDraftAt(args, { before: Number.isFinite(came) ? Math.min(came, now) : now });
         } catch {
             return false;
         }
+        if (!Number.isFinite(at)) return false;
+        // A card that reached him after the draft is the newer question: his bare word may be for it.
+        return !(waiting || []).some(r => {
+            const sent = this._cardSentAt(r) ?? Date.parse(r.created_at);
+            return !Number.isFinite(sent) || sent >= at;
+        });
     }
 
     /**
@@ -1040,7 +1054,9 @@ class ApprovalService {
         // the card's id does that. One exception: an errand draft he saw
         // before this message. His "dale, mandalo" is about that draft.
         const missed = await this._cardHisWordMissed(message, kind, toolName, args, guard.rule);
-        if (missed && !this._shownDraft(toolName, args, message)) {
+        let waitingHere = [];
+        if (missed) { try { waitingHere = await this.pendingHere(message); } catch { waitingHere = [missed.card]; } }
+        if (missed && !this._shownDraft(toolName, args, message, waitingHere)) {
             const row = this._record({
                 ...base, outcome: 'escalated_duplicate', decidedBy: 'owner', approvalId: missed.card.id,
                 reason: 'His short yes or no did not decide the card that waits in his chat.'
@@ -1953,7 +1969,7 @@ class ApprovalService {
         const chatId = String(message.metadata.chatId);
         let read = null;
         try {
-            read = await this.guardian.readReply({ ...this._cardAsShown(row), reply: text, chatId });
+            read = await this.guardian.readReply({ ...this._cardAction(row), reply: text, chatId });
         } catch (e) {
             read = null;
         }
@@ -1965,6 +1981,33 @@ class ApprovalService {
         if (still.length !== 1 || still[0].id !== row.id) return null;
         try { this.db.saveMessage({ ...message, metadata: { ...(message.metadata || {}), answeredCard: row.id } }); } catch { /* history is best effort */ }
         return this.decide(row.id, answer === 'yes' ? 'approved' : 'denied', { via: READ_VIA, message, sendCallback });
+    }
+
+    /**
+     * What the card does, written by code from its tool and plain fields
+     * (dates, times, the action), never its text: a card can quote a draft
+     * or someone else's words, which must not steer how his reply is read.
+     */
+    _cardAction(row) {
+        const a = row.args || {};
+        const lang = row.origin_meta?.card?.lang === 'es' ? 'es' : 'en';
+        const slot = [a.date, a.time].filter(v => /^[\d:-]{4,10}$/.test(String(v || ''))).join(' ');
+        const plain = (v) => String(v || '').replace(/[^a-z_]/gi, '').slice(0, 40);
+        let question;
+        if (row.tool_name === 'answerErrand') {
+            const step = plain(a.action);
+            question = step === 'accept' ? `Accept the slot ${slot} the contact offered, reply to them, and book it.`
+                : step === 'propose' ? `Propose the slot ${slot} to the contact.`
+                    : step === 'decline' ? 'Tell the contact no.'
+                        : step === 'say' ? 'Send the contact the message shown on the card.'
+                            : step === 'cancel' ? 'Cancel this errand.'
+                                : `Do the errand step "${step}".`;
+        } else if (row.tool_name === 'startErrand') {
+            question = 'Send the person on the card the first message shown on it.';
+        } else {
+            question = `Run the action "${plain(row.tool_name)}" shown on the card.`;
+        }
+        return { question, detail: null, lang };
     }
 
     /** The card as he read it: its question and detail, never its reason (it may quote the guardian). */
@@ -2245,7 +2288,9 @@ class ApprovalService {
             untrusted = !!classifyToolResult(row.tool_name, { serverName, args: row.args, result }).untrusted;
         } catch { untrusted = true; }
         const text = approvedResultText(row.tool_name, result, { untrusted });
-        const reply = await this._deliverTo(target, text, row);
+        // The step raised a new card (the message check held its words): this
+        // line is about that card, so his next "sí" still reaches it.
+        const reply = await this._deliverTo(target, text, row, { aboutId: result?.held && result?.cardId ? result.cardId : null });
         return { result, reply };
     }
 
@@ -2259,13 +2304,13 @@ class ApprovalService {
         return { channel: row.reply_channel || 'whatsapp', chatId: row.reply_chat_id };
     }
 
-    async _deliverTo(target, text, row) {
+    async _deliverTo(target, text, row, { aboutId = null } = {}) {
         const outgoing = createAssistantMessage(text);
         outgoing.source = target.channel;
         // approvalLine: a line about a settled card, which asks him nothing
         // (see _stillAsking). A plain card's lines (an errand's) may ask him
         // something ("decime otro horario"), so they carry no mark.
-        outgoing.metadata = { chatId: target.chatId, approval: { id: row.id, status: row.status, toolName: row.tool_name }, ...(row.origin_meta?.card ? {} : { approvalLine: true }) };
+        outgoing.metadata = { chatId: target.chatId, approval: { id: row.id, status: row.status, toolName: row.tool_name }, ...(row.origin_meta?.card ? {} : { approvalLine: true }), ...(aboutId ? { aboutApproval: aboutId } : {}) };
         const channel = splitChannel(target.channel).channel;
         let owner = false;
         try { owner = this._delivery().isOwnerTarget(channel, target.chatId); } catch { owner = false; }

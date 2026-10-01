@@ -81,6 +81,9 @@ const SERVICE_CATEGORIES = {
   // Approval guardian (real decisions and owner dry runs)
   guardian: 'Guardian',
   guardian_dry_run: 'Guardian',
+  // The guardian's errand checks: the message check and the card reader
+  guardian_message: 'Guardian',
+  guardian_reply: 'Guardian',
 };
 
 // Which interface owns a chat session. The web sidebar lists web chats only,

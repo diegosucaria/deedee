@@ -441,3 +441,14 @@ describe('guardian message check and reply reader', () => {
         });
     });
 });
+
+describe('checkMessage: a slot time it cannot read', () => {
+    test('a time not in HH:MM form fails the check (never a looser day-only check)', async () => {
+        const { GuardianService } = require('../src/services/guardian-service');
+        const generateContent = jest.fn();
+        const g = new GuardianService({ client: { models: { generateContent } }, db: null });
+        const out = await g.checkMessage({ step: 'accept', lang: 'es', contactName: 'Alice', slot: { date: '2026-10-08', time: '9:00' }, draft: 'dale, el jueves a las 11' });
+        expect(out).toMatchObject({ ok: false, failed: true });
+        expect(generateContent).not.toHaveBeenCalled();
+    });
+});

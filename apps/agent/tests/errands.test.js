@@ -219,6 +219,7 @@ describe('errands', () => {
     });
 
     afterEach(() => {
+        delete process.env.VOICE_OWN_REPLY;
         service.stop();
         approvals.stop();
         delete process.env.ERRANDS;
@@ -787,6 +788,8 @@ describe('errands', () => {
         });
 
         test('he writes to her between the parts of a step: the rest stays unsent and the errand steps aside', async () => {
+            // This test races the voice's model call: no past reply of his is reused.
+            process.env.VOICE_OWN_REPLY = '0';
             const errand = await startBooking();
             clock += 5 * 60e3;
             drafts.push({ text: 'dale genial [SPLIT] gracias!', date: '', time: '' });
@@ -804,6 +807,8 @@ describe('errands', () => {
         });
 
         test('the parts of one step are not taken for his own writing', async () => {
+            // This test races the voice's model call: no past reply of his is reused.
+            process.env.VOICE_OWN_REPLY = '0';
             const errand = await startBooking();
             clock += 5 * 60e3;
             drafts.push({ text: 'dale genial [SPLIT] gracias!', date: '', time: '' });
@@ -2373,6 +2378,8 @@ describe('errands', () => {
             const first = await approvals.review({ message: { ...ownerSays('mejor a las 11'), id: 'r-1' }, toolName: 'answerErrand', args, historyUntrusted: true, foreignText: true, run: { id: 'run-1', previews: new Map() } });
             const again = await approvals.review({ message: { ...ownerSays('sí, mandale lo de las 11 porfa'), id: 'r-2' }, toolName: 'answerErrand', args, historyUntrusted: true, foreignText: true, run: { id: 'run-2', previews: new Map() } });
             expect(again.result.info).toContain(`/confirm ${first.approvalId}`);
+            // "mandale" names an action: the guardian reads his reply against the card.
+            replies.push({ answer: 'yes', reason: 'a yes to sending it' });
             const res = await approvals.intercept({ ...ownerSays('sí, mandale'), id: 'r-3' }, jest.fn());
             expect(res).toBeTruthy();
         });
@@ -2506,11 +2513,12 @@ describe('errands', () => {
             expect(inserted).toHaveLength(0);
         });
 
-        test('a question mark makes a word a question: "si?" or "dale?" decides no card; "dale y agendalo" does', async () => {
+        test('a question mark makes a word a question: "si?" or "dale?" decides no card; "dale y agendalo" does, read by the guardian', async () => {
             const card = await approvals.request({ message: { source: 'whatsapp', role: 'user', content: 'x', metadata: { chatId: OWNER_LID } }, toolName: 'forgetFact', args: { key: 'k' }, reason: 'r' });
             expect(await approvals.intercept({ ...ownerSays('si?'), id: 'q-1' }, jest.fn())).toBeNull();
             expect(await approvals.intercept({ ...ownerSays('dale?'), id: 'q-2' }, jest.fn())).toBeNull();
             expect(db.getPendingConfirmation(card.id).status).toBe('pending');
+            replies.push({ answer: 'yes', reason: 'a yes' });
             expect(await approvals.intercept({ ...ownerSays('dale y agendalo'), id: 'q-3' }, jest.fn())).toBeTruthy();
         });
 
@@ -3200,6 +3208,8 @@ describe('errands', () => {
         });
 
         test('an automatic accept that pauses on a bad draft still names her yes', async () => {
+            // This test races the voice's model call: no past reply of his is reused.
+            process.env.VOICE_OWN_REPLY = '0';
             const errand = await startBooking();
             drafts.push({ text: 'dale, 11 voy', date: '', time: '' }, { text: 'dale, 11 voy', date: '', time: '' });
             clock += 5 * 60e3;
@@ -3383,6 +3393,30 @@ describe('errands', () => {
             drafts.push({ text: 'Buenas! hay lugar el jueves a las 10?', date: '2026-10-08', time: '10:00' });
             const out = await service.start({ contact: CONTACT, goal: 'book', request: 'turno el jueves', date: '2026-10-08' });
             expect(out.info).toMatch(/He named no time: it asked for 10:00/);
+        });
+
+        test('his own past reply reused for a thanks still passes the message check', async () => {
+            // Earlier: she named a time, he answered in his words.
+            chat.push({ role: 'user', content: 'te espero el jueves a las 11', timestamp: at('2026-09-10', '12:00'), id: 'P1', fromMe: false });
+            chat.push({ role: 'assistant', content: 'dale, 11 voy', timestamp: at('2026-09-10', '12:01'), id: 'P2', fromMe: true });
+            const errand = await startBooking();
+            const before = checkRequests().length;
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'dale jueves 10', confirms());
+            const checked = checkRequests().slice(before).map(r => JSON.stringify(r.contents));
+            expect(checked.length).toBeGreaterThan(0);
+            expect(sends.pop().content).toBe('dale, 10 voy');
+        });
+
+        test('a step of his that waited for her news keeps the mark that a tainted run wrote its words', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            // She writes while his step is drafted: the step waits for her words to be read.
+            service.claim(contactWrites('perdón la demora!'), { contactString: CONTACT, senderLid: CONTACT_LID });
+            drafts.push({ text: 'llego 10 minutos tarde', date: '', time: '' });
+            await service.answer({ id: errand.id, action: 'say', text: 'llego 10 minutos tarde' }, { byOwner: true, taint: ['a web page'] });
+            const waiting = db.getErrand(errand.id).next_action;
+            expect(waiting).toMatchObject({ owner: true, wordsTainted: true });
         });
 
         test('her "venite ya" offer, too soon to accept, is told as such, not as "no entendí"', async () => {
@@ -3668,6 +3702,8 @@ describe('errands', () => {
         });
 
         test('a step that went out only in part: the pause note quotes what she got', async () => {
+            // This test races the voice's model call: no past reply of his is reused.
+            process.env.VOICE_OWN_REPLY = '0';
             const errand = await startBooking();
             clock += 5 * 60e3;
             drafts.push({ text: 'dale genial [SPLIT] gracias!', date: '', time: '' });
@@ -4224,6 +4260,16 @@ describe('errands', () => {
                 expect(service.isShownDraft({ ...args, contact: `${CONTACT_LID}@lid` })).toBe(true);
                 expect(service.isShownDraft({ ...args, contact: ALICE_ID })).toBe(true);
                 expect(service.isShownDraft({ contact: CONTACT, text: d.draft })).toBe(true);
+            });
+
+            test('a draft he saw for Thursday is no draft he saw for Friday: the message check runs', async () => {
+                const book = { contact: CONTACT, goal: 'book', request: 'turno el jueves a las 10', date: '2026-10-08', time: '10:00' };
+                drafts.push({ text: 'Buenas! hay lugar el jueves a las 10?', date: '2026-10-08', time: '10:00' });
+                const d = await service.start({ ...book, send: false }, origin());
+                expect(d).toMatchObject({ success: true, sent: false });
+                expect(service.isShownDraft({ ...book, send: true, text: d.draft })).toBe(true);
+                expect(service.isShownDraft({ ...book, send: true, date: '2026-10-09', text: d.draft })).toBe(false);
+                expect(service.isShownDraft({ ...book, send: true, time: '11:00', text: d.draft })).toBe(false);
             });
 
             test('isShownDraft says no to other words, another person, another goal, a draft over 30 minutes old, or no draft', async () => {

@@ -761,14 +761,16 @@ describe('ApprovalService', () => {
             for (const w of ['jaja', 'mil gracias', 'no sé', 'ok gracias', 'sí, gracias', 'de una', 'si pero a las 5', 'sino']) expect(decisionWord(w)).toBeNull();
         });
 
-        test('"aceptale las 10:30" decides the card through the guardian, which sees only the card and his reply', async () => {
+        test('"aceptale las 10:30" decides the card through the guardian, which sees only what the card does (written by code) and his reply', async () => {
             const card = await errandCard();
             readReply.mockResolvedValue(read('yes'));
             const words = ownerSays('aceptale las 10:30');
             const res = await svc.intercept(words, jest.fn());
             expect(res.handled).toBe(true);
             expect(readReply).toHaveBeenCalledTimes(1);
-            expect(readReply).toHaveBeenCalledWith({ question: CARD.question, detail: CARD.detail, reply: 'aceptale las 10:30', lang: 'es', chatId: OWNER_JID });
+            // Never the card's own text: it can quote a draft or someone else's words.
+            expect(readReply).toHaveBeenCalledWith({ question: expect.stringMatching(/^Accept the slot .*10:30 the contact offered/), detail: null, reply: 'aceptale las 10:30', lang: 'es', chatId: OWNER_JID });
+            expect(JSON.stringify(readReply.mock.calls[0][0])).not.toContain(CARD.detail);
             expect(db.getPendingConfirmation(card.id)).toMatchObject({ status: 'approved', decided_via: 'chat_read' });
             expect(agent._executeTool).toHaveBeenCalledWith('answerErrand', ACCEPT.args, expect.anything(), expect.any(Function), null, { approved: true });
             // Marked as his answer to the card, so it is no new question of his.
@@ -781,7 +783,23 @@ describe('ApprovalService', () => {
             readReply.mockResolvedValue(read('yes'));
             const res = await svc.intercept(msg('web', 'chat-1', 'de una'), jest.fn());
             expect(res).toEqual({ handled: false, row: expect.any(Object), execute: { name: 'commitAndPush', args: { message: 'feat: x' }, approvalId: card.id } });
-            expect(readReply.mock.calls[0][0]).toMatchObject({ question: 'Approve commitAndPush?', reply: 'de una', lang: 'en', chatId: 'chat-1' });
+            expect(readReply.mock.calls[0][0]).toMatchObject({ question: 'Run the action "commitAndPush" shown on the card.', detail: null, reply: 'de una', lang: 'en', chatId: 'chat-1' });
+        });
+
+        test('"no, cancelalo" typed on an errand card cancels the whole errand by the word list, with no model call', async () => {
+            agent.errands = { ownerSaidNo: jest.fn(), cancelFromCard: jest.fn().mockResolvedValue('Cancelé el pedido #7.') };
+            const card = await errandCard();
+            const res = await svc.intercept(ownerSays('no, cancelalo'), jest.fn().mockResolvedValue(true));
+            expect(res.handled).toBe(true);
+            expect(db.getPendingConfirmation(card.id)).toMatchObject({ status: 'denied', decided_via: 'chat' });
+            expect(agent.errands.cancelFromCard).toHaveBeenCalledWith(7);
+            expect(readReply).not.toHaveBeenCalled();
+        });
+
+        test('"dale, mandalo" is no plain yes for a card: the guardian reads it against what the card does', () => {
+            expect(decisionWord('dale, mandalo')).toBeNull();
+            expect(decisionWord('dale, mandalo', { actionWords: true })).toBe('approved');
+            expect(decisionWord('sí, agendalo')).toBeNull();
         });
 
         test('a reply read as no denies the card as "no" does, and never closes the whole errand', async () => {
@@ -893,7 +911,7 @@ describe('ApprovalService', () => {
             // ErrandService.isShownDraft as its contract says: the same words,
             // shown before his message.
             drafts = [];
-            agent.errands = { isShownDraft: jest.fn((args, { before }) => drafts.some(d => d.text === args.text && d.at < before)) };
+            agent.errands = { shownDraftAt: jest.fn((args, { before }) => drafts.filter(d => d.text === args.text && d.at < before).map(d => d.at).pop() ?? null) };
         });
 
         // A job's card waits in his chat; Deedee then shows him the draft.
@@ -905,21 +923,35 @@ describe('ApprovalService', () => {
         }
 
         test('"dale, mandalo" after a draft he saw sends it, while the job card still waits', async () => {
-            const card = await cardThenDraft(Date.now() - 2000);
+            // The card reached him first, then the draft, then his word.
+            const tick = () => new Promise(r => setTimeout(r, 5));
+            const card = await svc.request({ message: schedulerMsg(), ...BOOK, reason: 'r' });
+            await tick();
+            drafts.push({ text: DRAFT, at: Date.now() });
+            db.saveMessage({ id: 'draft-shown', role: 'assistant', content: `Le mandaría a Alice: "${DRAFT}". ¿Lo mando?`, source: 'whatsapp:assistant', chatId: OWNER_JID, timestamp: new Date().toISOString(), metadata: { chatId: OWNER_JID } });
+            await tick();
             const yes = msg('whatsapp:assistant', OWNER_JID, 'dale, mandalo');
             // His word is about the draft, never the job's card.
             expect(await svc.intercept(yes, jest.fn())).toBeNull();
             expect((await review(yes, start(DRAFT))).run).toBe(true);
-            expect(agent.errands.isShownDraft).toHaveBeenCalledWith(start(DRAFT).args, { before: Date.parse(yes.timestamp) });
+            expect(agent.errands.shownDraftAt).toHaveBeenCalledWith(start(DRAFT).args, { before: Date.parse(yes.timestamp) });
             expect(db.getPendingConfirmation(card.id).status).toBe('pending');
             // A time from his client cannot be later than now.
-            agent.errands.isShownDraft.mockClear();
+            agent.errands.shownDraftAt.mockClear();
             const ahead = { ...yes, timestamp: new Date(Date.now() + 60e3).toISOString() };
             await review(ahead, start(DRAFT));
-            expect(agent.errands.isShownDraft.mock.calls[0][1].before).toBeLessThanOrEqual(Date.now());
+            expect(agent.errands.shownDraftAt.mock.calls[0][1].before).toBeLessThanOrEqual(Date.now());
             // Other words than the draft, or a message to someone, still wait for the card.
             expect((await review(yes, start(`${DRAFT} y avisale a Bob`))).run).toBe(false);
             expect((await review(yes, { toolName: 'sendMessage', args: { to: '+15550100', content: DRAFT, session: 'user' } })).run).toBe(false);
+        });
+
+        test('a card that reached him after the draft keeps his bare "dale": the draft does not go out on it', async () => {
+            drafts.push({ text: DRAFT, at: Date.now() - 2000 });
+            const card = await svc.request({ message: schedulerMsg(), ...BOOK, reason: 'r' });
+            const yes = { ...msg('whatsapp:assistant', OWNER_JID, 'dale'), timestamp: new Date(Date.now() + 1).toISOString() };
+            const res = await review(yes, start(DRAFT));
+            expect(res).toMatchObject({ run: false, approvalId: card.id });
         });
 
         test('a draft made in the same run as his "dale" does not count: it came after his word', async () => {
@@ -927,7 +959,7 @@ describe('ApprovalService', () => {
             const card = await cardThenDraft();
             const res = await review(yes, start(DRAFT));
             expect(res).toMatchObject({ run: false, approvalId: card.id });
-            expect(agent.errands.isShownDraft).toHaveBeenCalledWith(start(DRAFT).args, { before: Date.parse(yes.timestamp) });
+            expect(agent.errands.shownDraftAt).toHaveBeenCalledWith(start(DRAFT).args, { before: Date.parse(yes.timestamp) });
         });
     });
 });
