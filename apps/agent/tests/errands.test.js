@@ -869,6 +869,7 @@ describe('errands', () => {
         test('after he changes the plan in his own words, a bare "dale" no longer books the old slot', async () => {
             const errand = await startBooking();
             clock += 5 * 60e3;
+            drafts.push({ text: 'mejor el viernes', date: '', time: '' });
             await service.answer({ id: errand.id, action: 'say', text: 'mejor el viernes' }, { byOwner: true });
             expect(db.getErrand(errand.id).slot).toBeNull();
             clock += 5 * 60e3;
@@ -1076,7 +1077,7 @@ describe('errands', () => {
         test('a person allowed to talk to Deedee can still get an errand', async () => {
             process.env.ALLOWED_WHATSAPP_NUMBERS = `${OWNER},${CONTACT}`;
             try {
-                const out = await service.start({ contact: CONTACT, goal: 'tell', request: 'que llego tarde' });
+                const out = await service.start({ contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde' });
                 expect(out.success).toBe(true);
             } finally {
                 delete process.env.ALLOWED_WHATSAPP_NUMBERS;
@@ -4162,7 +4163,7 @@ describe('errands', () => {
         });
 
         describe('a draft he saw, for "dale, mandalo"', () => {
-            const draftArgs = { contact: CONTACT, goal: 'tell', request: 'que llego tarde' };
+            const draftArgs = { contact: CONTACT, goal: 'tell', request: 'que llego 10 minutos tarde' };
 
             test('isShownDraft knows the draft start() showed him: the same person by number, WhatsApp ID or People id, and the same words', async () => {
                 drafts.push({ text: 'llego 10 minutos tarde [SPLIT] perdón!', date: '', time: '' });
@@ -4193,6 +4194,8 @@ describe('errands', () => {
             });
 
             test('a draft written after reading someone else\'s text never counts as shown', async () => {
+                // (A tainted request is not his words, so the draft names no number.)
+                drafts.push({ text: 'llego tarde, perdón', date: '', time: '' });
                 const d = await service.start({ ...draftArgs, send: false }, { ...origin(), taint: ['a web page'] });
                 expect(d).toMatchObject({ success: true, sent: false });
                 expect(service.isShownDraft({ ...draftArgs, send: true, text: d.draft })).toBe(false);
