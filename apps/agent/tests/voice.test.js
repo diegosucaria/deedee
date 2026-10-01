@@ -75,6 +75,32 @@ describe('voice: ordinary messages pass', () => {
         expect(checkText(['a las 10.30?'], { step: 'request', time: '10:00' })).toContain('it named a time other than 10:00');
     });
 
+    test('a thanks prefers his past reply that thanks ("dale, gracias") over a newer one that only confirms ("Dalee")', () => {
+        const t0 = Date.parse('2026-08-06T14:00:00Z');
+        const history = [
+            { role: 'user', content: 'El 14 a las 10', timestamp: t0 },
+            { role: 'assistant', content: 'dale, gracias', timestamp: t0 + 60e3 },
+            { role: 'user', content: 'Con gusto te espero jueves a las 10', timestamp: t0 + 30 * 86400e3 },
+            { role: 'assistant', content: 'Dalee', timestamp: t0 + 30 * 86400e3 + 60e3 }
+        ];
+        const opts = { slot: { date: '2026-10-08', time: '10:00' }, timeZone: 'America/Argentina/Cordoba', now: t0 + 60 * 86400e3 };
+        expect(ownReply(history, { ...opts, step: 'thanks' })).toBe('dale, gracias');
+        // With no reply of his that thanks, the newest one stands.
+        expect(ownReply(history.slice(2), { ...opts, step: 'thanks' })).toBe('Dalee');
+    });
+
+    test.each(['uh bueno, gracias igual!', 'gracias! te aviso', 'gracias Carol!', 'dale gracias, lo pienso', 'thanks anyway!'])(
+        'a thanks never prefers his old "%s" over his newer plain "Dalee": it thanks for something else', (old) => {
+            const t0 = Date.parse('2026-08-06T14:00:00Z');
+            const history = [
+                { role: 'user', content: 'tengo jueves a las 10 o viernes a las 11', timestamp: t0 },
+                { role: 'assistant', content: old, timestamp: t0 + 60e3 },
+                { role: 'user', content: 'Con gusto te espero jueves a las 10', timestamp: t0 + 30 * 86400e3 },
+                { role: 'assistant', content: 'Dalee', timestamp: t0 + 30 * 86400e3 + 60e3 }
+            ];
+            expect(ownReply(history, { step: 'thanks', slot: { date: '2026-10-08', time: '10:00' }, timeZone: 'America/Argentina/Cordoba', now: t0 + 60 * 86400e3 })).toBe('Dalee');
+        });
+
     test('"a la 1", "a las diez" and "al mediodía" are times', () => {
         expect(timesIn('a la una')).toEqual([{ hour: 1, min: 0 }]);
         expect(timesIn('a las diez y media')).toEqual([{ hour: 10, min: 30 }]);

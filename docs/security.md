@@ -468,6 +468,12 @@ An errand writes to one person from the owner's own WhatsApp
   as a phone number of its digits, numbers match only exactly or as the
   same Argentine mobile (549/54), and two People with one name get a card
   that names the masked number.
+- **One booking.** A calendar insert from a run on a contact's chat, at the
+  start an errand already booked with that contact, is refused before any
+  rule (`_errandBooked`): his watcher and the errand read the same messages.
+  Only while an event still starts at that slot on his calendar
+  (`ErrandService.stillBooked`); a calendar that cannot be read adds
+  nothing. The refusal shows on the errand's log, not on the Guardian page.
 - **Stops that hold.** A cancel is on record before a running step sends;
   the errand reads the chat again before each part and stops if he wrote;
   past its end it never acts. Autopilot does not write to a person an errand

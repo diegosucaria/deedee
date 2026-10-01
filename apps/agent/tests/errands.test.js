@@ -3375,11 +3375,15 @@ describe('errands', () => {
             chat.push({ role: 'assistant', content: 'dale, 11 voy', timestamp: at('2026-09-10', '12:01'), id: 'P2', fromMe: true });
             const errand = await startBooking();
             const before = checkRequests().length;
+            const draftsBefore = draftAndReadCalls().filter(c => /What to write now/.test(c[0].contents[0].parts[0].text)).length;
             clock += 5 * 60e3;
             await contactAnswers(errand, 'dale jueves 10', confirms());
             const checked = checkRequests().slice(before).map(r => JSON.stringify(r.contents));
             expect(checked.length).toBeGreaterThan(0);
-            expect(sends.pop().content).toBe('dale, 10 voy');
+            // A thanks prefers his past reply that thanks over a newer one that only confirms.
+            expect(sends.pop().content).toBe('genial, gracias');
+            // His own line, not a draft: the only model call besides the checks was the read.
+            expect(draftAndReadCalls().filter(c => /What to write now/.test(c[0].contents[0].parts[0].text)).length).toBe(draftsBefore);
         });
 
         test('a step of his that waited for her news keeps the mark that a tainted run wrote its words', async () => {
@@ -3436,6 +3440,42 @@ describe('errands', () => {
             generateContent.mockImplementation(real);
             expect(sends).toHaveLength(1);
             expect(db.getErrand(errand.id).next_action).toMatchObject({ action: 'accept' });
+        });
+
+        test('after a booking, his own "gracias" hands the chat back, and his watcher cannot add the slot to the calendar again', async () => {
+            const errand = await startBooking();
+            clock += 5 * 60e3;
+            await contactAnswers(errand, 'Sí, el jueves a las 10 te espero', { kind: 'confirm', slots: [{ date: '2026-10-08', time: '10:00' }], summary: 'Confirms.', tellOwner: false });
+            expect(inserted).toHaveLength(1);
+            // He adds a line himself; her emoji then goes back to his watchers.
+            clock += 30e3;
+            ownerWrites('gracias!');
+            clock += 30e3;
+            const emoji = contactWrites('👍');
+            service.claim(emoji, { contactString: CONTACT, senderLid: CONTACT_LID });
+            await service.flush(errand.id);
+            expect(db.listErrandEvents(errand.id).some(e => e.kind === 'after' && e.detail?.handedBack)).toBe(true);
+            // The errand's event is on his calendar (the fake list does not return what was inserted).
+            calendarItems = [{ id: 'EV1', summary: 'Barber - Alice', start: { dateTime: '2026-10-08T10:00:00-03:00' }, end: { dateTime: '2026-10-08T10:30:00-03:00' } }];
+            // The watcher's run on her chat tries to book what the chat shows.
+            const insert = { resource: 'events', method: 'insert', params: { calendarId: 'user@example.com' }, body: { summary: 'Corte de pelo - Alice', start: { dateTime: '2026-10-08T10:00:00-03:00' }, end: { dateTime: '2026-10-08T10:30:00-03:00' } } };
+            const res = await approvals.review({ message: emoji, toolName: 'work_calendar', args: insert, historyUntrusted: true, foreignText: true });
+            expect(res).toMatchObject({ run: false, result: { alreadyBooked: true } });
+            expect(db.listErrandEvents(errand.id).some(e => e.kind === 'after' && e.detail?.duplicate)).toBe(true);
+            // Another time with her, or the same time from another chat, is not this booking.
+            expect(service.bookedFor([CONTACT], at('2026-10-08', '11:00'))).toBeNull();
+            expect(service.bookedFor([OTHER], at('2026-10-08', '10:00'))).toBeNull();
+            expect(service.bookedFor([`${CONTACT_LID}@lid`], at('2026-10-08', '10:00'))).toMatchObject({ id: errand.id });
+            // A start with no offset is read in the event's zone, or his: never the process's.
+            expect(service.eventStartMs({ dateTime: '2026-10-08T10:00:00' })).toBe(at('2026-10-08', '10:00'));
+            expect(service.eventStartMs({ dateTime: '2026-10-08T13:00:00', timeZone: 'UTC' })).toBe(at('2026-10-08', '10:00'));
+            // A retry of the refused insert adds no second line to the log.
+            await approvals.review({ message: emoji, toolName: 'work_calendar', args: insert, historyUntrusted: true, foreignText: true });
+            expect(db.listErrandEvents(errand.id).filter(e => e.kind === 'after' && e.detail?.duplicate)).toHaveLength(1);
+            // He deleted the event (she cancelled) and she confirms the slot again: the watcher may add it.
+            calendarItems = [];
+            const again = await approvals.review({ message: emoji, toolName: 'work_calendar', args: insert, historyUntrusted: true, foreignText: true });
+            expect(again.result?.alreadyBooked).not.toBe(true);
         });
 
         test('her "venite ya" offer, too soon to accept, is told as such, not as "no entendí"', async () => {

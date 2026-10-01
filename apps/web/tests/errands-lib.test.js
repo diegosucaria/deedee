@@ -203,6 +203,8 @@ describe('eventLine: steps added in review', () => {
         expect(eventLine({ kind: 'decided', detail: { action: 'accept', deferred: true } })).toBe('Waited: they wrote again before accept went out');
         expect(eventLine({ kind: 'after', detail: { kind: 'offer', slots: [{ date: '2026-10-08', time: '11:00' }] } })).toBe('After the booking: offer, Thu 08/10 11:00');
         expect(eventLine({ kind: 'after', detail: { failed: true } })).toBe('After the booking: could not read their message');
+        // A watcher that tried to book the slot again shows on the errand's log.
+        expect(eventLine({ kind: 'after', detail: { duplicate: true, tool: 'work_calendar' } })).toBe('After the booking: a watcher tried to add it to the calendar again; skipped');
         expect(eventLine({ kind: 'note', detail: { told: true } })).toBe('Told you what else they wrote');
     });
 });

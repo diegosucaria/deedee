@@ -884,6 +884,53 @@ describe('ApprovalService', () => {
             expect(row.summary).not.toContain('abc123');
         });
 
+        test('a watcher run cannot add to the calendar a slot an errand already booked with that contact; his own chat still can', async () => {
+            const bookedFor = jest.fn(() => ({ id: 7, contact_name: 'Alice' }));
+            const stillBooked = jest.fn(async () => true);
+            agent.errands = { bookedFor, stillBooked, noteDuplicate: jest.fn() };
+            const insert = { toolName: 'work_calendar', args: { resource: 'events', method: 'insert', body: { summary: 'Corte - Alice', start: { dateTime: '2026-10-08T10:00:00-03:00' } } } };
+            const res = await svc.review({ message: watcherMsg(), ...insert, run: ApprovalService.newRun('w1'), historyUntrusted: true, foreignText: true });
+            expect(res).toMatchObject({ run: false, status: 'error', result: { alreadyBooked: true } });
+            expect(bookedFor).toHaveBeenCalledWith(expect.arrayContaining(['15550001234@s.whatsapp.net', '15550001234']), Date.parse('2026-10-08T10:00:00-03:00'));
+            expect(agent.errands.noteDuplicate).toHaveBeenCalled();
+            // Reading the calendar, an all-day event, and his own chat are not held by this rule.
+            bookedFor.mockClear();
+            await svc.review({ message: watcherMsg(), toolName: 'work_calendar', args: { resource: 'events', method: 'list' }, run: ApprovalService.newRun('w2'), historyUntrusted: true, foreignText: true });
+            await svc.review({ message: ownerSays('agendame el corte del jueves a las 10'), ...insert, run: ApprovalService.newRun('w3'), historyUntrusted: false, foreignText: false });
+            expect(bookedFor).not.toHaveBeenCalled();
+        });
+
+        test('the same insert in other shapes is refused too: "events.insert", a JSON body, a sub-agent of the watcher run, a quickAdd', async () => {
+            const bookedFor = jest.fn(() => ({ id: 7, contact_name: 'Alice' }));
+            agent.errands = { bookedFor, stillBooked: jest.fn(async () => true), noteDuplicate: jest.fn() };
+            const start = '2026-10-08T10:00:00-03:00';
+            const body = { summary: 'Corte - Alice', start: { dateTime: start } };
+            const held = async (message, args) => (await svc.review({ message, toolName: 'work_calendar', args, run: ApprovalService.newRun(`s${Math.random()}`), historyUntrusted: true, foreignText: true })).result?.alreadyBooked === true;
+            expect(await held(watcherMsg(), { method: 'events.insert', body })).toBe(true);
+            expect(await held(watcherMsg(), { resource: 'events', method: 'insert', body: JSON.stringify(body) })).toBe(true);
+            expect(await held(watcherMsg(), { resource: 'events', method: 'insert', json: JSON.stringify(body) })).toBe(true);
+            const child = msg('subagent', 'subagent_1', 'add the haircut', { isSubAgent: true, parentSource: 'whatsapp:user', parentChatId: '15550001234@s.whatsapp.net' });
+            expect(await held(child, { resource: 'events', method: 'insert', body })).toBe(true);
+            expect(bookedFor).toHaveBeenLastCalledWith(['15550001234@s.whatsapp.net'], Date.parse(start));
+            // A quickAdd names no start: any booking with them that is still ahead counts.
+            expect(await held(watcherMsg(), { resource: 'events', method: 'quickAdd', params: { text: 'Corte con Alice el jueves a las 10' } })).toBe(true);
+            expect(bookedFor).toHaveBeenLastCalledWith(expect.any(Array), null);
+        });
+
+        test('his calendar decides: an event he deleted or moved may be added again, and an unreadable calendar adds nothing', async () => {
+            const stillBooked = jest.fn(async () => false);
+            agent.errands = { bookedFor: jest.fn(() => ({ id: 7, contact_name: 'Alice' })), stillBooked, noteDuplicate: jest.fn() };
+            const insert = { toolName: 'work_calendar', args: { resource: 'events', method: 'insert', body: { summary: 'Corte - Alice', start: { dateTime: '2026-10-08T10:00:00-03:00' } } } };
+            const gone = await svc.review({ message: watcherMsg(), ...insert, run: ApprovalService.newRun('g1'), historyUntrusted: true, foreignText: true });
+            expect(gone.result?.alreadyBooked).not.toBe(true);
+            expect(agent.errands.noteDuplicate).not.toHaveBeenCalled();
+            stillBooked.mockResolvedValue(null);
+            const unknown = await svc.review({ message: watcherMsg(), ...insert, run: ApprovalService.newRun('g2'), historyUntrusted: true, foreignText: true });
+            expect(unknown).toMatchObject({ run: false, result: { alreadyBooked: true } });
+            expect(unknown.result.info).toMatch(/could not be read/);
+            expect(unknown.result.info).not.toMatch(/Already on his calendar/);
+        });
+
         test('"no, cancelalo" typed on an errand card cancels the whole errand by the word list, with no model call', async () => {
             agent.errands = { ownerSaidNo: jest.fn(), cancelFromCard: jest.fn().mockResolvedValue('Cancelé el pedido #7.') };
             const card = await errandCard();
