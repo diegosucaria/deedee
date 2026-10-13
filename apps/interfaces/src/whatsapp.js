@@ -20,7 +20,10 @@ const FFMPEG_TIMEOUT_MS = 30000;
 // so its timeouts win when they work. WHATSAPP_CONNECT_WATCHDOG=0 turns it off.
 const CONNECT_WATCHDOG_MS = 4 * 60 * 1000;
 // A paired session down this long tells the owner once.
-// WHATSAPP_DOWN_ALERT=0 turns it off.
+// WHATSAPP_DOWN_ALERT=0 turns it off. Keep it longer than the agent ledger's
+// 10-minute duplicate window (DEDUPE_WINDOW_MS in delivery-service.js): two
+// outages' alerts carry the same words, and a closer pair would be taken for
+// one, message and card both.
 const DOWN_ALERT_MS = 15 * 60 * 1000;
 // The version lookup reads GitHub and can wait up to 5 minutes, longer than
 // the watchdog. Past this, the socket uses the version Baileys ships with.
