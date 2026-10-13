@@ -124,12 +124,19 @@ for four days. Its login was intact; every send failed at once with
     `creds.json` with `me.id`) that is not connected for 15 minutes
     (`DOWN_ALERT_MS`) sends one system alert (`whatsapp_down:<session>`),
     and a second one when it connects again (`whatsapp_up:<session>`). The
-    agent sends "connected again" only after a "down" reached the owner, and
-    then always, whatever its own cooldown. A session in `needs_repair` (it
-    sent its own alert) or `scan_qr`, or a QR nobody scanned, sends none. A logout by WhatsApp (401) sends `whatsapp_logged_out:<session>` at
-    once, then wipes the login as before. The down and logout alerts also
-    leave a dashboard notification, since WhatsApp may be the channel that
-    is down. `WHATSAPP_DOWN_ALERT=0` turns the down alert off.
+    agent sends them in turn, outside its 6 h repeat filter: a "down" only
+    when the last one was answered by "connected again", and "connected
+    again" only after a "down". So every outage is told once, and "back"
+    never comes alone. An alert the agent did not take is tried again after
+    another 15 minutes. A session in `needs_repair` (it sent its own alert)
+    or `scan_qr`, or a QR nobody scanned, sends none. A logout by WhatsApp (401) sends `whatsapp_logged_out:<session>` at
+    once, then wipes the login as before. The owner's own Disconnect sends
+    nothing: `disconnect()` lets go of the socket before `logout()`, whose
+    401 close would look like WhatsApp's, and always ends it (a socket still
+    connecting would otherwise log in later with the creds in memory). The
+    down and logout alerts also leave a dashboard notification, since
+    WhatsApp may be the channel that is down. `WHATSAPP_DOWN_ALERT=0` turns
+    off the down, "connected again" and logout alerts.
 -   **By hand**: restarting the `interfaces` service clears a stuck try; a
     session with its login on disk reconnects without a QR scan.
 -   **Status**: **Implemented**.

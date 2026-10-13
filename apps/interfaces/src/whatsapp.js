@@ -859,10 +859,14 @@ class WhatsAppService {
         if (['connected', 'needs_repair', 'scan_qr'].includes(this.status)) return;
         // No login: the owner disconnected it, or it was never paired.
         if (!this._hasLogin()) return;
-        this.downAlertSent = true;
         const minutes = Math.round(this.downAlertMs / 60000);
         const text = `WhatsApp session "${this.sessionId}" has not been connected for ${minutes} minutes (status: ${this.status}). Deedee keeps trying to reconnect on its own. If it stays down, open Settings > Interfaces > WhatsApp and check that the phone is online and still lists Deedee as a linked device.`;
-        await this._sendSystemAlert(text, `whatsapp_down:${this.sessionId}`);
+        if (await this._sendSystemAlert(text, `whatsapp_down:${this.sessionId}`)) {
+            this.downAlertSent = true;
+        } else {
+            // The agent did not take it: try again after another wait.
+            this._armDownAlert();
+        }
     }
 
     /**
@@ -878,7 +882,10 @@ class WhatsAppService {
         }
     }
 
-    /** Deliver text to the owner verbatim through the agent (de-duplicated per key). */
+    /**
+     * Deliver text to the owner verbatim through the agent (de-duplicated per key).
+     * @returns {Promise<boolean>} true when the agent took it
+     */
     async _sendSystemAlert(text, alertKey) {
         try {
             await axios.post(`${this.agentUrl}/webhook`, {
@@ -889,8 +896,10 @@ class WhatsAppService {
                 // de-duplicated by the agent (same path as the Slack token alert).
                 metadata: { internal_system_alert: true, alertKey },
             });
+            return true;
         } catch (err) {
             console.error(`${this.logPrefix} Failed to send the ${alertKey} alert:`, err?.message);
+            return false;
         }
     }
 
@@ -970,6 +979,9 @@ class WhatsAppService {
             console.log(`${this.logPrefix} Connecting...`);
             this.status = 'connecting';
             this._armConnectWatchdog(tryId);
+            // Not connected from here on; an open clears it. Arming on every
+            // try covers each way down: a close, the watchdog, a failed try.
+            this._armDownAlert();
 
             // Using SQLiteStore
             // makeInMemoryStore removed.
@@ -1197,7 +1209,7 @@ class WhatsAppService {
                         console.log(`${this.logPrefix} Logged out by Server. Clearing session.`);
                         // The login is gone and only a new QR scan brings it
                         // back, so he hears about it at once.
-                        this._sendSystemAlert(`WhatsApp logged out session "${this.sessionId}". It needs a new QR scan: open Settings > Interfaces > WhatsApp.`, `whatsapp_logged_out:${this.sessionId}`);
+                        if (process.env.WHATSAPP_DOWN_ALERT !== '0') this._sendSystemAlert(`WhatsApp logged out session "${this.sessionId}". It needs a new QR scan: open Settings > Interfaces > WhatsApp.`, `whatsapp_logged_out:${this.sessionId}`);
                         await this.disconnect(true); // Wipe if server says logged out
                     }
 
@@ -1212,7 +1224,7 @@ class WhatsAppService {
                     if (this.downAlertSent) {
                         // He was told it was down; tell him it is back.
                         this.downAlertSent = false;
-                        this._sendSystemAlert(`WhatsApp session "${this.sessionId}" is connected again.`, `whatsapp_up:${this.sessionId}`);
+                        if (process.env.WHATSAPP_DOWN_ALERT !== '0') this._sendSystemAlert(`WhatsApp session "${this.sessionId}" is connected again.`, `whatsapp_up:${this.sessionId}`);
                     }
 
                     // Start Heartbeat
@@ -1254,7 +1266,11 @@ class WhatsAppService {
                 }
             });
 
-            this.sock.ev.on('creds.update', saveCreds);
+            // A socket this service let go of must not write the login (after
+            // a reset its folder is gone).
+            this.sock.ev.on('creds.update', (update) => {
+                if (this.sock === sock) return saveCreds(update);
+            });
 
             this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
                 // console.log(`${this.logPrefix} [DEBUG] Upsert: ${messages.length} messages. Type: ${type}`); // Verbose
@@ -1609,17 +1625,30 @@ class WhatsAppService {
         }
         try {
             console.log(`${this.logPrefix} Disconnecting... (Clear: ${clearSession})`);
-            if (this.sock) {
+            // Let go of the socket first: the close it fires is ours, not the
+            // server's. On a logout it carries 401, and the handler would
+            // take the owner's own reset for "WhatsApp logged us out".
+            const sock = this.sock;
+            this.sock = null;
+            if (this.presenceInterval) {
+                clearInterval(this.presenceInterval);
+                this.presenceInterval = null;
+            }
+            if (sock) {
                 if (clearSession) {
                     try {
-                        await this.sock.logout();
+                        await sock.logout();
                     } catch (err) {
                         console.warn(`${this.logPrefix} Logout failed (ignoring): ${err.message}`);
+                    } finally {
+                        // logout() throws on a socket that is still connecting,
+                        // and that socket could still log in with the creds in
+                        // memory. end() does nothing on a socket already ended.
+                        try { sock.end(undefined); } catch { /* already ended */ }
                     }
                 } else {
-                    this.sock.end(undefined);
+                    sock.end(undefined);
                 }
-                this.sock = null;
             }
 
             if (clearSession) {

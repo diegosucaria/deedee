@@ -242,6 +242,25 @@ describe('sendMessage delivery', () => {
                 expect(db.listRecentOutbox({ limit: 5 })[0].status).toBe('sent');
             });
 
+            test('a voice note does not jump channels: Telegram hides a failed voice send', async () => {
+                send.mockResolvedValue(false);
+                const out = await toOwner({ type: 'audio', imagePath: img, content: 'the words' });
+                expect(send.mock.calls.filter(c => c[0].source === 'telegram' && c[0].type === 'audio')).toHaveLength(0);
+                expect(out).toMatchObject({ status: 'queued' });
+            });
+
+            test('PICTURE_FALLBACK=0 keeps the old way: only the words are queued', async () => {
+                process.env.PICTURE_FALLBACK = '0';
+                try {
+                    send.mockResolvedValueOnce(false).mockResolvedValue(true);
+                    const out = await toOwner({ type: 'image', imagePath: img, content: 'the outfit' });
+                    expect(out).toMatchObject({ success: true, status: 'partial' });
+                    expect(send.mock.calls.filter(c => c[0].type === 'image')).toHaveLength(1);
+                } finally {
+                    delete process.env.PICTURE_FALLBACK;
+                }
+            });
+
             test('a picture to a contact never jumps channels', async () => {
                 send.mockResolvedValue(false);
                 const out = await executor.execute('sendMessage', { to: CONTACT_DIGITS, type: 'image', imagePath: img, content: 'hi' }, { message: jobMessage });

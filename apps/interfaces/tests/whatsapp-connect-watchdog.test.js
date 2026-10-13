@@ -84,12 +84,16 @@ describe('a WhatsApp connect try that never ends', () => {
         jest.restoreAllMocks();
     });
 
-    test('a refused upgrade (HTTP 503, line closed) ends the try and schedules a reconnect', async () => {
+    test.each([
+        [503, 'Service Unavailable'],
+        // An HTTP 401 on the upgrade is not a WhatsApp logout: it must not wipe the login.
+        [401, 'Unauthorized'],
+    ])('a refused upgrade (HTTP %i, line closed) ends the try and schedules a reconnect', async (code, reason) => {
         // The real Baileys socket against a server that answers the upgrade
-        // with 503 and hangs up, as WhatsApp did on 2026-10-09.
+        // with an HTTP error and hangs up, as WhatsApp did on 2026-10-09.
         const server = http.createServer();
         server.on('upgrade', (req, socket) => {
-            socket.end('HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+            socket.end(`HTTP/1.1 ${code} ${reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
         });
         await new Promise(r => server.listen(0, '127.0.0.1', r));
         const url = `ws://127.0.0.1:${server.address().port}/ws`;
@@ -111,8 +115,10 @@ describe('a WhatsApp connect try that never ends', () => {
             expect(scheduled).toHaveBeenCalledWith('Connection Lost');
             expect(wa.status).toBe('disconnected');
             expect(wa.reconnectTimeout).not.toBeNull();
-            // Not a logout: the login stays on disk.
-            expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('refused the connection (HTTP 503)'));
+            expect(console.warn).toHaveBeenCalledWith(expect.stringContaining(`refused the connection (HTTP ${code})`));
+            // Not a logout: the login folder stays, and no "logged out" alert.
+            expect(fs.existsSync(wa.authFolder)).toBe(true);
+            expect(axios.post).not.toHaveBeenCalled();
         } finally {
             if (wa.reconnectTimeout) clearTimeout(wa.reconnectTimeout);
             wa.reconnectTimeout = null;
@@ -133,6 +139,8 @@ describe('a WhatsApp connect try that never ends', () => {
         // Three stuck tries in a row: each one is ended and the next waits longer.
         expect(await until(() => sockets.length >= 4)).toBe(true);
         expect(delays.slice(0, 3)).toEqual([10, 20, 40]);
+        // One retry per stuck try: the close of the socket it ended is not a second one.
+        expect(delays.length).toBeLessThanOrEqual(sockets.length);
         expect(sockets[0].end).toHaveBeenCalledWith(expect.objectContaining({ output: { statusCode: 408 } }));
 
         // A connection that opens resets the delay.
@@ -212,6 +220,85 @@ describe('a WhatsApp connect try that never ends', () => {
             wa2.store.close();
             fs.rmSync(wa2.authFolder, { recursive: true, force: true });
         }
+    });
+
+    test('a stuck try that wakes during the backoff wait does not open a socket', async () => {
+        wa.reconnectConfig = { initialMs: 300, maxMs: 1000, factor: 2, jitter: 0 };
+        let releaseFirst;
+        const fetchLatestBaileysVersion = jest.fn()
+            .mockImplementationOnce(() => new Promise(r => { releaseFirst = r; }))
+            .mockResolvedValue({ version: [2, 3000, 0], isLatest: true });
+        const { baileys, sockets } = fakeBaileys({ fetchLatestBaileysVersion });
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+
+        const first = wa.connect();
+        // The watchdog ended it; the retry waits 300 ms.
+        expect(await until(() => wa.status === 'disconnected' && wa.reconnectTimeout !== null)).toBe(true);
+        releaseFirst({ version: [2, 3000, 0], isLatest: true });
+        await first;
+        expect(sockets).toHaveLength(0);
+        // The retry makes the one socket.
+        expect(await until(() => sockets.length === 1)).toBe(true);
+    });
+
+    test('a disconnect stops a try in flight: no socket with a login about to be deleted', async () => {
+        let release;
+        const fetchLatestBaileysVersion = jest.fn(() => new Promise(r => { release = r; }));
+        const { baileys, sockets } = fakeBaileys({ fetchLatestBaileysVersion });
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+
+        const first = wa.connect();
+        expect(await until(() => typeof release === 'function')).toBe(true);
+        await wa.disconnect(true);
+        release({ version: [2, 3000, 0], isLatest: true });
+        await first;
+        expect(sockets).toHaveLength(0);
+        expect(wa.status).toBe('disconnected');
+    });
+
+    test('his own Disconnect is not reported as a logout by WhatsApp', async () => {
+        // Baileys' logout() ends the socket with a 401 close at once, while
+        // the service still held it: the owner got "WhatsApp logged out".
+        paired(wa);
+        const { baileys, sockets } = fakeBaileys();
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+        await wa.connect();
+        const sock = sockets[0];
+        sock.ev.emit('connection.update', { connection: 'open' });
+        expect(await until(() => wa.status === 'connected')).toBe(true);
+        sock.logout = jest.fn(async () => {
+            sock.ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 401 } } } });
+        });
+
+        await wa.disconnect(true);
+
+        expect(sock.logout).toHaveBeenCalledTimes(1);
+        expect(axios.post).not.toHaveBeenCalled();
+        expect(fs.existsSync(wa.authFolder)).toBe(false);
+    });
+
+    test('a Disconnect on a socket still connecting ends it, though logout fails', async () => {
+        const { baileys, sockets } = fakeBaileys();
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+        await wa.connect();
+        const sock = sockets[0];
+        sock.logout = jest.fn().mockRejectedValue(new Error('Connection Closed'));
+        await wa.disconnect(true);
+        expect(sock.end).toHaveBeenCalled();
+        expect(wa.sock).toBeNull();
+    });
+
+    test('a socket the service let go of does not write the login', async () => {
+        const saves = [];
+        const useMultiFileAuthState = jest.fn(async () => { const saveCreds = jest.fn(); saves.push(saveCreds); return { state: {}, saveCreds }; });
+        const { baileys, sockets } = fakeBaileys({ useMultiFileAuthState });
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+        await wa.connect();
+        expect(await until(() => sockets.length >= 2)).toBe(true);
+        sockets[0].ev.emit('creds.update', { me: { id: 'x' } });
+        expect(saves[0]).not.toHaveBeenCalled();
+        sockets[1].ev.emit('creds.update', { me: { id: 'x' } });
+        expect(saves[1]).toHaveBeenCalledTimes(1);
     });
 
     test('WHATSAPP_CONNECT_WATCHDOG=0 turns the watchdog off', async () => {
@@ -296,6 +383,56 @@ describe('a WhatsApp connect try that never ends', () => {
             expect(alerts()).toEqual([]);
         });
 
+        test('a connected session that drops and stays down is reported', async () => {
+            // The incident: a session that was up, closed, and never came back.
+            paired(wa);
+            const { baileys, sockets } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.connect();
+            sockets[0].ev.emit('connection.update', { connection: 'open' });
+            expect(await until(() => wa.status === 'connected')).toBe(true);
+            expect(wa.downAlertTimer).toBeNull();
+
+            sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 428 } } } });
+            expect(await until(() => alerts().length === 1, 1000)).toBe(true);
+            expect(alerts()).toEqual([`whatsapp_down:${wa.sessionId}`]);
+        });
+
+        test.each(['needs_repair', 'scan_qr'])('a session in %s gets no down alert', async (status) => {
+            // needs_repair sent its own alert; scan_qr means someone is pairing.
+            paired(wa);
+            wa.status = status;
+            await wa._onDownTooLong();
+            expect(alerts()).toEqual([]);
+            expect(wa.downAlertSent).toBe(false);
+        });
+
+        test('a down alert the agent did not take is tried again, and only then counts as sent', async () => {
+            paired(wa);
+            axios.post.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+            const { baileys } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.connect();
+            expect(await until(() => axios.post.mock.calls.length === 1)).toBe(true);
+            expect(wa.downAlertSent).toBe(false);
+            expect(await until(() => axios.post.mock.calls.length === 2)).toBe(true);
+            expect(await until(() => wa.downAlertSent === true)).toBe(true);
+        });
+
+        test('WHATSAPP_DOWN_ALERT=0 also silences the logout and "back" alerts', async () => {
+            paired(wa);
+            process.env.WHATSAPP_DOWN_ALERT = '0';
+            const { baileys, sockets } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.connect();
+            wa.downAlertSent = true;
+            sockets[0].ev.emit('connection.update', { connection: 'open' });
+            sockets[0].logout = jest.fn().mockResolvedValue(undefined);
+            sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 401 } } } });
+            expect(await until(() => !fs.existsSync(wa.authFolder))).toBe(true);
+            expect(alerts()).toEqual([]);
+        });
+
         test('a QR nobody scanned is not reported as down, even with routing info on disk', async () => {
             // Baileys may save creds.json (routing info) before the QR is scanned.
             fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), JSON.stringify({ routingInfo: 'x' }));
@@ -321,6 +458,7 @@ describe('a WhatsApp connect try that never ends', () => {
             expect(await until(() => !fs.existsSync(wa.authFolder))).toBe(true);
             expect(alerts()).toEqual([`whatsapp_logged_out:${wa.sessionId}`]);
             // The wipe clears the down timer: nothing more follows.
+            expect(wa.downAlertTimer).toBeNull();
             await new Promise(r => setTimeout(r, 120));
             expect(alerts()).toHaveLength(1);
         });

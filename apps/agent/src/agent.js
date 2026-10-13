@@ -638,18 +638,25 @@ class Agent {
     const now = Date.now();
     const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h
     if (!this._systemAlertDedup) this._systemAlertDedup = new Map();
-    // "WhatsApp is connected again" answers a "down" alert he got, so it goes
-    // out exactly then: never alone, and never held back by its own cooldown
-    // (the two keys' cooldowns drift apart, and he would hear "down" with no
-    // "back"). Sessions whose "down" reached him wait here for their "back".
+    // A WhatsApp session's "down" and "connected again" alerts take turns,
+    // and the cooldown does not apply to them: with it, a second outage
+    // within 6 h went unreported, or its "back" came with no "down". He hears
+    // "down" once per outage (the interfaces service sends one per outage,
+    // after 15 minutes) and "back" only after a "down". Sessions whose "down"
+    // reached him wait here for their "back".
     if (!this._whatsappDownTold) this._whatsappDownTold = new Set();
     const back = /^whatsapp_up:(.+)$/.exec(String(key));
+    const down = /^whatsapp_down:(.+)$/.exec(String(key));
     if (back && !this._whatsappDownTold.has(back[1])) {
       console.log(`[Agent] No "down" alert went out for WhatsApp session '${back[1]}'; its "back" alert is not sent.`);
       return false;
     }
+    if (down && this._whatsappDownTold.has(down[1])) {
+      console.log(`[Agent] WhatsApp session '${down[1]}' is already reported down; not again before it is back.`);
+      return false;
+    }
     const last = this._systemAlertDedup.get(key);
-    if (!back && last && now - last < COOLDOWN_MS) {
+    if (!back && !down && last && now - last < COOLDOWN_MS) {
       console.log(`[Agent] Suppressing duplicate system alert (key='${key}', last sent ${Math.round((now - last) / 1000)}s ago).`);
       return false;
     }
@@ -690,7 +697,6 @@ class Agent {
     // otherwise try again on the next trigger.
     if (delivered || notified || queued) {
       this._systemAlertDedup.set(key, now);
-      const down = /^whatsapp_down:(.+)$/.exec(String(key));
       if (down) this._whatsappDownTold.add(down[1]);
       if (back) this._whatsappDownTold.delete(back[1]);
     }

@@ -250,13 +250,13 @@ class CommunicationExecutor extends BaseExecutor {
                         // picture or a voice note stays out of the ledger too:
                         // its row would hold megabytes.
                         const sent = await services.interface.send(payload);
-                        if (sent === false && toOwner && payload.type === 'image') {
+                        if (sent === false && toOwner && payload.type === 'image' && process.env.PICTURE_FALLBACK !== '0') {
                             // His other channel may be up: the picture goes
                             // there once, directly, with its words as the
                             // caption. A send that timed out may have landed,
                             // so he can get it twice; that beats losing it.
                             // Not a voice note: Telegram's voice send hides
-                            // its failures.
+                            // its failures. PICTURE_FALLBACK=0 turns this off.
                             const fb = typeof delivery.fallbackFor === 'function' ? delivery.fallbackFor(svc, metadata.chatId) : null;
                             if (fb && typeof delivery.buildMessage === 'function') {
                                 const fbSent = await services.interface.send(delivery.buildMessage({

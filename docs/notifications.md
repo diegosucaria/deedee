@@ -75,7 +75,8 @@ once, directly, to the other owner channel, with its words as the caption
 (`status: 'fallback'`). Telegram takes a caption up to 1024 characters,
 formatted like a text message; longer words follow the picture as a
 message. A picture Telegram refuses is reported as a failure, not covered
-by a "sorry" text (`generateImage` then says the image did not arrive). If the other
+by a "sorry" text (`generateImage` then says the image did not arrive).
+`PICTURE_FALLBACK=0` turns the picture's jump to the other channel off. If the other
 channel refuses it too, or for a voice note, its caption goes through the
 ledger as text. If the picture then goes out on a
 second try, the caption has arrived under it, and `retirePending` marks the
