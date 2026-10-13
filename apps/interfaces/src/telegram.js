@@ -202,6 +202,48 @@ class TelegramService {
       .replace(/>/g, '&gt;');
   }
 
+  /** Our Markdown (bold, italic, code, links, code blocks) as Telegram HTML. */
+  _toHTML(content) {
+    // Split by code blocks
+    const parts = content.split('```');
+    let finalMsg = '';
+
+    for (let i = 0; i < parts.length; i++) {
+      let part = parts[i];
+
+      if (i % 2 === 0) {
+        // Regular Text
+        // 1. Escape HTML special chars first
+        part = this._escapeHTML(part);
+
+        // 2. Convert Markdown to HTML
+        // Bold: **text** -> <b>text</b>
+        part = part.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+
+        // Italic: *text* -> <i>text</i> (safe since ** was already replaced above)
+        part = part.replace(/\*([^\*]+?)\*/g, '<i>$1</i>');
+
+        // Inline Code: `text` -> <code>text</code>
+        part = part.replace(/`([^`]+?)`/g, '<code>$1</code>');
+
+        // Links: [text](url) -> <a href="url">text</a>
+        // Note: URL might have escaped brackets? No, we escaped < > & only.
+        part = part.replace(/\[([^\]]+?)\]\(([^)]+?)\)/g, '<a href="$2">$1</a>');
+
+        finalMsg += part;
+      } else {
+        // Code Block
+        // Escape HTML
+        part = this._escapeHTML(part);
+        // Wrap in <pre><code> (Telegram treats <pre> as block)
+        // Removing leading newline often helps
+        if (part.startsWith('\n')) part = part.substring(1);
+        finalMsg += '<pre>' + part + '</pre>';
+      }
+    }
+    return finalMsg;
+  }
+
   /**
    * @param {string|number} chatId
    * @param {string} content
@@ -216,44 +258,7 @@ class TelegramService {
       return { duplicate: true };
     }
     try {
-      // Split by code blocks
-      const parts = content.split('```');
-      let finalMsg = '';
-
-      for (let i = 0; i < parts.length; i++) {
-        let part = parts[i];
-
-        if (i % 2 === 0) {
-          // Regular Text
-          // 1. Escape HTML special chars first
-          part = this._escapeHTML(part);
-
-          // 2. Convert Markdown to HTML
-          // Bold: **text** -> <b>text</b>
-          part = part.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-
-          // Italic: *text* -> <i>text</i> (safe since ** was already replaced above)
-          part = part.replace(/\*([^\*]+?)\*/g, '<i>$1</i>');
-
-          // Inline Code: `text` -> <code>text</code>
-          part = part.replace(/`([^`]+?)`/g, '<code>$1</code>');
-
-          // Links: [text](url) -> <a href="url">text</a>
-          // Note: URL might have escaped brackets? No, we escaped < > & only.
-          part = part.replace(/\[([^\]]+?)\]\(([^)]+?)\)/g, '<a href="$2">$1</a>');
-
-          finalMsg += part;
-        } else {
-          // Code Block
-          // Escape HTML
-          part = this._escapeHTML(part);
-          // Wrap in <pre><code> (Telegram treats <pre> as block)
-          // Removing leading newline often helps
-          if (part.startsWith('\n')) part = part.substring(1);
-          finalMsg += '<pre>' + part + '</pre>';
-        }
-      }
-
+      const finalMsg = this._toHTML(content);
       await this.bot.telegram.sendMessage(chatId, finalMsg, { parse_mode: 'HTML' });
 
     } catch (err) {
@@ -310,12 +315,33 @@ class TelegramService {
 
     console.log(`[Telegram] Sending photo to ${chatId}${text ? ` (caption: ${text.length} chars)` : ''}`);
     try {
-      await this.bot.telegram.sendPhoto(chatId, source, fits ? { caption: text } : undefined);
+      if (!fits) {
+        await this.bot.telegram.sendPhoto(chatId, source);
+      } else {
+        try {
+          // Formatted like a text message.
+          await this.bot.telegram.sendPhoto(chatId, source, { caption: this._toHTML(text), parse_mode: 'HTML' });
+        } catch (err) {
+          // Telegram refused the markup before it posted anything: send the
+          // words as they are. Any other error may mean it went out.
+          if (!/can't parse entities/i.test(err?.message || '')) throw err;
+          console.warn('[Telegram] Caption HTML refused; sending it as plain text.');
+          await this.bot.telegram.sendPhoto(chatId, source, { caption: text });
+        }
+      }
     } catch (err) {
       console.error('[Telegram] Failed to send photo:', err.message);
       throw err;
     }
-    if (text && !fits) await this.sendMessage(chatId, text);
+    if (text && !fits) {
+      // The picture is out. A failure here must not report it as lost, or a
+      // retry would send it a second time.
+      try {
+        await this.sendMessage(chatId, text);
+      } catch (err) {
+        console.error('[Telegram] The photo went out, but its text did not:', err.message);
+      }
+    }
   }
 }
 

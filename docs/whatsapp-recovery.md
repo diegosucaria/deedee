@@ -117,11 +117,16 @@ for four days. Its login was intact; every send failed at once with
     `WHATSAPP_CONNECT_WATCHDOG=0` turns the watchdog off.
 -   **Fix 3**: a `connect()` that throws (a disk error, say) now retries with
     the backoff when the session has a login, instead of staying down.
--   **Alerts**: a session with a login on disk that is not connected for 15
-    minutes (`DOWN_ALERT_MS`) sends one system alert (`whatsapp_down:<session>`),
-    and a second one when it connects again (`whatsapp_up:<session>`). A
-    session in `needs_repair` (it sent its own alert) or `scan_qr` sends
-    none. A logout by WhatsApp (401) sends `whatsapp_logged_out:<session>` at
+-   **Fix 4**: the version lookup (`fetchLatestBaileysVersion` reads GitHub)
+    can wait up to 5 minutes, longer than the watchdog. After 20 s
+    (`VERSION_FETCH_TIMEOUT_MS`) the socket uses the version Baileys ships with.
+-   **Alerts**: a session with a login on disk (a finished pairing:
+    `creds.json` with `me.id`) that is not connected for 15 minutes
+    (`DOWN_ALERT_MS`) sends one system alert (`whatsapp_down:<session>`),
+    and a second one when it connects again (`whatsapp_up:<session>`). The
+    agent sends "connected again" only after a "down" reached the owner, and
+    then always, whatever its own cooldown. A session in `needs_repair` (it
+    sent its own alert) or `scan_qr`, or a QR nobody scanned, sends none. A logout by WhatsApp (401) sends `whatsapp_logged_out:<session>` at
     once, then wipes the login as before. The down and logout alerts also
     leave a dashboard notification, since WhatsApp may be the channel that
     is down. `WHATSAPP_DOWN_ALERT=0` turns the down alert off.

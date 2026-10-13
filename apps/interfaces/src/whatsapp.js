@@ -857,12 +857,25 @@ class WhatsAppService {
         if (process.env.WHATSAPP_DOWN_ALERT === '0') return;
         // needs_repair sent its own alert; scan_qr means someone is pairing.
         if (['connected', 'needs_repair', 'scan_qr'].includes(this.status)) return;
-        // No login on disk: the owner disconnected it, or it was never paired.
-        if (!fs.existsSync(path.join(this.authFolder, 'creds.json'))) return;
+        // No login: the owner disconnected it, or it was never paired.
+        if (!this._hasLogin()) return;
         this.downAlertSent = true;
         const minutes = Math.round(this.downAlertMs / 60000);
         const text = `WhatsApp session "${this.sessionId}" has not been connected for ${minutes} minutes (status: ${this.status}). Deedee keeps trying to reconnect on its own. If it stays down, open Settings > Interfaces > WhatsApp and check that the phone is online and still lists Deedee as a linked device.`;
         await this._sendSystemAlert(text, `whatsapp_down:${this.sessionId}`);
+    }
+
+    /**
+     * A finished pairing on disk. Baileys can write creds.json before the QR
+     * is scanned (routing info), so the file alone is not a login.
+     */
+    _hasLogin() {
+        try {
+            const creds = JSON.parse(fs.readFileSync(path.join(this.authFolder, 'creds.json'), 'utf8'));
+            return !!creds?.me?.id;
+        } catch {
+            return false;
+        }
     }
 
     /** Deliver text to the owner verbatim through the agent (de-duplicated per key). */
@@ -1167,6 +1180,8 @@ class WhatsAppService {
 
                     if (this.status === 'scan_qr' && statusCode !== 515) {
                         console.log(`${this.logPrefix} Connection closed while scanning QR. Stopping auto-retry to prevent loop.`);
+                        // Nothing retries from here, so nothing is "down" to report.
+                        this._clearDownAlert();
                         this.status = 'disconnected';
                         this.qr = null;
                         this.sock = null;
@@ -1284,7 +1299,7 @@ class WhatsAppService {
             this.status = 'disconnected';
             // A paired session tries again with the backoff instead of
             // staying down until the service restarts.
-            if (fs.existsSync(path.join(this.authFolder, 'creds.json'))) {
+            if (this._hasLogin()) {
                 this._armDownAlert();
                 this._scheduleReconnect('Connect failed');
             }

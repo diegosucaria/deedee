@@ -156,22 +156,45 @@ describe('TelegramService Security', () => {
         beforeEach(() => {
             jest.spyOn(console, 'log').mockImplementation(() => { });
             jest.spyOn(console, 'error').mockImplementation(() => { });
+            jest.spyOn(console, 'warn').mockImplementation(() => { });
             service = new TelegramService('fake-token', 'http://agent:3000');
             tg = service.bot.telegram;
             tg.sendPhoto = jest.fn().mockResolvedValue({});
             tg.sendMessage.mockResolvedValue({});
         });
 
-        test('a picture keeps its words as the caption', async () => {
-            await service.sendPhoto('42', png, 'Good morning! Here is your briefing.');
-            expect(tg.sendPhoto).toHaveBeenCalledWith('42', { source: Buffer.from('png-bytes') }, { caption: 'Good morning! Here is your briefing.' });
+        test('a picture keeps its words as the caption, formatted like a text message', async () => {
+            await service.sendPhoto('42', png, 'Good morning! **WEATHER:** 12 < 18');
+            expect(tg.sendPhoto).toHaveBeenCalledTimes(1);
+            expect(tg.sendPhoto).toHaveBeenCalledWith('42', { source: Buffer.from('png-bytes') },
+                { caption: 'Good morning! <b>WEATHER:</b> 12 &lt; 18', parse_mode: 'HTML' });
             expect(tg.sendMessage).not.toHaveBeenCalled();
+        });
+
+        test('a caption Telegram cannot parse goes again as plain words', async () => {
+            tg.sendPhoto.mockRejectedValueOnce(new Error("400: Bad Request: can't parse entities: unsupported start tag"));
+            await service.sendPhoto('42', png, 'the [odd](words');
+            expect(tg.sendPhoto).toHaveBeenCalledTimes(2);
+            expect(tg.sendPhoto.mock.calls[1][2]).toEqual({ caption: 'the [odd](words' });
+        });
+
+        test('any other failure is not retried: the picture may have gone out', async () => {
+            tg.sendPhoto.mockRejectedValueOnce(new Error('socket hang up'));
+            await expect(service.sendPhoto('42', png, 'the words')).rejects.toThrow('socket hang up');
+            expect(tg.sendPhoto).toHaveBeenCalledTimes(1);
+        });
+
+        test('a picture that went out is not reported lost when its long text fails', async () => {
+            // Reported lost, the caller queued the words and a retry sent the picture twice.
+            tg.sendMessage.mockRejectedValue(new Error('network'));
+            await expect(service.sendPhoto('42', png, 'word '.repeat(300).trim())).resolves.toBeUndefined();
+            expect(tg.sendPhoto).toHaveBeenCalledTimes(1);
         });
 
         test('words too long for a caption follow the picture as a message', async () => {
             const long = 'word '.repeat(300).trim();
             await service.sendPhoto('42', png, long);
-            expect(tg.sendPhoto).toHaveBeenCalledWith('42', { source: Buffer.from('png-bytes') }, undefined);
+            expect(tg.sendPhoto).toHaveBeenCalledWith('42', { source: Buffer.from('png-bytes') });
             expect(tg.sendMessage).toHaveBeenCalledTimes(1);
             expect(tg.sendMessage.mock.calls[0][1]).toBe(long);
         });

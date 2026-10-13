@@ -193,6 +193,35 @@ describe('Agent core fixes', () => {
             expect(notifications.create).toHaveBeenCalledTimes(2);
         });
 
+        test('"connected again" follows every "down" he got, and never comes alone', async () => {
+            // The two keys had their own 6 h cooldowns: a second outage 6 h
+            // later was reported down, and its "back" was held back.
+            agent.interface.send.mockResolvedValue(true);
+            const sent = () => agent.interface.send.mock.calls.map(c => c[0].content);
+
+            expect(await agent.deliverSystemAlert('back', 'whatsapp_up:assistant')).toBe(false);
+            expect(sent()).toEqual([]);
+
+            const realNow = Date.now;
+            let t = realNow();
+            jest.spyOn(Date, 'now').mockImplementation(() => t);
+            try {
+                expect(await agent.deliverSystemAlert('down 1', 'whatsapp_down:assistant')).toBe(true);
+                t += 15 * 60e3;
+                expect(await agent.deliverSystemAlert('back 1', 'whatsapp_up:assistant')).toBe(true);
+                // A second "back" with no new "down" stays quiet.
+                expect(await agent.deliverSystemAlert('back again', 'whatsapp_up:assistant')).toBe(false);
+                // The next outage, just past the "down" cooldown, but under the "back" one.
+                t += 6 * 60 * 60e3 - 10 * 60e3;
+                expect(await agent.deliverSystemAlert('down 2', 'whatsapp_down:assistant')).toBe(true);
+                t += 5 * 60e3;
+                expect(await agent.deliverSystemAlert('back 2', 'whatsapp_up:assistant')).toBe(true);
+            } finally {
+                Date.now.mockRestore();
+            }
+            expect(sent()).toEqual(['down 1', 'back 1', 'down 2', 'back 2']);
+        });
+
         test('does not set the dedup when nothing reached anyone', async () => {
             agent.interface.send.mockResolvedValue(false);
             notifications.create.mockReturnValue(null); // persist failed

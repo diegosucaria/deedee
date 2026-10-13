@@ -72,9 +72,10 @@ minutes plus a margin with the defaults). A message to a contact never enters th
 direct try, and a refused try is reported. A picture or a voice note to the
 owner stays out too (its row would hold megabytes). A refused picture goes
 once, directly, to the other owner channel, with its words as the caption
-(`status: 'fallback'`). Telegram takes a caption up to 1024 characters;
-longer words follow the picture as a message, and a picture Telegram refuses
-is reported as a failure, not covered by a "sorry" text. If the other
+(`status: 'fallback'`). Telegram takes a caption up to 1024 characters,
+formatted like a text message; longer words follow the picture as a
+message. A picture Telegram refuses is reported as a failure, not covered
+by a "sorry" text (`generateImage` then says the image did not arrive). If the other
 channel refuses it too, or for a voice note, its caption goes through the
 ledger as text. If the picture then goes out on a
 second try, the caption has arrived under it, and `retirePending` marks the

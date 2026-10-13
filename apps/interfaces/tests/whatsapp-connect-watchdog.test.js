@@ -35,6 +35,9 @@ function fakeSocket() {
     return sock;
 }
 
+// A finished pairing: creds.json with the account's own id.
+const paired = (svc) => fs.writeFileSync(path.join(svc.authFolder, 'creds.json'), JSON.stringify({ me: { id: '15550100:1@s.whatsapp.net' } }));
+
 function fakeBaileys(overrides = {}) {
     const sockets = [];
     const baileys = {
@@ -223,7 +226,7 @@ describe('a WhatsApp connect try that never ends', () => {
     });
 
     test('a connect that throws tries again with the backoff when the session is paired', async () => {
-        fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), '{}');
+        paired(wa);
         const useMultiFileAuthState = jest.fn()
             .mockRejectedValueOnce(new Error('EIO: i/o error'))
             .mockResolvedValue({ state: {}, saveCreds: jest.fn() });
@@ -246,7 +249,7 @@ describe('a WhatsApp connect try that never ends', () => {
         });
 
         test('a paired session down too long tells him once, and again when it is back', async () => {
-            fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), '{}');
+            paired(wa);
             const { baileys, sockets } = fakeBaileys();
             jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
 
@@ -269,7 +272,7 @@ describe('a WhatsApp connect try that never ends', () => {
         });
 
         test('a session that opens in time sends nothing', async () => {
-            fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), '{}');
+            paired(wa);
             const { baileys, sockets } = fakeBaileys();
             jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
             await wa.start();
@@ -286,15 +289,29 @@ describe('a WhatsApp connect try that never ends', () => {
             await new Promise(r => setTimeout(r, 120));
             expect(alerts()).toEqual([]);
 
-            fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), '{}');
+            paired(wa);
             process.env.WHATSAPP_DOWN_ALERT = '0';
             wa._armDownAlert();
             await new Promise(r => setTimeout(r, 120));
             expect(alerts()).toEqual([]);
         });
 
+        test('a QR nobody scanned is not reported as down, even with routing info on disk', async () => {
+            // Baileys may save creds.json (routing info) before the QR is scanned.
+            fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), JSON.stringify({ routingInfo: 'x' }));
+            const { baileys, sockets } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.start();
+            sockets[0].ev.emit('connection.update', { qr: 'qr-ref' });
+            expect(await until(() => wa.status === 'scan_qr')).toBe(true);
+            sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 408 } } } });
+            expect(wa.status).toBe('disconnected');
+            await new Promise(r => setTimeout(r, 120));
+            expect(alerts()).toEqual([]);
+        });
+
         test('a logout by WhatsApp tells him at once and still wipes the login', async () => {
-            fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), '{}');
+            paired(wa);
             const { baileys, sockets } = fakeBaileys();
             sockets.length = 0;
             jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
