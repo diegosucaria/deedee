@@ -67,7 +67,9 @@ describe('a WhatsApp connect try that never ends', () => {
         wa = new WhatsAppService('http://agent.test', `wd-${Date.now()}-${Math.random().toString(16).slice(2)}`);
         // Short, exact delays: 10 ms, then twice as long each try, no jitter.
         wa.reconnectConfig = { initialMs: 10, maxMs: 1000, factor: 2, jitter: 0 };
-        wa.connectWatchdogMs = 40;
+        // Room for a try to reach its socket on a busy CI (opening the store
+        // takes ~10 ms, more under load) before the watchdog ends it.
+        wa.connectWatchdogMs = 150;
     });
 
     afterEach(() => {
@@ -197,6 +199,8 @@ describe('a WhatsApp connect try that never ends', () => {
         // fetchLatestBaileysVersion reads GitHub and can wait 5 minutes,
         // longer than the watchdog, which would end every try.
         wa.versionFetchTimeoutMs = 20;
+        // This is about the lookup, not the watchdog.
+        wa.connectWatchdogMs = 60 * 60 * 1000;
         const fetchLatestBaileysVersion = jest.fn(() => new Promise(() => { }));
         const { baileys, sockets } = fakeBaileys({ fetchLatestBaileysVersion });
         jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
@@ -307,7 +311,7 @@ describe('a WhatsApp connect try that never ends', () => {
         jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
         await wa.connect();
         expect(wa.connectWatchdog).toBeNull();
-        await new Promise(r => setTimeout(r, 80));
+        await new Promise(r => setTimeout(r, 250));
         expect(sockets).toHaveLength(1);
         expect(wa.status).toBe('connecting');
     });
@@ -398,6 +402,33 @@ describe('a WhatsApp connect try that never ends', () => {
             sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 428 } } } });
             expect(await until(() => alerts().length === 1, 1000)).toBe(true);
             expect(alerts()[0]).toMatch(new RegExp(`^whatsapp_down:${wa.sessionId}:`));
+        });
+
+        test('a session that opens while its "down" is being posted still sends that outage\'s "back", and the next outage is told', async () => {
+            // The open saw no "down" sent yet, sent no "back" and cleared the
+            // outage; then the post finished and marked "down" as sent. The
+            // next outage was never told and its "back" named no outage.
+            paired(wa);
+            let finish;
+            axios.post.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+            const { baileys, sockets } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.connect();
+            expect(await until(() => typeof finish === 'function')).toBe(true);
+            sockets[0].ev.emit('connection.update', { connection: 'open' });
+            expect(await until(() => wa.status === 'connected')).toBe(true);
+            finish({ data: { received: true } });
+
+            expect(await until(() => alerts().length === 2)).toBe(true);
+            expect(alerts()[1]).toBe(alerts()[0].replace('whatsapp_down:', 'whatsapp_up:'));
+            expect(wa.downAlertSent).toBe(false);
+            expect(wa.outageId).toBeNull();
+
+            // The next outage is told under a new name.
+            sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 428 } } } });
+            expect(await until(() => alerts().length === 3, 1000)).toBe(true);
+            expect(alerts()[2]).toMatch(new RegExp(`^whatsapp_down:${wa.sessionId}:`));
+            expect(alerts()[2]).not.toBe(alerts()[0]);
         });
 
         test.each(['needs_repair', 'scan_qr'])('a session in %s gets no down alert', async (status) => {

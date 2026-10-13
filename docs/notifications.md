@@ -82,6 +82,10 @@ ledger as text. If the picture then goes out on a
 second try, the caption has arrived under it, and `retirePending` marks the
 waiting text row sent so the words do not follow a second time.
 
+Before each send the ledger re-reads the row's status: a row retired
+(`retire()`) or marked sent (`retirePending`) after a tick claimed it does
+not go out.
+
 The nightly maintenance removes `sent` and `dead` rows older than 30 days.
 
 Same message twice: a retry carries the message id (`POST /send` body field

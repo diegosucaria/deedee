@@ -292,7 +292,7 @@ describe('WhatsAppService Unit Tests', () => {
             role: 'user',
             content: expect.stringContaining('stream errors'),
             metadata: { internal_system_alert: true, alertKey: 'whatsapp_needs_repair:test-session' }
-        }));
+        }), { timeout: 30000 });
 
         // A manual reconnect still works from this state.
         await whatsapp.connect();

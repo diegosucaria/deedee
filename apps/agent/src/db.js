@@ -4507,9 +4507,9 @@ class AgentDB {
     return this._mapOutboxRow(this.db.prepare('SELECT * FROM notification_outbox WHERE id = ?').get(id));
   }
 
-  /** Rows from one origin that are still waiting to go out. */
-  listWaitingOutboxByOrigin(origin) {
-    return this.db.prepare(`SELECT * FROM notification_outbox WHERE origin = ? AND status IN ('pending', 'failed')`)
+  /** Rows from one origin, any status. */
+  listOutboxByOrigin(origin) {
+    return this.db.prepare('SELECT * FROM notification_outbox WHERE origin = ?')
       .all(origin).map(r => this._mapOutboxRow(r));
   }
 

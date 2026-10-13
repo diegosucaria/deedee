@@ -278,6 +278,11 @@ class DeliveryService {
      * @param {string} why
      * @returns {boolean} true when a waiting row was retired
      */
+    /** A send of this row is under way. */
+    isInFlight(id) {
+        return this._inFlight.has(id);
+    }
+
     retire(id, why) {
         try {
             if (!id || !this.hasLedger() || typeof this.db.getOutboxRow !== 'function' || typeof this.db.deadLetterOutbox !== 'function') return false;
@@ -431,6 +436,12 @@ class DeliveryService {
         }
         this._inFlight.add(row.id);
         try {
+            // A row retired or marked sent since it was claimed (retire(),
+            // retirePending) does not go out: the tick's copy is a snapshot.
+            const fresh = typeof this.db.getOutboxRow === 'function' ? this.db.getOutboxRow(row.id) : null;
+            if (fresh && (fresh.status === 'dead' || fresh.status === 'sent')) {
+                return { delivered: fresh.status === 'sent', id: row.id, status: fresh.status, settled: true };
+            }
             if (this._settledCard(row)) {
                 const dead = this.db.deadLetterOutbox(row.id, 'the card no longer waits for an answer');
                 console.log(`[Delivery] Card row ${row.id} not sent: its question is settled.`);

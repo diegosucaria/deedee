@@ -865,7 +865,18 @@ class WhatsAppService {
         const text = `WhatsApp session "${this.sessionId}" has not been connected for ${minutes} minutes (status: ${this.status}). Deedee keeps trying to reconnect on its own. If it stays down, open Settings > Interfaces > WhatsApp and check that the phone is online and still lists Deedee as a linked device.`;
         // A retry of the same outage keeps its name.
         if (!this.outageId) this.outageId = Date.now().toString(36);
-        if (await this._sendSystemAlert(text, `whatsapp_down:${this.sessionId}:${this.outageId}`)) {
+        const outage = this.outageId;
+        const took = await this._sendSystemAlert(text, `whatsapp_down:${this.sessionId}:${outage}`);
+        if (this.outageId !== outage) {
+            // The session opened (or was reset) while the alert was on its
+            // way, so the open sent no "back". Send it now; the agent sends
+            // it only if this "down" reached him.
+            if (took && this.status === 'connected' && process.env.WHATSAPP_DOWN_ALERT !== '0') {
+                await this._sendSystemAlert(`WhatsApp session "${this.sessionId}" is connected again.`, `whatsapp_up:${this.sessionId}:${outage}`);
+            }
+            return;
+        }
+        if (took) {
             this.downAlertSent = true;
         } else {
             // The agent did not take it: try again after another wait.
@@ -899,7 +910,7 @@ class WhatsAppService {
                 // internal_system_alert: delivered to the owner verbatim and
                 // de-duplicated by the agent (same path as the Slack token alert).
                 metadata: { internal_system_alert: true, alertKey },
-            });
+            }, { timeout: 30000 });
             return true;
         } catch (err) {
             console.error(`${this.logPrefix} Failed to send the ${alertKey} alert:`, err?.message);

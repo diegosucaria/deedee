@@ -126,11 +126,17 @@ for four days. Its login was intact; every send failed at once with
     connects again. Each names its outage: `whatsapp_down:<session>:<outage>`
     and `whatsapp_up:<session>:<outage>`. So the agent's 6 h repeat filter
     keeps out only a retry of the same outage, and a restart or a reset that
-    sent no "back" cannot hide the next outage. The agent sends "connected
-    again" only for an outage whose "down" reached the owner; if that "down"
-    is still waiting in the ledger, it drops both, so a stale "down" never
-    arrives after "back". An alert the agent did not take is tried again
-    after another 15 minutes. A session in `needs_repair` (it sent its own
+    sent no "back" cannot hide the next outage. The ledger decides "back"
+    (it survives a restart): the agent sends "connected again" only when
+    that outage's "down" row is `sent`. It first waits for a send of that
+    row still under way. A "down" still waiting is retired and "back" is
+    dropped with it, so a stale "down" never arrives after "back"; a "down"
+    the ledger gave up on gets no lone "back" either. The ledger re-reads a
+    row's status before each send, so a row retired after a tick claimed it
+    stays unsent. If the session opens while its "down" is being posted,
+    the interfaces service sends that outage's "back" once the post is
+    done. An alert the agent did not take is tried again after another 15
+    minutes. A session in `needs_repair` (it sent its own
     alert) or `scan_qr`, or a QR nobody scanned, sends none. A logout by
     WhatsApp (401) sends `whatsapp_logged_out:<session>` at
     once, then wipes the login as before. The owner's own Disconnect sends
