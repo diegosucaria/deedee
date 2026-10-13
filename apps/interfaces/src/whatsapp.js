@@ -22,6 +22,9 @@ const CONNECT_WATCHDOG_MS = 4 * 60 * 1000;
 // A paired session down this long tells the owner once.
 // WHATSAPP_DOWN_ALERT=0 turns it off.
 const DOWN_ALERT_MS = 15 * 60 * 1000;
+// The version lookup reads GitHub and can wait up to 5 minutes, longer than
+// the watchdog. Past this, the socket uses the version Baileys ships with.
+const VERSION_FETCH_TIMEOUT_MS = 20 * 1000;
 
 function convertToOpus(wavBuffer) {
     if (!wavBuffer || wavBuffer.length === 0) {
@@ -720,6 +723,7 @@ class WhatsAppService {
         this.connectWatchdogMs = CONNECT_WATCHDOG_MS;
         this.connectWatchdog = null;
         this.downAlertMs = DOWN_ALERT_MS;
+        this.versionFetchTimeoutMs = VERSION_FETCH_TIMEOUT_MS;
         this.downAlertTimer = null;
         this.downAlertSent = false;
 
@@ -767,6 +771,26 @@ class WhatsAppService {
         this.reconnectAttempts++;
         if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
         this.reconnectTimeout = setTimeout(() => this.connect(), delayMs);
+    }
+
+    /** The newest WhatsApp Web version, or null to use the one Baileys ships with. */
+    async _latestVersion(fetchLatestBaileysVersion) {
+        let timer;
+        const tooLong = new Promise(resolve => {
+            timer = setTimeout(() => resolve(null), this.versionFetchTimeoutMs);
+            timer.unref?.();
+        });
+        try {
+            const res = await Promise.race([Promise.resolve().then(() => fetchLatestBaileysVersion()).catch(() => null), tooLong]);
+            if (Array.isArray(res?.version)) {
+                console.log(`${this.logPrefix} using WA v${res.version.join('.')}, isLatest: ${res.isLatest}`);
+                return res;
+            }
+            console.warn(`${this.logPrefix} The WhatsApp version lookup failed or took over ${Math.round(this.versionFetchTimeoutMs / 1000)}s; using the version Baileys ships with.`);
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
     }
 
     _armConnectWatchdog(tryId) {
@@ -954,16 +978,16 @@ class WhatsAppService {
 
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
             if (superseded()) return;
-            const { version, isLatest } = await fetchLatestBaileysVersion();
+            const latest = await this._latestVersion(fetchLatestBaileysVersion);
             if (superseded()) return;
-            console.log(`${this.logPrefix} using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
             // Protocol Self-Healing (Issue #2135 Fix)
             // 1. Retry Cache: Tracks how many times a message ID has been requested for retry
             this.msgRetryCounterCache = this.msgRetryCounterCache || new Map();
 
             const sock = this.sock = makeWASocket({
-                version,
+                // Unknown: leave the key out, so Baileys keeps its own default.
+                ...(latest ? { version: latest.version } : {}),
                 auth: state,
                 defaultQueryTimeoutMs: undefined, // endless
                 connectTimeoutMs: 180000, // 3 minutes

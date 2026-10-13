@@ -182,6 +182,35 @@ describe('a WhatsApp connect try that never ends', () => {
         expect(wa.status).toBe('connected');
     });
 
+    test('a version lookup that hangs does not hold the try: Baileys keeps its own version', async () => {
+        // fetchLatestBaileysVersion reads GitHub and can wait 5 minutes,
+        // longer than the watchdog, which would end every try.
+        wa.versionFetchTimeoutMs = 20;
+        const fetchLatestBaileysVersion = jest.fn(() => new Promise(() => { }));
+        const { baileys, sockets } = fakeBaileys({ fetchLatestBaileysVersion });
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+        await wa.connect();
+        expect(sockets).toHaveLength(1);
+        const cfg = baileys.default.mock.calls[0][0];
+        // The key is left out, not set to undefined: Baileys spreads its
+        // defaults first, and an undefined would replace its version.
+        expect('version' in cfg).toBe(false);
+
+        // A lookup that answers keeps the version it found.
+        const { baileys: b2 } = fakeBaileys();
+        const wa2 = new WhatsAppService('http://agent.test', `${wa.sessionId}-2`);
+        jest.spyOn(wa2, '_importBaileys').mockResolvedValue(b2);
+        try {
+            await wa2.connect();
+            expect(b2.default.mock.calls[0][0].version).toEqual([2, 3000, 0]);
+        } finally {
+            wa2._clearConnectWatchdog();
+            clearInterval(wa2.store.queueFlushInterval);
+            wa2.store.close();
+            fs.rmSync(wa2.authFolder, { recursive: true, force: true });
+        }
+    });
+
     test('WHATSAPP_CONNECT_WATCHDOG=0 turns the watchdog off', async () => {
         process.env.WHATSAPP_CONNECT_WATCHDOG = '0';
         const { baileys, sockets } = fakeBaileys();
