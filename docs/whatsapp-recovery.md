@@ -126,17 +126,21 @@ for four days. Its login was intact; every send failed at once with
     connects again. Each names its outage: `whatsapp_down:<session>:<outage>`
     and `whatsapp_up:<session>:<outage>`. So the agent's 6 h repeat filter
     keeps out only a retry of the same outage, and a restart or a reset that
-    sent no "back" cannot hide the next outage. The ledger decides "back"
-    (it survives a restart): the agent sends "connected again" only when
-    that outage's "down" row is `sent`. It first waits for a send of that
-    row still under way. A "down" still waiting is retired and "back" is
-    dropped with it, so a stale "down" never arrives after "back"; a "down"
-    the ledger gave up on gets no lone "back" either. The ledger re-reads a
-    row's status before each send, so a row retired after a tick claimed it
-    stays unsent. If the session opens while its "down" is being posted,
-    the interfaces service sends that outage's "back" once the post is
-    done. An alert the agent did not take is tried again after another 15
-    minutes. A session in `needs_repair` (it sent its own
+    sent no "back" cannot hide the next outage. Every open is reported to
+    the agent as a "back" with the outage it ends (`none` when the process
+    knows of none: after a reset or a restart); a report that fails is
+    tried again, up to 5 times a minute apart, while the session stays up.
+    The ledger decides (it survives a restart): the agent sends "connected
+    again" only when that outage's "down" row is `sent`, after waiting for
+    a send of it still under way. On any report it retires every "down" of
+    that session still waiting, so a stale "down" never arrives after the
+    session is back; a "down" the ledger gave up on gets no lone "back"
+    either. A new "down" retires a "back" of that session still waiting.
+    The ledger re-reads a row's status before each send, so a row retired
+    after a tick claimed it stays unsent. If the session opens while its
+    "down" is being posted, the interfaces service reports that outage
+    again once the post is done (the agent sends "back" once). An alert
+    the agent did not take is tried again after another 15 minutes. A session in `needs_repair` (it sent its own
     alert) or `scan_qr`, or a QR nobody scanned, sends none. A logout by
     WhatsApp (401) sends `whatsapp_logged_out:<session>` at
     once, then wipes the login as before. The owner's own Disconnect sends

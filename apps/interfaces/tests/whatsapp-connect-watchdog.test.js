@@ -277,7 +277,8 @@ describe('a WhatsApp connect try that never ends', () => {
         await wa.disconnect(true);
 
         expect(sock.logout).toHaveBeenCalledTimes(1);
-        expect(axios.post).not.toHaveBeenCalled();
+        // Only the open was reported; no "logged out".
+        expect(axios.post.mock.calls.map(c => c[1].metadata.alertKey)).toEqual([`whatsapp_up:${wa.sessionId}:none`]);
         expect(fs.existsSync(wa.authFolder)).toBe(false);
     });
 
@@ -364,14 +365,30 @@ describe('a WhatsApp connect try that never ends', () => {
             expect(wa.outageId).toBeNull();
         });
 
-        test('a session that opens in time sends nothing', async () => {
+        test('a session that opens in time sends no "down", only the report of the open', async () => {
             paired(wa);
             const { baileys, sockets } = fakeBaileys();
             jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
             await wa.start();
             sockets[0].ev.emit('connection.update', { connection: 'open' });
             await new Promise(r => setTimeout(r, 120));
-            expect(alerts()).toEqual([]);
+            // 'none': no outage known. The agent says nothing to him for it,
+            // but drops any "down" of this session still waiting (after a
+            // reset or a restart, the open names no outage).
+            expect(alerts()).toEqual([`whatsapp_up:${wa.sessionId}:none`]);
+        });
+
+        test('a report of the open that fails is tried again while the session stays up', async () => {
+            // The agent may be restarting; a lost report left a queued "down" to go out later.
+            wa.backAlertRetryMs = 20;
+            paired(wa);
+            axios.post.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+            const { baileys, sockets } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.connect();
+            sockets[0].ev.emit('connection.update', { connection: 'open' });
+            expect(await until(() => alerts().length === 2)).toBe(true);
+            expect(alerts()).toEqual([`whatsapp_up:${wa.sessionId}:none`, `whatsapp_up:${wa.sessionId}:none`]);
         });
 
         test('no login on disk, or WHATSAPP_DOWN_ALERT=0: no alert', async () => {
@@ -400,8 +417,10 @@ describe('a WhatsApp connect try that never ends', () => {
             expect(wa.downAlertTimer).toBeNull();
 
             sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 428 } } } });
-            expect(await until(() => alerts().length === 1, 1000)).toBe(true);
-            expect(alerts()[0]).toMatch(new RegExp(`^whatsapp_down:${wa.sessionId}:`));
+            // The open's report first, then the outage.
+            expect(await until(() => alerts().length === 2, 1000)).toBe(true);
+            expect(alerts()[0]).toBe(`whatsapp_up:${wa.sessionId}:none`);
+            expect(alerts()[1]).toMatch(new RegExp(`^whatsapp_down:${wa.sessionId}:`));
         });
 
         test('a session that opens while its "down" is being posted still sends that outage\'s "back", and the next outage is told', async () => {
@@ -419,16 +438,20 @@ describe('a WhatsApp connect try that never ends', () => {
             expect(await until(() => wa.status === 'connected')).toBe(true);
             finish({ data: { received: true } });
 
-            expect(await until(() => alerts().length === 2)).toBe(true);
-            expect(alerts()[1]).toBe(alerts()[0].replace('whatsapp_down:', 'whatsapp_up:'));
+            // The open reports that outage; so does the end of the post, in
+            // case the open's report reached the agent before the "down".
+            // The agent sends "back" once (same key, repeat filter).
+            expect(await until(() => alerts().length === 3)).toBe(true);
+            const up = alerts()[0].replace('whatsapp_down:', 'whatsapp_up:');
+            expect(alerts().slice(1)).toEqual([up, up]);
             expect(wa.downAlertSent).toBe(false);
             expect(wa.outageId).toBeNull();
 
             // The next outage is told under a new name.
             sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 428 } } } });
-            expect(await until(() => alerts().length === 3, 1000)).toBe(true);
-            expect(alerts()[2]).toMatch(new RegExp(`^whatsapp_down:${wa.sessionId}:`));
-            expect(alerts()[2]).not.toBe(alerts()[0]);
+            expect(await until(() => alerts().length === 4, 1000)).toBe(true);
+            expect(alerts()[3]).toMatch(new RegExp(`^whatsapp_down:${wa.sessionId}:`));
+            expect(alerts()[3]).not.toBe(alerts()[0]);
         });
 
         test.each(['needs_repair', 'scan_qr'])('a session in %s gets no down alert', async (status) => {

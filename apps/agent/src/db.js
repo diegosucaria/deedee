@@ -651,6 +651,8 @@ class AgentDB {
         ON notification_outbox(status, next_attempt_at);
       CREATE INDEX IF NOT EXISTS idx_outbox_dedupe
         ON notification_outbox(kind, target, content_hash, created_at);
+      CREATE INDEX IF NOT EXISTS idx_outbox_origin
+        ON notification_outbox(origin);
 
       CREATE TABLE IF NOT EXISTS pending_confirmations (
         id TEXT PRIMARY KEY,
@@ -4507,10 +4509,13 @@ class AgentDB {
     return this._mapOutboxRow(this.db.prepare('SELECT * FROM notification_outbox WHERE id = ?').get(id));
   }
 
-  /** Rows from one origin, any status. */
-  listOutboxByOrigin(origin) {
-    return this.db.prepare('SELECT * FROM notification_outbox WHERE origin = ?')
-      .all(origin).map(r => this._mapOutboxRow(r));
+  /**
+   * Id, origin and status of the rows whose origin starts with prefix. The
+   * payload is left out: it can hold megabytes of picture.
+   */
+  listOutboxStatusByOriginPrefix(prefix) {
+    return this.db.prepare('SELECT id, origin, status FROM notification_outbox WHERE origin >= ? AND origin < ?')
+      .all(prefix, `${prefix}\uffff`);
   }
 
   /**

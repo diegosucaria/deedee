@@ -148,6 +148,39 @@ describe('WhatsApp outage alerts', () => {
         expect(db.listRecentOutbox({ limit: 5 })[0].status).toBe('dead');
     });
 
+    test('any report that the session is back retires its waiting "down" alerts, even one naming no outage', async () => {
+        // He reset the session (or the interfaces service restarted): its
+        // open names no outage, and a queued "down" went out on the next tick.
+        send.mockResolvedValue(false);
+        expect(await alert('down 1', 'whatsapp_down:assistant:o1')).toBe(true);
+        const [row] = db.listRecentOutbox({ limit: 5 });
+        send.mockResolvedValue(true);
+        expect(await alert('back', 'whatsapp_up:assistant:none')).toBe(false);
+        expect(db.getOutboxRow(row.id).status).toBe('dead');
+        await tickDue();
+        expect(said()).toEqual(['down 1']); // the first, refused try only
+        // Another session's queued alert is left alone.
+        send.mockResolvedValue(false);
+        await alert('user down', 'whatsapp_down:user:o2');
+        send.mockResolvedValue(true);
+        await alert('back', 'whatsapp_up:assistant:none');
+        expect(db.listRecentOutbox({ limit: 5 }).find(r => r.origin === 'whatsapp_down:user:o2').status).toBe('failed');
+    });
+
+    test('a "back" still waiting is retired when the session goes down again', async () => {
+        expect(await alert('down 1', 'whatsapp_down:user:o1')).toBe(true);
+        send.mockResolvedValue(false);
+        expect(await alert('back 1', 'whatsapp_up:user:o1')).toBe(true);
+        const upRow = db.listRecentOutbox({ limit: 5 }).find(r => r.origin === 'whatsapp_up:user:o1');
+        expect(upRow.status).toBe('failed');
+        send.mockResolvedValue(true);
+        expect(await alert('down 2', 'whatsapp_down:user:o2')).toBe(true);
+        expect(db.getOutboxRow(upRow.id).status).toBe('dead');
+        await tickDue();
+        expect(said().filter(t => t === 'back 1')).toHaveLength(1); // the refused first try only
+        expect(said().at(-1)).toBe('down 2');
+    });
+
     test('a "down" the ledger gave up on is not followed by a lone "back"', async () => {
         send.mockResolvedValue(false);
         expect(await alert('down 1', 'whatsapp_down:assistant:o1')).toBe(true);

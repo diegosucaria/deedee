@@ -728,6 +728,7 @@ class WhatsAppService {
         this.downAlertSent = false;
         // Names the outage in its alert keys, so "back" matches its "down".
         this.outageId = null;
+        this.backAlertRetryMs = 60 * 1000;
 
         // Reconnection Config (Standard)
         this.reconnectConfig = {
@@ -871,9 +872,7 @@ class WhatsAppService {
             // The session opened (or was reset) while the alert was on its
             // way, so the open sent no "back". Send it now; the agent sends
             // it only if this "down" reached him.
-            if (took && this.status === 'connected' && process.env.WHATSAPP_DOWN_ALERT !== '0') {
-                await this._sendSystemAlert(`WhatsApp session "${this.sessionId}" is connected again.`, `whatsapp_up:${this.sessionId}:${outage}`);
-            }
+            if (took && this.status === 'connected') this._sendBackAlert(outage);
             return;
         }
         if (took) {
@@ -882,6 +881,20 @@ class WhatsAppService {
             // The agent did not take it: try again after another wait.
             this._armDownAlert();
         }
+    }
+
+    /**
+     * Tell the agent the session is back. A post that fails is tried again
+     * (the agent may be restarting) while the session stays connected.
+     */
+    async _sendBackAlert(outage, triesLeft = 5) {
+        if (process.env.WHATSAPP_DOWN_ALERT === '0') return;
+        const ok = await this._sendSystemAlert(`WhatsApp session "${this.sessionId}" is connected again.`, `whatsapp_up:${this.sessionId}:${outage}`);
+        if (ok || triesLeft <= 1) return;
+        const timer = setTimeout(() => {
+            if (this.status === 'connected') this._sendBackAlert(outage, triesLeft - 1);
+        }, this.backAlertRetryMs);
+        timer.unref?.();
     }
 
     /**
@@ -1236,11 +1249,13 @@ class WhatsAppService {
                     this.reconnectAttempts = 0; // Reset counter on success
                     this.streamErrorCount = 0;
                     this._clearDownAlert();
-                    if (this.downAlertSent) {
-                        // He was told it was down; tell him it is back.
-                        this.downAlertSent = false;
-                        if (process.env.WHATSAPP_DOWN_ALERT !== '0') this._sendSystemAlert(`WhatsApp session "${this.sessionId}" is connected again.`, `whatsapp_up:${this.sessionId}:${this.outageId}`);
-                    }
+                    // Every open is reported, with the outage it ends ('none'
+                    // when this process knows of none: after a reset or a
+                    // restart). The agent says "connected again" only if
+                    // that outage's "down" reached him, and drops any "down"
+                    // of this session still waiting.
+                    this._sendBackAlert(this.outageId || 'none');
+                    this.downAlertSent = false;
                     this.outageId = null;
 
                     // Start Heartbeat
