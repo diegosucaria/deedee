@@ -638,28 +638,35 @@ class Agent {
     const now = Date.now();
     const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h
     if (!this._systemAlertDedup) this._systemAlertDedup = new Map();
-    // A WhatsApp session's "down" and "connected again" alerts take turns,
-    // and the cooldown does not apply to them: with it, a second outage
-    // within 6 h went unreported, or its "back" came with no "down". He hears
-    // "down" once per outage (the interfaces service sends one per outage,
-    // after 15 minutes) and "back" only after a "down". Sessions whose "down"
-    // reached him wait here for their "back".
+    // A WhatsApp session's "down" and "connected again" alerts name the
+    // outage they belong to (whatsapp_down:<session>:<outage>), so each
+    // outage is told once whatever happened before (a restart, a reset) and
+    // the cooldown keeps out only a repeat of the same one. "Back" goes out
+    // only for an outage whose "down" reached him. A "down" still waiting in
+    // the queue when the session is back never reached him: both are dropped,
+    // so a stale "down" cannot arrive after "back".
     if (!this._whatsappDownTold) this._whatsappDownTold = new Set();
     const back = /^whatsapp_up:(.+)$/.exec(String(key));
     const down = /^whatsapp_down:(.+)$/.exec(String(key));
-    if (back && !this._whatsappDownTold.has(back[1])) {
-      console.log(`[Agent] No "down" alert went out for WhatsApp session '${back[1]}'; its "back" alert is not sent.`);
-      return false;
-    }
-    if (down && this._whatsappDownTold.has(down[1])) {
-      console.log(`[Agent] WhatsApp session '${down[1]}' is already reported down; not again before it is back.`);
-      return false;
+    if (back) {
+      if (!this._whatsappDownTold.has(back[1])) {
+        console.log(`[Agent] No "down" alert went out for WhatsApp outage '${back[1]}'; its "back" alert is not sent.`);
+        return false;
+      }
+      if (this._retireWaitingAlert(`whatsapp_down:${back[1]}`)) {
+        this._whatsappDownTold.delete(back[1]);
+        console.log(`[Agent] WhatsApp outage '${back[1]}' ended before its "down" alert went out; neither is sent.`);
+        return false;
+      }
     }
     const last = this._systemAlertDedup.get(key);
-    if (!back && !down && last && now - last < COOLDOWN_MS) {
+    if (last && now - last < COOLDOWN_MS) {
       console.log(`[Agent] Suppressing duplicate system alert (key='${key}', last sent ${Math.round((now - last) / 1000)}s ago).`);
       return false;
     }
+    // Counted before the send: a "back" that comes while it is in flight
+    // must find it.
+    if (down) this._whatsappDownTold.add(down[1]);
 
     // A WhatsApp session that is down (needs repair, stuck, logged out) may
     // be the very channel this alert goes through, so it always leaves a
@@ -697,10 +704,26 @@ class Agent {
     // otherwise try again on the next trigger.
     if (delivered || notified || queued) {
       this._systemAlertDedup.set(key, now);
-      if (down) this._whatsappDownTold.add(down[1]);
       if (back) this._whatsappDownTold.delete(back[1]);
+    } else if (down) {
+      this._whatsappDownTold.delete(down[1]);
     }
     return delivered || notified || queued;
+  }
+
+  /**
+   * Drop the alert rows with this origin that still wait in the ledger.
+   * @returns {boolean} true when one was waiting
+   */
+  _retireWaitingAlert(origin) {
+    try {
+      const rows = this.db.listWaitingOutboxByOrigin?.(origin) || [];
+      for (const row of rows) this.db.deadLetterOutbox(row.id, 'no longer true: the outage ended before it was delivered');
+      return rows.length > 0;
+    } catch (e) {
+      console.warn('[Agent] Could not check the queued alerts:', e.message);
+      return false;
+    }
   }
 
   /**

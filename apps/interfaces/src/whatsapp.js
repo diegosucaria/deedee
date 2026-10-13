@@ -726,6 +726,8 @@ class WhatsAppService {
         this.versionFetchTimeoutMs = VERSION_FETCH_TIMEOUT_MS;
         this.downAlertTimer = null;
         this.downAlertSent = false;
+        // Names the outage in its alert keys, so "back" matches its "down".
+        this.outageId = null;
 
         // Reconnection Config (Standard)
         this.reconnectConfig = {
@@ -861,7 +863,9 @@ class WhatsAppService {
         if (!this._hasLogin()) return;
         const minutes = Math.round(this.downAlertMs / 60000);
         const text = `WhatsApp session "${this.sessionId}" has not been connected for ${minutes} minutes (status: ${this.status}). Deedee keeps trying to reconnect on its own. If it stays down, open Settings > Interfaces > WhatsApp and check that the phone is online and still lists Deedee as a linked device.`;
-        if (await this._sendSystemAlert(text, `whatsapp_down:${this.sessionId}`)) {
+        // A retry of the same outage keeps its name.
+        if (!this.outageId) this.outageId = Date.now().toString(36);
+        if (await this._sendSystemAlert(text, `whatsapp_down:${this.sessionId}:${this.outageId}`)) {
             this.downAlertSent = true;
         } else {
             // The agent did not take it: try again after another wait.
@@ -1224,8 +1228,9 @@ class WhatsAppService {
                     if (this.downAlertSent) {
                         // He was told it was down; tell him it is back.
                         this.downAlertSent = false;
-                        if (process.env.WHATSAPP_DOWN_ALERT !== '0') this._sendSystemAlert(`WhatsApp session "${this.sessionId}" is connected again.`, `whatsapp_up:${this.sessionId}`);
+                        if (process.env.WHATSAPP_DOWN_ALERT !== '0') this._sendSystemAlert(`WhatsApp session "${this.sessionId}" is connected again.`, `whatsapp_up:${this.sessionId}:${this.outageId}`);
                     }
+                    this.outageId = null;
 
                     // Start Heartbeat
                     this.startHeartbeatLoop();
@@ -1622,6 +1627,7 @@ class WhatsAppService {
             // No login left, so nothing is down that he must hear about.
             this._clearDownAlert();
             this.downAlertSent = false;
+            this.outageId = null;
         }
         try {
             console.log(`${this.logPrefix} Disconnecting... (Clear: ${clearSession})`);

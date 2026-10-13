@@ -342,7 +342,8 @@ describe('a WhatsApp connect try that never ends', () => {
 
             await wa.start();
             expect(await until(() => alerts().length === 1)).toBe(true);
-            expect(alerts()).toEqual([`whatsapp_down:${wa.sessionId}`]);
+            // The key names the outage, so "back" can match its "down".
+            expect(alerts()[0]).toMatch(new RegExp(`^whatsapp_down:${wa.sessionId}:[a-z0-9]+$`));
             expect(axios.post.mock.calls[0][1]).toMatchObject({
                 source: 'system',
                 content: expect.stringMatching(new RegExp(`"${wa.sessionId}" has not been connected for \\d+ minutes \\(status: connecting\\)`)),
@@ -355,7 +356,8 @@ describe('a WhatsApp connect try that never ends', () => {
 
             sockets[0].ev.emit('connection.update', { connection: 'open' });
             expect(await until(() => alerts().length === 2)).toBe(true);
-            expect(alerts()[1]).toBe(`whatsapp_up:${wa.sessionId}`);
+            expect(alerts()[1]).toBe(alerts()[0].replace('whatsapp_down:', 'whatsapp_up:'));
+            expect(wa.outageId).toBeNull();
         });
 
         test('a session that opens in time sends nothing', async () => {
@@ -395,7 +397,7 @@ describe('a WhatsApp connect try that never ends', () => {
 
             sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 428 } } } });
             expect(await until(() => alerts().length === 1, 1000)).toBe(true);
-            expect(alerts()).toEqual([`whatsapp_down:${wa.sessionId}`]);
+            expect(alerts()[0]).toMatch(new RegExp(`^whatsapp_down:${wa.sessionId}:`));
         });
 
         test.each(['needs_repair', 'scan_qr'])('a session in %s gets no down alert', async (status) => {
@@ -417,6 +419,8 @@ describe('a WhatsApp connect try that never ends', () => {
             expect(wa.downAlertSent).toBe(false);
             expect(await until(() => axios.post.mock.calls.length === 2)).toBe(true);
             expect(await until(() => wa.downAlertSent === true)).toBe(true);
+            // The retry names the same outage.
+            expect(alerts()[1]).toBe(alerts()[0]);
         });
 
         test('WHATSAPP_DOWN_ALERT=0 also silences the logout and "back" alerts', async () => {

@@ -122,14 +122,17 @@ for four days. Its login was intact; every send failed at once with
     (`VERSION_FETCH_TIMEOUT_MS`) the socket uses the version Baileys ships with.
 -   **Alerts**: a session with a login on disk (a finished pairing:
     `creds.json` with `me.id`) that is not connected for 15 minutes
-    (`DOWN_ALERT_MS`) sends one system alert (`whatsapp_down:<session>`),
-    and a second one when it connects again (`whatsapp_up:<session>`). The
-    agent sends them in turn, outside its 6 h repeat filter: a "down" only
-    when the last one was answered by "connected again", and "connected
-    again" only after a "down". So every outage is told once, and "back"
-    never comes alone. An alert the agent did not take is tried again after
-    another 15 minutes. A session in `needs_repair` (it sent its own alert)
-    or `scan_qr`, or a QR nobody scanned, sends none. A logout by WhatsApp (401) sends `whatsapp_logged_out:<session>` at
+    (`DOWN_ALERT_MS`) sends one system alert, and a second one when it
+    connects again. Each names its outage: `whatsapp_down:<session>:<outage>`
+    and `whatsapp_up:<session>:<outage>`. So the agent's 6 h repeat filter
+    keeps out only a retry of the same outage, and a restart or a reset that
+    sent no "back" cannot hide the next outage. The agent sends "connected
+    again" only for an outage whose "down" reached the owner; if that "down"
+    is still waiting in the ledger, it drops both, so a stale "down" never
+    arrives after "back". An alert the agent did not take is tried again
+    after another 15 minutes. A session in `needs_repair` (it sent its own
+    alert) or `scan_qr`, or a QR nobody scanned, sends none. A logout by
+    WhatsApp (401) sends `whatsapp_logged_out:<session>` at
     once, then wipes the login as before. The owner's own Disconnect sends
     nothing: `disconnect()` lets go of the socket before `logout()`, whose
     401 close would look like WhatsApp's, and always ends it (a socket still

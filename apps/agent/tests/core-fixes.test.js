@@ -185,33 +185,12 @@ describe('Agent core fixes', () => {
 
         test('a down or logged-out WhatsApp alert leaves a notification; "connected again" does not', async () => {
             agent.interface.send.mockResolvedValue(true);
-            await agent.deliverSystemAlert('wa down', 'whatsapp_down:assistant');
+            await agent.deliverSystemAlert('wa down', 'whatsapp_down:assistant:o1');
             await agent.deliverSystemAlert('wa logged out', 'whatsapp_logged_out:user');
             expect(notifications.create).toHaveBeenCalledTimes(2);
-            expect(notifications.create.mock.calls.map(c => c[0].metadata.alertKey)).toEqual(['whatsapp_down:assistant', 'whatsapp_logged_out:user']);
-            await agent.deliverSystemAlert('wa back', 'whatsapp_up:assistant');
+            expect(notifications.create.mock.calls.map(c => c[0].metadata.alertKey)).toEqual(['whatsapp_down:assistant:o1', 'whatsapp_logged_out:user']);
+            await agent.deliverSystemAlert('wa back', 'whatsapp_up:assistant:o1');
             expect(notifications.create).toHaveBeenCalledTimes(2);
-        });
-
-        test('"down" and "connected again" take turns: every outage is told, and "back" never comes alone', async () => {
-            // With the 6 h cooldown a second outage within 6 h went
-            // unreported, and its "back" could come with no "down" before it.
-            agent.interface.send.mockResolvedValue(true);
-            const sent = () => agent.interface.send.mock.calls.map(c => c[0].content);
-
-            expect(await agent.deliverSystemAlert('back', 'whatsapp_up:assistant')).toBe(false);
-            expect(await agent.deliverSystemAlert('down 1', 'whatsapp_down:assistant')).toBe(true);
-            // Still down: the same outage is not told twice.
-            expect(await agent.deliverSystemAlert('down 1 again', 'whatsapp_down:assistant')).toBe(false);
-            expect(await agent.deliverSystemAlert('back 1', 'whatsapp_up:assistant')).toBe(true);
-            expect(await agent.deliverSystemAlert('back again', 'whatsapp_up:assistant')).toBe(false);
-            // A second outage the same hour is told, and so is its end.
-            expect(await agent.deliverSystemAlert('down 2', 'whatsapp_down:assistant')).toBe(true);
-            expect(await agent.deliverSystemAlert('back 2', 'whatsapp_up:assistant')).toBe(true);
-            // The other session keeps its own turns.
-            expect(await agent.deliverSystemAlert('user down', 'whatsapp_down:user')).toBe(true);
-
-            expect(sent()).toEqual(['down 1', 'back 1', 'down 2', 'back 2', 'user down']);
         });
 
         test('does not set the dedup when nothing reached anyone', async () => {

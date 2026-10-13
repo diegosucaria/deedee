@@ -4507,6 +4507,12 @@ class AgentDB {
     return this._mapOutboxRow(this.db.prepare('SELECT * FROM notification_outbox WHERE id = ?').get(id));
   }
 
+  /** Rows from one origin that are still waiting to go out. */
+  listWaitingOutboxByOrigin(origin) {
+    return this.db.prepare(`SELECT * FROM notification_outbox WHERE origin = ? AND status IN ('pending', 'failed')`)
+      .all(origin).map(r => this._mapOutboxRow(r));
+  }
+
   /**
    * Rows whose next attempt is due. Each claimed row gets a short lease so a
    * second tick (or a crash mid-send) does not pick it again at once.
