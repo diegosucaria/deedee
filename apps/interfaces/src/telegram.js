@@ -3,6 +3,9 @@ const axios = require('axios');
 const { createUserMessage } = require('@deedee/shared/src/types');
 const { SentIds } = require('./sent-ids');
 
+// Telegram's limit for a photo caption, in characters.
+const TELEGRAM_CAPTION_MAX = 1024;
+
 /**
  * A forwarded message holds someone else's words, whatever it carries: text,
  * a photo caption or a voice note. The agent then treats the turn as
@@ -199,6 +202,48 @@ class TelegramService {
       .replace(/>/g, '&gt;');
   }
 
+  /** Our Markdown (bold, italic, code, links, code blocks) as Telegram HTML. */
+  _toHTML(content) {
+    // Split by code blocks
+    const parts = content.split('```');
+    let finalMsg = '';
+
+    for (let i = 0; i < parts.length; i++) {
+      let part = parts[i];
+
+      if (i % 2 === 0) {
+        // Regular Text
+        // 1. Escape HTML special chars first
+        part = this._escapeHTML(part);
+
+        // 2. Convert Markdown to HTML
+        // Bold: **text** -> <b>text</b>
+        part = part.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+
+        // Italic: *text* -> <i>text</i> (safe since ** was already replaced above)
+        part = part.replace(/\*([^\*]+?)\*/g, '<i>$1</i>');
+
+        // Inline Code: `text` -> <code>text</code>
+        part = part.replace(/`([^`]+?)`/g, '<code>$1</code>');
+
+        // Links: [text](url) -> <a href="url">text</a>
+        // Note: URL might have escaped brackets? No, we escaped < > & only.
+        part = part.replace(/\[([^\]]+?)\]\(([^)]+?)\)/g, '<a href="$2">$1</a>');
+
+        finalMsg += part;
+      } else {
+        // Code Block
+        // Escape HTML
+        part = this._escapeHTML(part);
+        // Wrap in <pre><code> (Telegram treats <pre> as block)
+        // Removing leading newline often helps
+        if (part.startsWith('\n')) part = part.substring(1);
+        finalMsg += '<pre>' + part + '</pre>';
+      }
+    }
+    return finalMsg;
+  }
+
   /**
    * @param {string|number} chatId
    * @param {string} content
@@ -213,44 +258,7 @@ class TelegramService {
       return { duplicate: true };
     }
     try {
-      // Split by code blocks
-      const parts = content.split('```');
-      let finalMsg = '';
-
-      for (let i = 0; i < parts.length; i++) {
-        let part = parts[i];
-
-        if (i % 2 === 0) {
-          // Regular Text
-          // 1. Escape HTML special chars first
-          part = this._escapeHTML(part);
-
-          // 2. Convert Markdown to HTML
-          // Bold: **text** -> <b>text</b>
-          part = part.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-
-          // Italic: *text* -> <i>text</i> (safe since ** was already replaced above)
-          part = part.replace(/\*([^\*]+?)\*/g, '<i>$1</i>');
-
-          // Inline Code: `text` -> <code>text</code>
-          part = part.replace(/`([^`]+?)`/g, '<code>$1</code>');
-
-          // Links: [text](url) -> <a href="url">text</a>
-          // Note: URL might have escaped brackets? No, we escaped < > & only.
-          part = part.replace(/\[([^\]]+?)\]\(([^)]+?)\)/g, '<a href="$2">$1</a>');
-
-          finalMsg += part;
-        } else {
-          // Code Block
-          // Escape HTML
-          part = this._escapeHTML(part);
-          // Wrap in <pre><code> (Telegram treats <pre> as block)
-          // Removing leading newline often helps
-          if (part.startsWith('\n')) part = part.substring(1);
-          finalMsg += '<pre>' + part + '</pre>';
-        }
-      }
-
+      const finalMsg = this._toHTML(content);
       await this.bot.telegram.sendMessage(chatId, finalMsg, { parse_mode: 'HTML' });
 
     } catch (err) {
@@ -287,21 +295,52 @@ class TelegramService {
     }
   }
 
-  async sendPhoto(chatId, content) {
+  /**
+   * Send a picture, with its words as the caption. A failure throws, so the
+   * caller knows the picture did not arrive and can send the words another way.
+   */
+  async sendPhoto(chatId, content, caption = null) {
     this.stopTyping(chatId);
-    try {
-      let source;
-      if (content.startsWith('http')) {
-        source = { url: content };
-      } else {
-        source = { source: Buffer.from(content, 'base64') };
-      }
+    let source;
+    if (content.startsWith('http')) {
+      source = { url: content };
+    } else {
+      source = { source: Buffer.from(content, 'base64') };
+    }
 
-      console.log(`[Telegram] Sending photo to ${chatId}`);
-      await this.bot.telegram.sendPhoto(chatId, source);
+    // Telegram refuses a caption over 1024 characters. A longer text (a
+    // morning briefing) follows the picture as a message of its own.
+    const text = typeof caption === 'string' ? caption.trim() : '';
+    const fits = text.length > 0 && text.length <= TELEGRAM_CAPTION_MAX;
+
+    console.log(`[Telegram] Sending photo to ${chatId}${text ? ` (caption: ${text.length} chars)` : ''}`);
+    try {
+      if (!fits) {
+        await this.bot.telegram.sendPhoto(chatId, source);
+      } else {
+        try {
+          // Formatted like a text message.
+          await this.bot.telegram.sendPhoto(chatId, source, { caption: this._toHTML(text), parse_mode: 'HTML' });
+        } catch (err) {
+          // Telegram refused the markup before it posted anything: send the
+          // words as they are. Any other error may mean it went out.
+          if (!/can't parse entities/i.test(err?.message || '')) throw err;
+          console.warn('[Telegram] Caption HTML refused; sending it as plain text.');
+          await this.bot.telegram.sendPhoto(chatId, source, { caption: text });
+        }
+      }
     } catch (err) {
       console.error('[Telegram] Failed to send photo:', err.message);
-      await this.bot.telegram.sendMessage(chatId, "Sorry, I couldn't send the image.");
+      throw err;
+    }
+    if (text && !fits) {
+      // The picture is out. A failure here must not report it as lost, or a
+      // retry would send it a second time.
+      try {
+        await this.sendMessage(chatId, text);
+      } catch (err) {
+        console.error('[Telegram] The photo went out, but its text did not:', err.message);
+      }
     }
   }
 }

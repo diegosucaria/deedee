@@ -139,7 +139,15 @@ class MediaExecutor extends BaseExecutor {
                 imgMsg.source = message.source;
                 imgMsg.type = 'image';
 
-                await sendCallback(imgMsg);
+                // The interface answers false when the channel refused the
+                // picture (Telegram no longer covers that with a "sorry" text).
+                const sent = await sendCallback(imgMsg);
+                if (sent === false) {
+                    return {
+                        success: false,
+                        error: 'The image was generated, but the messaging service did not deliver it.'
+                    };
+                }
 
                 return {
                     success: true,

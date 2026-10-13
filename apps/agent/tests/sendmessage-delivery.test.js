@@ -199,6 +199,76 @@ describe('sendMessage delivery', () => {
             expect(out.info).toMatch(/Its text went out without the picture, so it should not be sent again\./);
         });
 
+        describe('his other channel', () => {
+            let tgBefore;
+            beforeEach(() => {
+                tgBefore = process.env.ALLOWED_TELEGRAM_IDS;
+                process.env.ALLOWED_TELEGRAM_IDS = '4200';
+            });
+            afterEach(() => { if (tgBefore === undefined) delete process.env.ALLOWED_TELEGRAM_IDS; else process.env.ALLOWED_TELEGRAM_IDS = tgBefore; });
+
+            test('a picture WhatsApp refused reaches Telegram with its caption, not as bare words', async () => {
+                // 2026-10-13: the outfit picture failed on WhatsApp; only its
+                // text reached Telegram, through the ledger fallback.
+                send.mockResolvedValueOnce(false).mockResolvedValue(true);
+                const out = await toOwner({ type: 'image', imagePath: img, content: 'the outfit' });
+                expect(out).toMatchObject({ success: true, status: 'fallback', via: 'telegram', toOwner: true });
+                expect(out.info).toMatch(/went out on telegram instead, with its text, so it should not be sent again\./);
+                expect(send).toHaveBeenCalledTimes(2);
+                expect(send.mock.calls[1][0]).toMatchObject({
+                    source: 'telegram', type: 'image', caption: 'the outfit',
+                    content: Buffer.from('png-bytes').toString('base64'), metadata: { chatId: '4200' }
+                });
+                // Nothing queued: the words arrived under the picture.
+                expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(0);
+            });
+
+            test('when Telegram refuses the picture too, the words are queued as before', async () => {
+                send.mockResolvedValue(false);
+                const out = await toOwner({ type: 'image', imagePath: img, content: 'the outfit' });
+                expect(out).toMatchObject({ success: true, status: 'queued', queued: true });
+                const [row] = db.listRecentOutbox({ limit: 5 });
+                expect(row.payload).toMatchObject({ type: 'text', content: 'the outfit' });
+            });
+
+            test('a picture that reaches Telegram retires its words queued by an earlier try', async () => {
+                send.mockResolvedValue(false);
+                await toOwner({ type: 'image', imagePath: img, content: 'the outfit' });
+                expect(db.listRecentOutbox({ limit: 5 })[0].status).not.toBe('sent');
+                send.mockReset();
+                send.mockResolvedValueOnce(false).mockResolvedValue(true);
+                const out = await toOwner({ type: 'image', imagePath: img, content: 'the outfit' });
+                expect(out.status).toBe('fallback');
+                expect(db.listRecentOutbox({ limit: 5 })[0].status).toBe('sent');
+            });
+
+            test('a voice note does not jump channels: Telegram hides a failed voice send', async () => {
+                send.mockResolvedValue(false);
+                const out = await toOwner({ type: 'audio', imagePath: img, content: 'the words' });
+                expect(send.mock.calls.filter(c => c[0].source === 'telegram' && c[0].type === 'audio')).toHaveLength(0);
+                expect(out).toMatchObject({ status: 'queued' });
+            });
+
+            test('PICTURE_FALLBACK=0 keeps the old way: only the words are queued', async () => {
+                process.env.PICTURE_FALLBACK = '0';
+                try {
+                    send.mockResolvedValueOnce(false).mockResolvedValue(true);
+                    const out = await toOwner({ type: 'image', imagePath: img, content: 'the outfit' });
+                    expect(out).toMatchObject({ success: true, status: 'partial' });
+                    expect(send.mock.calls.filter(c => c[0].type === 'image')).toHaveLength(1);
+                } finally {
+                    delete process.env.PICTURE_FALLBACK;
+                }
+            });
+
+            test('a picture to a contact never jumps channels', async () => {
+                send.mockResolvedValue(false);
+                const out = await executor.execute('sendMessage', { to: CONTACT_DIGITS, type: 'image', imagePath: img, content: 'hi' }, { message: jobMessage });
+                expect(out.success).toBe(false);
+                expect(send).toHaveBeenCalledTimes(1);
+            });
+        });
+
         test('a refused picture with no words is a failure', async () => {
             send.mockResolvedValue(false);
             const out = await toOwner({ type: 'image', imagePath: img, content: '' });

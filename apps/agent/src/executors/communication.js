@@ -2,6 +2,7 @@ const { BaseExecutor } = require('./base');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { taintPayloadFields } = require('../utils/untrusted-content');
 
 class CommunicationExecutor extends BaseExecutor {
@@ -247,9 +248,33 @@ class CommunicationExecutor extends BaseExecutor {
                         // One direct try. A contact gets no retry: a message
                         // that arrives hours late can be worse than none. A
                         // picture or a voice note stays out of the ledger too:
-                        // its row would hold megabytes, and his other channel
-                        // would drop the caption.
+                        // its row would hold megabytes.
                         const sent = await services.interface.send(payload);
+                        if (sent === false && toOwner && payload.type === 'image' && process.env.PICTURE_FALLBACK !== '0') {
+                            // His other channel may be up: the picture goes
+                            // there once, directly, with its words as the
+                            // caption. A send that timed out may have landed,
+                            // so he can get it twice; that beats losing it.
+                            // Not a voice note: Telegram's voice send hides
+                            // its failures. PICTURE_FALLBACK=0 turns this off.
+                            const fb = typeof delivery.fallbackFor === 'function' ? delivery.fallbackFor(svc, metadata.chatId) : null;
+                            if (fb && typeof delivery.buildMessage === 'function') {
+                                const fbSent = await services.interface.send(delivery.buildMessage({
+                                    id: crypto.randomUUID(), channel: fb.channel, target: fb.target,
+                                    payload: {
+                                        content: resolvedContent, type: payload.type,
+                                        ...(caption ? { caption } : {}),
+                                        metadata: ownerTaint.length > 0 ? { jobTaint: ownerTaint } : {}
+                                    }
+                                }));
+                                if (fbSent !== false) {
+                                    console.log(`[CommunicationExecutor] The picture to ${cleanTo} failed on ${svc}; it went out on ${fb.channel}.`);
+                                    // Words queued by an earlier try arrived now, under the picture.
+                                    if (caption) delivery.retirePending?.(kind, svc, metadata.chatId, caption);
+                                    return { success: true, status: 'fallback', via: fb.channel, toOwner: true, info: `The picture to ${cleanTo} did not go through on ${svc}. It went out on ${fb.channel} instead${caption ? ', with its text' : ''}, so it should not be sent again.` };
+                                }
+                            }
+                        }
                         if (sent === false && toOwner && caption) {
                             // The words matter more than the picture: they go
                             // through the ledger as text, so they still arrive.

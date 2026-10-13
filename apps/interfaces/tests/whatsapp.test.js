@@ -74,6 +74,11 @@ describe('WhatsAppService Unit Tests', () => {
         jest.spyOn(whatsapp, '_importBaileys').mockResolvedValue(mockBaileys);
     });
 
+    afterEach(() => {
+        // connect() arms a watchdog and a close arms the down alert.
+        for (const t of [whatsapp.connectWatchdog, whatsapp.downAlertTimer, whatsapp.reconnectTimeout]) if (t) clearTimeout(t);
+    });
+
     test('should initialize with status disconnected', () => {
         expect(whatsapp.status).toBe('disconnected');
         expect(whatsapp.sessionId).toBe('test-session');
@@ -243,8 +248,9 @@ describe('WhatsAppService Unit Tests', () => {
 
         // Current implementation stops auto-retry on scan_qr, so this expect might fail before the fix
         // We want to ensure it DOES verify the fix.
-        // Fast-forward timer for the 5000ms delay
-        jest.runAllTimers();
+        // Past the first backoff delay (1 s + 20% jitter) only. Running all
+        // timers would also fire the connect watchdog and the down alert.
+        jest.advanceTimersByTime(2000);
 
         expect(whatsapp.status).toBe('connecting');
         expect(connectSpy).toHaveBeenCalledTimes(1);
@@ -286,7 +292,7 @@ describe('WhatsAppService Unit Tests', () => {
             role: 'user',
             content: expect.stringContaining('stream errors'),
             metadata: { internal_system_alert: true, alertKey: 'whatsapp_needs_repair:test-session' }
-        }));
+        }), { timeout: 30000 });
 
         // A manual reconnect still works from this state.
         await whatsapp.connect();

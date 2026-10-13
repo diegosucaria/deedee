@@ -154,16 +154,17 @@ describe('Interfaces API Tests', () => {
   });
 
   describe('POST /send dedupe by message id', () => {
-    let telegramSend;
+    let telegramSend, telegramPhoto;
 
     beforeEach(() => {
       telegramSend = jest.fn().mockResolvedValue({ duplicate: false });
+      telegramPhoto = jest.fn().mockResolvedValue(undefined);
       jest.doMock('../src/telegram', () => ({
         TelegramService: jest.fn().mockImplementation(() => ({
           start: jest.fn().mockResolvedValue(),
           sendMessage: telegramSend,
           sendVoice: jest.fn(),
-          sendPhoto: jest.fn()
+          sendPhoto: telegramPhoto
         }))
       }));
       process.env.TELEGRAM_TOKEN = 'tg-token';
@@ -200,6 +201,16 @@ describe('Interfaces API Tests', () => {
       expect(retry.statusCode).toBe(200);
       expect(retry.body).toEqual({ success: true });
       expect(telegramSend).toHaveBeenCalledTimes(2);
+    });
+
+    test('a Telegram picture carries its caption, and a failed one is a 500', async () => {
+      app = await loadApp();
+      const body = { source: 'telegram', type: 'image', content: 'cG5n', caption: 'the briefing', metadata: { chatId: '42' } };
+      expect((await send(body)).statusCode).toBe(200);
+      expect(telegramPhoto).toHaveBeenCalledWith('42', 'cG5n', 'the briefing');
+
+      telegramPhoto.mockRejectedValueOnce(new Error('IMAGE_PROCESS_FAILED'));
+      expect((await send(body)).statusCode).toBe(500);
     });
 
     test('sends without an id are never deduped', async () => {

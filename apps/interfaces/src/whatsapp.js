@@ -15,6 +15,20 @@ const { SentIds } = require('./sent-ids');
  */
 const FFMPEG_TIMEOUT_MS = 30000;
 
+// A try still 'connecting' after this long is ended and started again with
+// the reconnect backoff. Longer than Baileys' own connectTimeoutMs (3 min),
+// so its timeouts win when they work. WHATSAPP_CONNECT_WATCHDOG=0 turns it off.
+const CONNECT_WATCHDOG_MS = 4 * 60 * 1000;
+// A paired session down this long tells the owner once.
+// WHATSAPP_DOWN_ALERT=0 turns it off. Keep it longer than the agent ledger's
+// 10-minute duplicate window (DEDUPE_WINDOW_MS in delivery-service.js): two
+// outages' alerts carry the same words, and a closer pair would be taken for
+// one, message and card both.
+const DOWN_ALERT_MS = 15 * 60 * 1000;
+// The version lookup reads GitHub and can wait up to 5 minutes, longer than
+// the watchdog. Past this, the socket uses the version Baileys ships with.
+const VERSION_FETCH_TIMEOUT_MS = 20 * 1000;
+
 function convertToOpus(wavBuffer) {
     if (!wavBuffer || wavBuffer.length === 0) {
         return Promise.reject(new Error('convertToOpus: empty or null audio buffer'));
@@ -706,6 +720,18 @@ class WhatsAppService {
         this.streamErrorCount = 0;
         // After this many 515 errors in a row we stop and ask for a manual repair.
         this.MAX_515_ERRORS = 10;
+        // Each connect() takes a new number. A try that wakes up after a newer
+        // one began gives up, so two sockets never share one login.
+        this.connectTry = 0;
+        this.connectWatchdogMs = CONNECT_WATCHDOG_MS;
+        this.connectWatchdog = null;
+        this.downAlertMs = DOWN_ALERT_MS;
+        this.versionFetchTimeoutMs = VERSION_FETCH_TIMEOUT_MS;
+        this.downAlertTimer = null;
+        this.downAlertSent = false;
+        // Names the outage in its alert keys, so "back" matches its "down".
+        this.outageId = null;
+        this.backAlertRetryMs = 60 * 1000;
 
         // Reconnection Config (Standard)
         this.reconnectConfig = {
@@ -717,6 +743,16 @@ class WhatsAppService {
 
         const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
         this.authFolder = path.join(dataDir, `baileys_auth_${sessionId}`);
+        // A "down" he got survives a restart of this service (the manual fix
+        // for a stuck session), so its "back" still follows.
+        this.outageFile = path.join(dataDir, `whatsapp_outage_${sessionId}.json`);
+        try {
+            const saved = JSON.parse(fs.readFileSync(this.outageFile, 'utf8'));
+            if (saved?.outageId) {
+                this.outageId = String(saved.outageId);
+                this.downAlertSent = true;
+            }
+        } catch { /* none saved */ }
 
         // Ensure auth folder exists
         if (!fs.existsSync(this.authFolder)) {
@@ -742,6 +778,179 @@ class WhatsAppService {
         const jitterAmount = delay * jitter;
         const jittered = delay + (Math.random() * jitterAmount * 2 - jitterAmount);
         return Math.floor(jittered);
+    }
+
+    /** Try again after the backoff delay; each try waits longer, up to maxMs. */
+    _scheduleReconnect(reason) {
+        const delayMs = this.calculateBackoff();
+        console.log(`${this.logPrefix} ${reason}. Reconnecting in ${delayMs}ms (Attempt ${this.reconnectAttempts + 1})...`);
+        this.reconnectAttempts++;
+        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+        this.reconnectTimeout = setTimeout(() => this.connect(), delayMs);
+    }
+
+    /** The newest WhatsApp Web version, or null to use the one Baileys ships with. */
+    async _latestVersion(fetchLatestBaileysVersion) {
+        let timer;
+        const tooLong = new Promise(resolve => {
+            timer = setTimeout(() => resolve(null), this.versionFetchTimeoutMs);
+            timer.unref?.();
+        });
+        try {
+            const res = await Promise.race([Promise.resolve().then(() => fetchLatestBaileysVersion()).catch(() => null), tooLong]);
+            if (Array.isArray(res?.version)) {
+                console.log(`${this.logPrefix} using WA v${res.version.join('.')}, isLatest: ${res.isLatest}`);
+                return res;
+            }
+            console.warn(`${this.logPrefix} The WhatsApp version lookup failed or took over ${Math.round(this.versionFetchTimeoutMs / 1000)}s; using the version Baileys ships with.`);
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    _armConnectWatchdog(tryId) {
+        this._clearConnectWatchdog();
+        if (process.env.WHATSAPP_CONNECT_WATCHDOG === '0') return;
+        this.connectWatchdog = setTimeout(() => this._onConnectStuck(tryId), this.connectWatchdogMs);
+        this.connectWatchdog.unref?.();
+    }
+
+    _clearConnectWatchdog() {
+        if (this.connectWatchdog) {
+            clearTimeout(this.connectWatchdog);
+            this.connectWatchdog = null;
+        }
+    }
+
+    /**
+     * A try that never opened and never closed. Baileys has steps with no
+     * timeout, and on 2026-10-09 a refused upgrade left the assistant session
+     * 'connecting' for four days. connect() refuses to start while a try is
+     * 'connecting', so nothing else would ever end it.
+     */
+    _onConnectStuck(tryId) {
+        this.connectWatchdog = null;
+        if (tryId !== this.connectTry || this.status !== 'connecting') return;
+        if (process.env.WHATSAPP_CONNECT_WATCHDOG === '0') return;
+        console.warn(`${this.logPrefix} Still connecting after ${Math.round(this.connectWatchdogMs / 1000)}s. Ending this try.`);
+        // A try still waiting on a step gives up when it wakes.
+        this.connectTry++;
+        const sock = this.sock;
+        // Its close event is ignored: the reconnect below is the only one.
+        this.sock = null;
+        this.status = 'disconnected';
+        this.qr = null;
+        if (sock && typeof sock.end === 'function') {
+            try {
+                const err = new Error('Connect watchdog: still connecting');
+                err.output = { statusCode: 408 };
+                sock.end(err);
+            } catch (e) {
+                console.warn(`${this.logPrefix} Ending the stuck socket failed (ignoring): ${e.message}`);
+            }
+        }
+        this._scheduleReconnect('Connect try timed out');
+    }
+
+    _armDownAlert() {
+        if (this.downAlertTimer || this.downAlertSent) return;
+        if (process.env.WHATSAPP_DOWN_ALERT === '0') return;
+        this.downAlertTimer = setTimeout(() => this._onDownTooLong(), this.downAlertMs);
+        this.downAlertTimer.unref?.();
+    }
+
+    _clearDownAlert() {
+        if (this.downAlertTimer) {
+            clearTimeout(this.downAlertTimer);
+            this.downAlertTimer = null;
+        }
+    }
+
+    /** The session has been down for downAlertMs: tell the owner once. */
+    async _onDownTooLong() {
+        this.downAlertTimer = null;
+        if (process.env.WHATSAPP_DOWN_ALERT === '0') return;
+        // needs_repair sent its own alert; scan_qr means someone is pairing.
+        if (['connected', 'needs_repair', 'scan_qr'].includes(this.status)) return;
+        // No login: the owner disconnected it, or it was never paired.
+        if (!this._hasLogin()) return;
+        const minutes = Math.round(this.downAlertMs / 60000);
+        const text = `WhatsApp session "${this.sessionId}" has not been connected for ${minutes} minutes (status: ${this.status}). Deedee keeps trying to reconnect on its own. If it stays down, open Settings > Interfaces > WhatsApp and check that the phone is online and still lists Deedee as a linked device.`;
+        // A retry of the same outage keeps its name.
+        if (!this.outageId) this.outageId = Date.now().toString(36);
+        const outage = this.outageId;
+        const took = await this._sendSystemAlert(text, `whatsapp_down:${this.sessionId}:${outage}`);
+        if (this.outageId !== outage) {
+            // The session opened (or was reset) while the alert was on its
+            // way, so the open sent no "back". Send it now; the agent sends
+            // it only if this "down" reached him.
+            if (took && this.status === 'connected') this._sendBackAlert(outage);
+            return;
+        }
+        if (took) {
+            this.downAlertSent = true;
+            try { fs.writeFileSync(this.outageFile, JSON.stringify({ outageId: outage })); } catch (e) {
+                console.warn(`${this.logPrefix} Could not save the outage: ${e.message}`);
+            }
+        } else {
+            // The agent did not take it: try again after another wait.
+            this._armDownAlert();
+        }
+    }
+
+    _forgetOutage() {
+        this.downAlertSent = false;
+        this.outageId = null;
+        try { fs.rmSync(this.outageFile, { force: true }); } catch { /* gone */ }
+    }
+
+    /**
+     * Tell the agent the session is back. A post that fails is tried again
+     * (the agent may be restarting) while the session stays connected.
+     */
+    async _sendBackAlert(outage, triesLeft = 5) {
+        if (process.env.WHATSAPP_DOWN_ALERT === '0') return;
+        const ok = await this._sendSystemAlert(`WhatsApp session "${this.sessionId}" is connected again.`, `whatsapp_up:${this.sessionId}:${outage}`);
+        if (ok || triesLeft <= 1) return;
+        const timer = setTimeout(() => {
+            if (this.status === 'connected') this._sendBackAlert(outage, triesLeft - 1);
+        }, this.backAlertRetryMs);
+        timer.unref?.();
+    }
+
+    /**
+     * A finished pairing on disk. Baileys can write creds.json before the QR
+     * is scanned (routing info), so the file alone is not a login.
+     */
+    _hasLogin() {
+        try {
+            const creds = JSON.parse(fs.readFileSync(path.join(this.authFolder, 'creds.json'), 'utf8'));
+            return !!creds?.me?.id;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Deliver text to the owner verbatim through the agent (de-duplicated per key).
+     * @returns {Promise<boolean>} true when the agent took it
+     */
+    async _sendSystemAlert(text, alertKey) {
+        try {
+            await axios.post(`${this.agentUrl}/webhook`, {
+                content: text,
+                source: 'system',
+                role: 'user',
+                // internal_system_alert: delivered to the owner verbatim and
+                // de-duplicated by the agent (same path as the Slack token alert).
+                metadata: { internal_system_alert: true, alertKey },
+            }, { timeout: 30000 });
+            return true;
+        } catch (err) {
+            console.error(`${this.logPrefix} Failed to send the ${alertKey} alert:`, err?.message);
+            return false;
+        }
     }
 
     startHeartbeatLoop() {
@@ -794,6 +1003,8 @@ class WhatsAppService {
         const hasCreds = fs.existsSync(path.join(this.authFolder, 'creds.json'));
         if (hasCreds) {
             console.log(`${this.logPrefix} Session found. Auto-connecting...`);
+            // Cleared when the connection opens.
+            this._armDownAlert();
             await this.connect();
         } else {
             console.log(`${this.logPrefix} No session found. Standing by for manual connection.`);
@@ -807,15 +1018,27 @@ class WhatsAppService {
             return;
         }
 
+        const tryId = ++this.connectTry;
+        // A newer try (the watchdog started one) owns the session now.
+        const superseded = () => {
+            if (tryId === this.connectTry) return false;
+            console.log(`${this.logPrefix} A newer connect try started; this one stops.`);
+            return true;
+        };
         try {
             console.log(`${this.logPrefix} Connecting...`);
             this.status = 'connecting';
+            this._armConnectWatchdog(tryId);
+            // Not connected from here on; an open clears it. Arming on every
+            // try covers each way down: a close, the watchdog, a failed try.
+            this._armDownAlert();
 
             // Using SQLiteStore
             // makeInMemoryStore removed.
 
             // ... inside connect ...
             const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage, fetchLatestBaileysVersion } = await this._importBaileys();
+            if (superseded()) return;
             this.downloadMediaMessage = downloadMediaMessage;
 
             // Initialize Store
@@ -829,15 +1052,17 @@ class WhatsAppService {
             // (Previous code removed)
 
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
-            const { version, isLatest } = await fetchLatestBaileysVersion();
-            console.log(`${this.logPrefix} using WA v${version.join('.')}, isLatest: ${isLatest}`);
+            if (superseded()) return;
+            const latest = await this._latestVersion(fetchLatestBaileysVersion);
+            if (superseded()) return;
 
             // Protocol Self-Healing (Issue #2135 Fix)
             // 1. Retry Cache: Tracks how many times a message ID has been requested for retry
             this.msgRetryCounterCache = this.msgRetryCounterCache || new Map();
 
-            this.sock = makeWASocket({
-                version,
+            const sock = this.sock = makeWASocket({
+                // Unknown: leave the key out, so Baileys keeps its own default.
+                ...(latest ? { version: latest.version } : {}),
                 auth: state,
                 defaultQueryTimeoutMs: undefined, // endless
                 connectTimeoutMs: 180000, // 3 minutes
@@ -858,6 +1083,23 @@ class WhatsAppService {
                     return undefined;
                 }
             });
+
+            // Baileys listens for 'unexpected-response' itself, so ws never
+            // gives up when WhatsApp answers the upgrade with an HTTP error and
+            // hangs up: no 'close' comes and the try waits forever. End it so
+            // the close path below retries with backoff. The HTTP status is
+            // not a WhatsApp code (a 401 here is not a logout), so the close
+            // carries "connection closed".
+            if (sock.ws && typeof sock.ws.on === 'function' && typeof sock.end === 'function') {
+                sock.ws.on('unexpected-response', (req, res) => {
+                    const httpStatus = res?.statusCode;
+                    console.warn(`${this.logPrefix} WhatsApp refused the connection (HTTP ${httpStatus}). Ending this try.`);
+                    try { res?.resume?.(); } catch { /* nothing to drain */ }
+                    const err = new Error(`Unexpected server response: ${httpStatus}`);
+                    err.output = { statusCode: DisconnectReason?.connectionClosed ?? 428 };
+                    sock.end(err);
+                });
+            }
 
             // Incremental contact events — deferred via setImmediate to avoid
             // blocking the WebSocket buffer (the original store.bind() ran these
@@ -957,15 +1199,21 @@ class WhatsAppService {
 
             // --- CONNECTION UPDATE ---
             this.sock.ev.on('connection.update', async (update) => {
+                // A socket this service has let go of (the watchdog ended it)
+                // must not change the state of the one that replaced it.
+                if (this.sock !== sock) return;
                 const { connection, lastDisconnect, qr } = update;
 
                 if (qr) {
                     console.log(`${this.logPrefix} QR Code generated`);
+                    this._clearConnectWatchdog();
                     this.status = 'scan_qr';
                     this.qr = await QRCode.toDataURL(qr);
                 }
 
                 if (connection === 'close') {
+                    this._clearConnectWatchdog();
+                    this._armDownAlert();
                     // Clear presence interval
                     if (this.presenceInterval) {
                         clearInterval(this.presenceInterval);
@@ -994,6 +1242,8 @@ class WhatsAppService {
 
                     if (this.status === 'scan_qr' && statusCode !== 515) {
                         console.log(`${this.logPrefix} Connection closed while scanning QR. Stopping auto-retry to prevent loop.`);
+                        // Nothing retries from here, so nothing is "down" to report.
+                        this._clearDownAlert();
                         this.status = 'disconnected';
                         this.qr = null;
                         this.sock = null;
@@ -1004,25 +1254,30 @@ class WhatsAppService {
                     this.qr = null;
 
                     if (shouldReconnect) {
-                        const delayMs = this.calculateBackoff();
-                        console.log(`${this.logPrefix} Connection Lost. Reconnecting in ${delayMs}ms (Attempt ${this.reconnectAttempts + 1})...`);
-
-                        // Increment attempts
-                        this.reconnectAttempts++;
-
-                        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-                        this.reconnectTimeout = setTimeout(() => this.connect(), delayMs);
+                        this._scheduleReconnect('Connection Lost');
                     } else {
                         console.log(`${this.logPrefix} Logged out by Server. Clearing session.`);
+                        // The login is gone and only a new QR scan brings it
+                        // back, so he hears about it at once.
+                        if (process.env.WHATSAPP_DOWN_ALERT !== '0') this._sendSystemAlert(`WhatsApp logged out session "${this.sessionId}". It needs a new QR scan: open Settings > Interfaces > WhatsApp.`, `whatsapp_logged_out:${this.sessionId}`);
                         await this.disconnect(true); // Wipe if server says logged out
                     }
 
                 } else if (connection === 'open') {
                     console.log(`${this.logPrefix} Connection OPEN! 🟢`);
+                    this._clearConnectWatchdog();
                     this.status = 'connected';
                     this.qr = null;
                     this.reconnectAttempts = 0; // Reset counter on success
                     this.streamErrorCount = 0;
+                    this._clearDownAlert();
+                    // Every open is reported, with the outage it ends ('none'
+                    // when this process knows of none: after a reset or a
+                    // restart). The agent says "connected again" only if
+                    // that outage's "down" reached him, and drops any "down"
+                    // of this session still waiting.
+                    this._sendBackAlert(this.outageId || 'none');
+                    this._forgetOutage();
 
                     // Start Heartbeat
                     this.startHeartbeatLoop();
@@ -1063,7 +1318,11 @@ class WhatsAppService {
                 }
             });
 
-            this.sock.ev.on('creds.update', saveCreds);
+            // A socket this service let go of must not write the login (after
+            // a reset its folder is gone).
+            this.sock.ev.on('creds.update', (update) => {
+                if (this.sock === sock) return saveCreds(update);
+            });
 
             this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
                 // console.log(`${this.logPrefix} [DEBUG] Upsert: ${messages.length} messages. Type: ${type}`); // Verbose
@@ -1103,7 +1362,15 @@ class WhatsAppService {
 
         } catch (err) {
             console.error(`${this.logPrefix} Connect Error:`, err);
+            if (tryId !== this.connectTry) return;
+            this._clearConnectWatchdog();
             this.status = 'disconnected';
+            // A paired session tries again with the backoff instead of
+            // staying down until the service restarts.
+            if (this._hasLogin()) {
+                this._armDownAlert();
+                this._scheduleReconnect('Connect failed');
+            }
         }
     }
 
@@ -1386,6 +1653,7 @@ class WhatsAppService {
             clearTimeout(this.reconnectTimeout);
             this.reconnectTimeout = null;
         }
+        this._clearConnectWatchdog();
         this.status = 'needs_repair';
         this.qr = null;
         this.sock = null;
@@ -1394,34 +1662,45 @@ class WhatsAppService {
         this.streamErrorCount = 0;
 
         const text = `WhatsApp session "${this.sessionId}" hit ${errors} stream errors (${statusCode}) in a row. I stopped reconnecting. Open Settings > Interfaces > WhatsApp and press Start Session. If it fails again, press Force Reset and scan a new QR.`;
-        try {
-            await axios.post(`${this.agentUrl}/webhook`, {
-                content: text,
-                source: 'system',
-                role: 'user',
-                // internal_system_alert: delivered to the owner verbatim and
-                // de-duplicated by the agent (same path as the Slack token alert).
-                metadata: { internal_system_alert: true, alertKey: `whatsapp_needs_repair:${this.sessionId}` },
-            });
-        } catch (err) {
-            console.error(`${this.logPrefix} Failed to send needs_repair alert:`, err?.message);
-        }
+        await this._sendSystemAlert(text, `whatsapp_needs_repair:${this.sessionId}`);
     }
 
     async disconnect(clearSession = false) {
+        // A connect() still waiting on a step stops: it must not open a
+        // socket after this, least of all with a login about to be deleted.
+        this.connectTry++;
+        this._clearConnectWatchdog();
+        if (clearSession) {
+            // No login left, so nothing is down that he must hear about.
+            this._clearDownAlert();
+            this._forgetOutage();
+        }
         try {
             console.log(`${this.logPrefix} Disconnecting... (Clear: ${clearSession})`);
-            if (this.sock) {
+            // Let go of the socket first: the close it fires is ours, not the
+            // server's. On a logout it carries 401, and the handler would
+            // take the owner's own reset for "WhatsApp logged us out".
+            const sock = this.sock;
+            this.sock = null;
+            if (this.presenceInterval) {
+                clearInterval(this.presenceInterval);
+                this.presenceInterval = null;
+            }
+            if (sock) {
                 if (clearSession) {
                     try {
-                        await this.sock.logout();
+                        await sock.logout();
                     } catch (err) {
                         console.warn(`${this.logPrefix} Logout failed (ignoring): ${err.message}`);
+                    } finally {
+                        // logout() throws on a socket that is still connecting,
+                        // and that socket could still log in with the creds in
+                        // memory. end() does nothing on a socket already ended.
+                        try { sock.end(undefined); } catch { /* already ended */ }
                     }
                 } else {
-                    this.sock.end(undefined);
+                    sock.end(undefined);
                 }
-                this.sock = null;
             }
 
             if (clearSession) {

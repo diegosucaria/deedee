@@ -638,18 +638,33 @@ class Agent {
     const now = Date.now();
     const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h
     if (!this._systemAlertDedup) this._systemAlertDedup = new Map();
+    // A WhatsApp session's "down" and "connected again" alerts name the
+    // outage they belong to (whatsapp_down:<session>:<outage>), so each
+    // outage is told once and the cooldown keeps out only a repeat of the
+    // same one. The interfaces service reports every open as a "back"
+    // (outage 'none' when it knows of none). "Back" goes out only when that
+    // outage's "down" reached him, which the ledger knows (it survives a
+    // restart). Any "down" of the session still waiting is retired then: a
+    // stale "down" must not arrive after the session is back, and "back"
+    // never comes alone. A new "down" retires a "back" still waiting.
+    const back = /^whatsapp_up:([^:]+):(.+)$/.exec(String(key));
+    const down = /^whatsapp_down:([^:]+):(.+)$/.exec(String(key));
+    if (back && !(await this._outageWasTold(back[1], back[2]))) return false;
+    if (down) this._retireWaitingAlerts(`whatsapp_up:${down[1]}:`, 'the session went down again');
     const last = this._systemAlertDedup.get(key);
     if (last && now - last < COOLDOWN_MS) {
       console.log(`[Agent] Suppressing duplicate system alert (key='${key}', last sent ${Math.round((now - last) / 1000)}s ago).`);
       return false;
     }
 
-    // A WhatsApp session that needs repair may be the very channel this
-    // alert goes through, so it always leaves a dashboard notification too.
-    const isWhatsAppRepair = String(key).startsWith('whatsapp_needs_repair');
+    // A WhatsApp session that is down (needs repair, stuck, logged out) may
+    // be the very channel this alert goes through, so it always leaves a
+    // dashboard notification too. 'whatsapp_up' (back again) does not.
+    const isWhatsAppRepair = /^whatsapp_(needs_repair|down|logged_out)(:|$)/.test(String(key));
     let delivered = false;
     let queued = false;
     let notified = false;
+    let deduped = false;
 
     // The ledger honors notification_channel, tries the other owner channel
     // at once when the first one refuses, and keeps retrying with backoff.
@@ -661,7 +676,17 @@ class Agent {
         const res = await this.delivery.deliver('system_alert', owner.channel, owner.target, { content: text }, { origin: key, immediateFallback: true });
         delivered = !!res.delivered;
         queued = !!res.queued;
-        if (delivered) {
+        // The same alert is already sent or queued (two reports of one
+        // WhatsApp outage at once): the first call owns it, card and all.
+        deduped = !!res.deduped;
+        // Sent with no ledger row: only memory knows its "back" may follow.
+        if (down && delivered && res.ledger === false) {
+          if (!this._whatsappDownDirect) this._whatsappDownDirect = new Set();
+          this._whatsappDownDirect.add(`${down[1]}:${down[2]}`);
+        }
+        if (deduped) {
+          console.log(`[Agent] System alert already ${delivered ? 'sent' : 'queued'} (key='${key}').`);
+        } else if (delivered) {
           console.log(`[Agent] Delivered system alert to owner via ${res.via || owner.channel} (key='${key}').`);
         } else {
           console.error(`[Agent] deliverSystemAlert: no channel accepted the alert (key='${key}')${queued ? '; queued for retry' : ''}.`);
@@ -671,7 +696,7 @@ class Agent {
       }
     }
 
-    if (!delivered || isWhatsAppRepair) {
+    if ((!delivered || isWhatsAppRepair) && !deduped) {
       notified = this._notifySystemAlert(text, key, delivered, queued);
     }
 
@@ -679,6 +704,57 @@ class Agent {
     // otherwise try again on the next trigger.
     if (delivered || notified || queued) this._systemAlertDedup.set(key, now);
     return delivered || notified || queued;
+  }
+
+  /**
+   * The session is back: did the "down" alert of this outage reach the
+   * owner? A send of a "down" still under way decides, so wait for it (a
+   * send gives up after 120 s, and its fallback after as long). Every
+   * "down" of the session still waiting is retired.
+   * @returns {Promise<boolean>}
+   */
+  async _outageWasTold(session, outage) {
+    const direct = !!this._whatsappDownDirect?.delete(`${session}:${outage}`);
+    const prefix = `whatsapp_down:${session}:`;
+    try {
+      const list = () => (typeof this.db.listOutboxStatusByOriginPrefix === 'function' ? this.db.listOutboxStatusByOriginPrefix(prefix) : []);
+      const ids = list().map(r => r.id);
+      const step = this._outageWaitStepMs || 250;
+      for (let waited = 0; ids.some(id => this.delivery.isInFlight?.(id)) && waited < 5 * 60 * 1000; waited += step) {
+        await new Promise(r => setTimeout(r, step));
+      }
+      // From here to the retire, no await: no send can start in between,
+      // and one that was claimed earlier re-reads the status first.
+      const told = direct || list().some(r => r.origin === `${prefix}${outage}` && r.status === 'sent');
+      const retired = this._retireWaitingAlerts(prefix, 'the session was back before it was delivered');
+      if (retired > 0) console.log(`[Agent] WhatsApp session '${session}' is back; ${retired} "down" alert(s) still waiting were retired.`);
+      if (!told && outage !== 'none') console.log(`[Agent] No "down" alert reached the owner for WhatsApp outage '${session}:${outage}'; its "back" alert is not sent.`);
+      return told;
+    } catch (e) {
+      console.warn('[Agent] Could not check the outage alert:', e.message);
+      return false;
+    }
+  }
+
+  /**
+   * Retire the alert rows whose origin starts with prefix and that still
+   * wait (not those being sent).
+   * @returns {number} rows retired
+   */
+  _retireWaitingAlerts(prefix, why) {
+    try {
+      if (typeof this.db.listOutboxStatusByOriginPrefix !== 'function') return 0;
+      let n = 0;
+      for (const r of this.db.listOutboxStatusByOriginPrefix(prefix)) {
+        if (r.status !== 'pending' && r.status !== 'failed') continue;
+        if (this.delivery.isInFlight?.(r.id)) continue;
+        if (this.delivery.retire(r.id, why)) n++;
+      }
+      return n;
+    } catch (e) {
+      console.warn('[Agent] Could not retire waiting alerts:', e.message);
+      return 0;
+    }
   }
 
   /**
@@ -1972,7 +2048,9 @@ class Agent {
         executionSummary.toolOutputs.push({ name: 'generateImage', result: toolResult });
 
         // Optionally send a text confirmation
-        const reply = createAssistantMessage('Image generated.');
+        const reply = createAssistantMessage(toolResult?.success === false && toolResult?.error
+          ? `I could not send the image: ${toolResult.error}`
+          : 'Image generated.');
         reply.metadata = { chatId: message.metadata?.chatId };
         reply.source = message.source;
         await this._deliverReply(activeSendCallback, reply, message);

@@ -373,6 +373,24 @@ describe('DeliveryService', () => {
         });
     });
 
+    describe('a row settled after the tick claimed it', () => {
+        test('a row retired or marked sent while it waited its turn in a tick is not sent', async () => {
+            // The tick works from a snapshot: a row retired in between (an
+            // outage alert whose session came back) went out anyway.
+            agent.interface.send.mockResolvedValue(false);
+            const a = await svc.deliver('system_alert', 'whatsapp', OWNER_DIGITS, { content: 'down' }, { origin: 'a' });
+            const b = await svc.deliver('system_alert', 'whatsapp', OWNER_DIGITS, { content: 'other' }, { origin: 'b' });
+            jest.setSystemTime(new Date(Date.now() + 2 * MIN));
+            agent.interface.send.mockReset();
+            // The first send of the tick retires the second row before its turn.
+            agent.interface.send.mockImplementationOnce(async () => { svc.retire(b.id, 'no longer true'); return true; });
+            await svc.tick();
+            expect(agent.interface.send).toHaveBeenCalledTimes(1);
+            expect(db.getOutboxRow(a.id).status).toBe('sent');
+            expect(db.getOutboxRow(b.id).status).toBe('dead');
+        });
+    });
+
     describe('approval cards whose question is settled', () => {
         const card = (id, status = 'pending') => ({ content: `❓ ¿Le digo que sí a Alice? (${id})`, metadata: { approval: { id, status, toolName: 'answerErrand' } } });
         const waiting = (id) => db.createPendingConfirmation({
