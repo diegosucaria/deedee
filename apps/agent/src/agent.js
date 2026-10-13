@@ -644,9 +644,10 @@ class Agent {
       return false;
     }
 
-    // A WhatsApp session that needs repair may be the very channel this
-    // alert goes through, so it always leaves a dashboard notification too.
-    const isWhatsAppRepair = String(key).startsWith('whatsapp_needs_repair');
+    // A WhatsApp session that is down (needs repair, stuck, logged out) may
+    // be the very channel this alert goes through, so it always leaves a
+    // dashboard notification too. 'whatsapp_up' (back again) does not.
+    const isWhatsAppRepair = /^whatsapp_(needs_repair|down|logged_out)(:|$)/.test(String(key));
     let delivered = false;
     let queued = false;
     let notified = false;

@@ -3,6 +3,9 @@ const axios = require('axios');
 const { createUserMessage } = require('@deedee/shared/src/types');
 const { SentIds } = require('./sent-ids');
 
+// Telegram's limit for a photo caption, in characters.
+const TELEGRAM_CAPTION_MAX = 1024;
+
 /**
  * A forwarded message holds someone else's words, whatever it carries: text,
  * a photo caption or a voice note. The agent then treats the turn as
@@ -287,22 +290,32 @@ class TelegramService {
     }
   }
 
-  async sendPhoto(chatId, content) {
+  /**
+   * Send a picture, with its words as the caption. A failure throws, so the
+   * caller knows the picture did not arrive and can send the words another way.
+   */
+  async sendPhoto(chatId, content, caption = null) {
     this.stopTyping(chatId);
-    try {
-      let source;
-      if (content.startsWith('http')) {
-        source = { url: content };
-      } else {
-        source = { source: Buffer.from(content, 'base64') };
-      }
+    let source;
+    if (content.startsWith('http')) {
+      source = { url: content };
+    } else {
+      source = { source: Buffer.from(content, 'base64') };
+    }
 
-      console.log(`[Telegram] Sending photo to ${chatId}`);
-      await this.bot.telegram.sendPhoto(chatId, source);
+    // Telegram refuses a caption over 1024 characters. A longer text (a
+    // morning briefing) follows the picture as a message of its own.
+    const text = typeof caption === 'string' ? caption.trim() : '';
+    const fits = text.length > 0 && text.length <= TELEGRAM_CAPTION_MAX;
+
+    console.log(`[Telegram] Sending photo to ${chatId}${text ? ` (caption: ${text.length} chars)` : ''}`);
+    try {
+      await this.bot.telegram.sendPhoto(chatId, source, fits ? { caption: text } : undefined);
     } catch (err) {
       console.error('[Telegram] Failed to send photo:', err.message);
-      await this.bot.telegram.sendMessage(chatId, "Sorry, I couldn't send the image.");
+      throw err;
     }
+    if (text && !fits) await this.sendMessage(chatId, text);
   }
 }
 

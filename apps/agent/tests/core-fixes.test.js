@@ -183,6 +183,16 @@ describe('Agent core fixes', () => {
             expect(notifications.create.mock.calls[0][0].title).toBe('System alert');
         });
 
+        test('a down or logged-out WhatsApp alert leaves a notification; "connected again" does not', async () => {
+            agent.interface.send.mockResolvedValue(true);
+            await agent.deliverSystemAlert('wa down', 'whatsapp_down:assistant');
+            await agent.deliverSystemAlert('wa logged out', 'whatsapp_logged_out:user');
+            expect(notifications.create).toHaveBeenCalledTimes(2);
+            expect(notifications.create.mock.calls.map(c => c[0].metadata.alertKey)).toEqual(['whatsapp_down:assistant', 'whatsapp_logged_out:user']);
+            await agent.deliverSystemAlert('wa back', 'whatsapp_up:assistant');
+            expect(notifications.create).toHaveBeenCalledTimes(2);
+        });
+
         test('does not set the dedup when nothing reached anyone', async () => {
             agent.interface.send.mockResolvedValue(false);
             notifications.create.mockReturnValue(null); // persist failed

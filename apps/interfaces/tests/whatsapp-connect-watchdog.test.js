@@ -1,0 +1,282 @@
+/**
+ * On 2026-10-09 the assistant session sat in 'connecting' for four days.
+ * WhatsApp answered a reconnect with an HTTP error and hung up; Baileys
+ * swallows that answer, so no 'close' came, nothing retried, and connect()
+ * refused every new try because one was "already connecting". Every send
+ * failed with "Connection Closed" and the owner was not told.
+ */
+const EventEmitter = require('events');
+const fs = require('fs');
+const http = require('http');
+const path = require('path');
+const { pathToFileURL } = require('url');
+const { WhatsAppService } = require('../src/whatsapp');
+
+jest.mock('axios');
+const axios = require('axios');
+
+const until = async (check, ms = 3000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+        if (check()) return true;
+        await new Promise(r => setTimeout(r, 5));
+    }
+    return check();
+};
+
+function fakeSocket() {
+    const ev = new EventEmitter();
+    const sock = {
+        ev,
+        ws: new EventEmitter(),
+        sendPresenceUpdate: jest.fn().mockResolvedValue(undefined),
+        end: jest.fn(err => ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: err, date: new Date() } })),
+    };
+    return sock;
+}
+
+function fakeBaileys(overrides = {}) {
+    const sockets = [];
+    const baileys = {
+        default: jest.fn(() => { const s = fakeSocket(); sockets.push(s); return s; }),
+        useMultiFileAuthState: jest.fn(async () => ({ state: {}, saveCreds: jest.fn() })),
+        fetchLatestBaileysVersion: jest.fn(async () => ({ version: [2, 3000, 0], isLatest: true })),
+        DisconnectReason: { loggedOut: 401, connectionClosed: 428 },
+        delay: jest.fn(),
+        downloadMediaMessage: jest.fn(),
+        ...overrides,
+    };
+    return { baileys, sockets };
+}
+
+describe('a WhatsApp connect try that never ends', () => {
+    let wa;
+    let envBefore;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        ['log', 'warn', 'error'].forEach(m => jest.spyOn(console, m).mockImplementation(() => { }));
+        axios.post.mockResolvedValue({ data: { received: true } });
+        envBefore = { ...process.env };
+        delete process.env.WHATSAPP_CONNECT_WATCHDOG;
+        delete process.env.WHATSAPP_DOWN_ALERT;
+        process.env.ALLOWED_WHATSAPP_NUMBERS = '15550100';
+        wa = new WhatsAppService('http://agent.test', `wd-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+        // Short, exact delays: 10 ms, then twice as long each try, no jitter.
+        wa.reconnectConfig = { initialMs: 10, maxMs: 1000, factor: 2, jitter: 0 };
+        wa.connectWatchdogMs = 40;
+    });
+
+    afterEach(() => {
+        for (const t of [wa.reconnectTimeout, wa.connectWatchdog, wa.downAlertTimer, wa.sleepTimeout]) if (t) clearTimeout(t);
+        if (wa.heartbeatTimer) clearInterval(wa.heartbeatTimer);
+        wa.reconnectTimeout = null;
+        wa.connectTry++;
+        if (wa.store) {
+            clearInterval(wa.store.queueFlushInterval);
+            wa.store.close();
+        }
+        fs.rmSync(wa.authFolder, { recursive: true, force: true });
+        process.env = envBefore;
+        jest.restoreAllMocks();
+    });
+
+    test('a refused upgrade (HTTP 503, line closed) ends the try and schedules a reconnect', async () => {
+        // The real Baileys socket against a server that answers the upgrade
+        // with 503 and hangs up, as WhatsApp did on 2026-10-09.
+        const server = http.createServer();
+        server.on('upgrade', (req, socket) => {
+            socket.end('HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+        });
+        await new Promise(r => server.listen(0, '127.0.0.1', r));
+        const url = `ws://127.0.0.1:${server.address().port}/ws`;
+        try {
+            const real = await import(pathToFileURL(require.resolve('@whiskeysockets/baileys')).href);
+            const pino = require('pino');
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue({
+                ...real,
+                default: (cfg) => real.default({ ...cfg, waWebSocketUrl: url, logger: pino({ level: 'silent' }) }),
+                fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0], isLatest: true }),
+            });
+            // The watchdog must not be what saves it here.
+            wa.connectWatchdogMs = 60 * 60 * 1000;
+            const scheduled = jest.spyOn(wa, '_scheduleReconnect');
+
+            await wa.connect();
+
+            expect(await until(() => scheduled.mock.calls.length > 0)).toBe(true);
+            expect(scheduled).toHaveBeenCalledWith('Connection Lost');
+            expect(wa.status).toBe('disconnected');
+            expect(wa.reconnectTimeout).not.toBeNull();
+            // Not a logout: the login stays on disk.
+            expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('refused the connection (HTTP 503)'));
+        } finally {
+            if (wa.reconnectTimeout) clearTimeout(wa.reconnectTimeout);
+            wa.reconnectTimeout = null;
+            await new Promise(r => server.close(r));
+        }
+    });
+
+    test('the watchdog ends a try that never opens and retries with a delay that doubles', async () => {
+        const { baileys, sockets } = fakeBaileys();
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+        const delays = [];
+        const backoff = wa.calculateBackoff.bind(wa);
+        jest.spyOn(wa, 'calculateBackoff').mockImplementation(() => { const d = backoff(); delays.push(d); return d; });
+
+        await wa.connect();
+        expect(wa.status).toBe('connecting');
+
+        // Three stuck tries in a row: each one is ended and the next waits longer.
+        expect(await until(() => sockets.length >= 4)).toBe(true);
+        expect(delays.slice(0, 3)).toEqual([10, 20, 40]);
+        expect(sockets[0].end).toHaveBeenCalledWith(expect.objectContaining({ output: { statusCode: 408 } }));
+
+        // A connection that opens resets the delay.
+        const current = sockets[sockets.length - 1];
+        expect(wa.sock).toBe(current);
+        current.ev.emit('connection.update', { connection: 'open' });
+        expect(await until(() => wa.status === 'connected')).toBe(true);
+        expect(wa.reconnectAttempts).toBe(0);
+        expect(wa.connectWatchdog).toBeNull();
+    });
+
+    test('an old socket that closes late does not touch the one that replaced it', async () => {
+        const { baileys, sockets } = fakeBaileys();
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+        await wa.connect();
+        expect(await until(() => sockets.length >= 2)).toBe(true);
+        sockets[1].ev.emit('connection.update', { connection: 'open' });
+        expect(await until(() => wa.status === 'connected')).toBe(true);
+
+        const scheduled = jest.spyOn(wa, '_scheduleReconnect');
+        sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 428 } } } });
+        sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 401 } } } });
+        await new Promise(r => setTimeout(r, 20));
+        expect(wa.status).toBe('connected');
+        expect(wa.sock).toBe(sockets[1]);
+        expect(scheduled).not.toHaveBeenCalled();
+        expect(fs.existsSync(wa.authFolder)).toBe(true);
+    });
+
+    test('a try stuck before its socket exists stops when a newer try began', async () => {
+        let releaseFirst;
+        const firstFetch = new Promise(r => { releaseFirst = r; });
+        const fetchLatestBaileysVersion = jest.fn()
+            .mockImplementationOnce(() => firstFetch)
+            .mockResolvedValue({ version: [2, 3000, 0], isLatest: true });
+        const { baileys, sockets } = fakeBaileys({ fetchLatestBaileysVersion });
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+
+        const first = wa.connect();
+        // The watchdog gives up on it; the retry makes the only socket.
+        expect(await until(() => sockets.length === 1)).toBe(true);
+        sockets[0].ev.emit('connection.update', { connection: 'open' });
+        expect(await until(() => wa.status === 'connected')).toBe(true);
+
+        // The first try wakes up late and must not open a second socket.
+        releaseFirst({ version: [2, 3000, 0], isLatest: true });
+        await first;
+        expect(sockets).toHaveLength(1);
+        expect(wa.sock).toBe(sockets[0]);
+        expect(wa.status).toBe('connected');
+    });
+
+    test('WHATSAPP_CONNECT_WATCHDOG=0 turns the watchdog off', async () => {
+        process.env.WHATSAPP_CONNECT_WATCHDOG = '0';
+        const { baileys, sockets } = fakeBaileys();
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+        await wa.connect();
+        expect(wa.connectWatchdog).toBeNull();
+        await new Promise(r => setTimeout(r, 80));
+        expect(sockets).toHaveLength(1);
+        expect(wa.status).toBe('connecting');
+    });
+
+    test('a connect that throws tries again with the backoff when the session is paired', async () => {
+        fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), '{}');
+        const useMultiFileAuthState = jest.fn()
+            .mockRejectedValueOnce(new Error('EIO: i/o error'))
+            .mockResolvedValue({ state: {}, saveCreds: jest.fn() });
+        const { baileys, sockets } = fakeBaileys({ useMultiFileAuthState });
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+
+        await wa.connect();
+        expect(wa.status).toBe('disconnected');
+        expect(wa.reconnectTimeout).not.toBeNull();
+        expect(await until(() => sockets.length === 1)).toBe(true);
+    });
+
+    describe('telling the owner', () => {
+        const alerts = () => axios.post.mock.calls.map(c => c[1]?.metadata?.alertKey).filter(Boolean);
+
+        beforeEach(() => {
+            wa.downAlertMs = 60;
+            // These tests are about the alert; the try just hangs.
+            process.env.WHATSAPP_CONNECT_WATCHDOG = '0';
+        });
+
+        test('a paired session down too long tells him once, and again when it is back', async () => {
+            fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), '{}');
+            const { baileys, sockets } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+
+            await wa.start();
+            expect(await until(() => alerts().length === 1)).toBe(true);
+            expect(alerts()).toEqual([`whatsapp_down:${wa.sessionId}`]);
+            expect(axios.post.mock.calls[0][1]).toMatchObject({
+                source: 'system',
+                content: expect.stringMatching(new RegExp(`"${wa.sessionId}" has not been connected for \\d+ minutes \\(status: connecting\\)`)),
+                metadata: { internal_system_alert: true },
+            });
+
+            // Still down: no second alert.
+            await new Promise(r => setTimeout(r, 120));
+            expect(alerts()).toHaveLength(1);
+
+            sockets[0].ev.emit('connection.update', { connection: 'open' });
+            expect(await until(() => alerts().length === 2)).toBe(true);
+            expect(alerts()[1]).toBe(`whatsapp_up:${wa.sessionId}`);
+        });
+
+        test('a session that opens in time sends nothing', async () => {
+            fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), '{}');
+            const { baileys, sockets } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.start();
+            sockets[0].ev.emit('connection.update', { connection: 'open' });
+            await new Promise(r => setTimeout(r, 120));
+            expect(alerts()).toEqual([]);
+        });
+
+        test('no login on disk, or WHATSAPP_DOWN_ALERT=0: no alert', async () => {
+            const { baileys } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.connect();
+            wa._armDownAlert();
+            await new Promise(r => setTimeout(r, 120));
+            expect(alerts()).toEqual([]);
+
+            fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), '{}');
+            process.env.WHATSAPP_DOWN_ALERT = '0';
+            wa._armDownAlert();
+            await new Promise(r => setTimeout(r, 120));
+            expect(alerts()).toEqual([]);
+        });
+
+        test('a logout by WhatsApp tells him at once and still wipes the login', async () => {
+            fs.writeFileSync(path.join(wa.authFolder, 'creds.json'), '{}');
+            const { baileys, sockets } = fakeBaileys();
+            sockets.length = 0;
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.connect();
+            sockets[0].logout = jest.fn().mockResolvedValue(undefined);
+            sockets[0].ev.emit('connection.update', { connection: 'close', lastDisconnect: { error: { output: { statusCode: 401 } } } });
+            expect(await until(() => !fs.existsSync(wa.authFolder))).toBe(true);
+            expect(alerts()).toEqual([`whatsapp_logged_out:${wa.sessionId}`]);
+            // The wipe clears the down timer: nothing more follows.
+            await new Promise(r => setTimeout(r, 120));
+            expect(alerts()).toHaveLength(1);
+        });
+    });
+});

@@ -149,4 +149,37 @@ describe('TelegramService Security', () => {
         await expect(service.sendMessage('42', 'hello', { id: 'msg-2' })).rejects.toThrow('network');
         expect(await service.sendMessage('42', 'hello', { id: 'msg-2' })).toEqual({ duplicate: false });
     });
+
+    describe('sendPhoto', () => {
+        let tg;
+        const png = Buffer.from('png-bytes').toString('base64');
+        beforeEach(() => {
+            jest.spyOn(console, 'log').mockImplementation(() => { });
+            jest.spyOn(console, 'error').mockImplementation(() => { });
+            service = new TelegramService('fake-token', 'http://agent:3000');
+            tg = service.bot.telegram;
+            tg.sendPhoto = jest.fn().mockResolvedValue({});
+            tg.sendMessage.mockResolvedValue({});
+        });
+
+        test('a picture keeps its words as the caption', async () => {
+            await service.sendPhoto('42', png, 'Good morning! Here is your briefing.');
+            expect(tg.sendPhoto).toHaveBeenCalledWith('42', { source: Buffer.from('png-bytes') }, { caption: 'Good morning! Here is your briefing.' });
+            expect(tg.sendMessage).not.toHaveBeenCalled();
+        });
+
+        test('words too long for a caption follow the picture as a message', async () => {
+            const long = 'word '.repeat(300).trim();
+            await service.sendPhoto('42', png, long);
+            expect(tg.sendPhoto).toHaveBeenCalledWith('42', { source: Buffer.from('png-bytes') }, undefined);
+            expect(tg.sendMessage).toHaveBeenCalledTimes(1);
+            expect(tg.sendMessage.mock.calls[0][1]).toBe(long);
+        });
+
+        test('a picture that fails throws, and no "sorry" text pretends it went out', async () => {
+            tg.sendPhoto.mockRejectedValue(new Error('Bad Request: IMAGE_PROCESS_FAILED'));
+            await expect(service.sendPhoto('42', png, 'the words')).rejects.toThrow('IMAGE_PROCESS_FAILED');
+            expect(tg.sendMessage).not.toHaveBeenCalled();
+        });
+    });
 });

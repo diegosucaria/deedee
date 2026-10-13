@@ -814,7 +814,7 @@ app.post('/send', async (req, res) => {
       if (type === 'audio') {
         await telegram.sendVoice(metadata.chatId, content);
       } else if (type === 'image') {
-        await telegram.sendPhoto(metadata.chatId, content);
+        await telegram.sendPhoto(metadata.chatId, content, caption);
       } else {
         await telegram.sendMessage(metadata.chatId, content, { id });
       }

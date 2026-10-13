@@ -94,4 +94,39 @@ To detect "Zombie" sessions where the TCP socket is open but the session logic i
 -   **Action**: If the hook fails (timeout/error), it immediately triggers a `disconnect` + `connect` cycle to refresh the socket.
 -   **Status**: **Implemented**.
 
+### Level 13: Stuck Connecting (Connect Watchdog)
+On 2026-10-09 the assistant session showed **Connecting** ("Initializing...")
+for four days. Its login was intact; every send failed at once with
+`Connection Closed` (428), and owner messages fell back to Telegram.
+
+-   **Cause**: WhatsApp answered a reconnect with an HTTP error and hung up.
+    Baileys' `WebSocketClient` always listens for `unexpected-response`, so
+    `ws` never gives up on the handshake: no `close` came, and the backoff
+    never ran. `connect()` refuses to start while a try is `connecting`, and
+    the heartbeat skips a session that is not connected, so nothing ended it.
+-   **Fix 1**: `connect()` listens for `unexpected-response` on the socket and
+    ends the try. The close carries 428 ("connection closed"), never 401: an
+    HTTP 401 on the upgrade is not a logout and must not wipe the login.
+-   **Fix 2 (watchdog)**: a try still `connecting` after 4 minutes
+    (`CONNECT_WATCHDOG_MS`, longer than Baileys' own 3-minute connect timeout)
+    is ended and retried with the Level 11 backoff. The delay grows with each
+    stuck try and resets only when a connection opens. Each `connect()` takes
+    a number (`connectTry`); a try that wakes up after a newer one began
+    stops before it opens a socket, and events from a socket the service let
+    go of are ignored. `disconnect()` also stops a try in flight.
+    `WHATSAPP_CONNECT_WATCHDOG=0` turns the watchdog off.
+-   **Fix 3**: a `connect()` that throws (a disk error, say) now retries with
+    the backoff when the session has a login, instead of staying down.
+-   **Alerts**: a session with a login on disk that is not connected for 15
+    minutes (`DOWN_ALERT_MS`) sends one system alert (`whatsapp_down:<session>`),
+    and a second one when it connects again (`whatsapp_up:<session>`). A
+    session in `needs_repair` (it sent its own alert) or `scan_qr` sends
+    none. A logout by WhatsApp (401) sends `whatsapp_logged_out:<session>` at
+    once, then wipes the login as before. The down and logout alerts also
+    leave a dashboard notification, since WhatsApp may be the channel that
+    is down. `WHATSAPP_DOWN_ALERT=0` turns the down alert off.
+-   **By hand**: restarting the `interfaces` service clears a stuck try; a
+    session with its login on disk reconnects without a QR scan.
+-   **Status**: **Implemented**.
+
 ### Level 3: The Nuke (Hard Reset)

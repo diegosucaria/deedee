@@ -70,8 +70,13 @@ service returns. The rule looks back over the whole time a row can wait
 (`retrySpanMs()`: the last delay repeats until the attempts run out, so 141
 minutes plus a margin with the defaults). A message to a contact never enters the ledger: it gets one
 direct try, and a refused try is reported. A picture or a voice note to the
-owner stays out too (its row would hold megabytes); if it is refused, its
-caption goes through the ledger as text. If the picture then goes out on a
+owner stays out too (its row would hold megabytes). A refused picture goes
+once, directly, to the other owner channel, with its words as the caption
+(`status: 'fallback'`). Telegram takes a caption up to 1024 characters;
+longer words follow the picture as a message, and a picture Telegram refuses
+is reported as a failure, not covered by a "sorry" text. If the other
+channel refuses it too, or for a voice note, its caption goes through the
+ledger as text. If the picture then goes out on a
 second try, the caption has arrived under it, and `retirePending` marks the
 waiting text row sent so the words do not follow a second time.
 
