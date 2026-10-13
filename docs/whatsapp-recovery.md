@@ -128,8 +128,12 @@ for four days. Its login was intact; every send failed at once with
     keeps out only a retry of the same outage, and a restart or a reset that
     sent no "back" cannot hide the next outage. Every open is reported to
     the agent as a "back" with the outage it ends (`none` when the process
-    knows of none: after a reset or a restart); a report that fails is
-    tried again, up to 5 times a minute apart, while the session stays up.
+    knows of none: after a reset); a report that fails is tried up to 5
+    times in all, a minute apart, while the session stays up. A "down" that
+    reached the agent is saved (`whatsapp_outage_<session>.json` in
+    `DATA_DIR`), so its "back" still follows a restart of the interfaces
+    service. Two reports of one outage at once give one "back" and no
+    "not delivered" card.
     The ledger decides (it survives a restart): the agent sends "connected
     again" only when that outage's "down" row is `sent`, after waiting for
     a send of it still under way. On any report it retires every "down" of

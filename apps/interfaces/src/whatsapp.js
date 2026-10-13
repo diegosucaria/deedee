@@ -740,6 +740,16 @@ class WhatsAppService {
 
         const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
         this.authFolder = path.join(dataDir, `baileys_auth_${sessionId}`);
+        // A "down" he got survives a restart of this service (the manual fix
+        // for a stuck session), so its "back" still follows.
+        this.outageFile = path.join(dataDir, `whatsapp_outage_${sessionId}.json`);
+        try {
+            const saved = JSON.parse(fs.readFileSync(this.outageFile, 'utf8'));
+            if (saved?.outageId) {
+                this.outageId = String(saved.outageId);
+                this.downAlertSent = true;
+            }
+        } catch { /* none saved */ }
 
         // Ensure auth folder exists
         if (!fs.existsSync(this.authFolder)) {
@@ -877,10 +887,19 @@ class WhatsAppService {
         }
         if (took) {
             this.downAlertSent = true;
+            try { fs.writeFileSync(this.outageFile, JSON.stringify({ outageId: outage })); } catch (e) {
+                console.warn(`${this.logPrefix} Could not save the outage: ${e.message}`);
+            }
         } else {
             // The agent did not take it: try again after another wait.
             this._armDownAlert();
         }
+    }
+
+    _forgetOutage() {
+        this.downAlertSent = false;
+        this.outageId = null;
+        try { fs.rmSync(this.outageFile, { force: true }); } catch { /* gone */ }
     }
 
     /**
@@ -1255,8 +1274,7 @@ class WhatsAppService {
                     // that outage's "down" reached him, and drops any "down"
                     // of this session still waiting.
                     this._sendBackAlert(this.outageId || 'none');
-                    this.downAlertSent = false;
-                    this.outageId = null;
+                    this._forgetOutage();
 
                     // Start Heartbeat
                     this.startHeartbeatLoop();
@@ -1652,8 +1670,7 @@ class WhatsAppService {
         if (clearSession) {
             // No login left, so nothing is down that he must hear about.
             this._clearDownAlert();
-            this.downAlertSent = false;
-            this.outageId = null;
+            this._forgetOutage();
         }
         try {
             console.log(`${this.logPrefix} Disconnecting... (Clear: ${clearSession})`);

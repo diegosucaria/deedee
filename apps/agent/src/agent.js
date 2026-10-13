@@ -664,6 +664,7 @@ class Agent {
     let delivered = false;
     let queued = false;
     let notified = false;
+    let deduped = false;
 
     // The ledger honors notification_channel, tries the other owner channel
     // at once when the first one refuses, and keeps retrying with backoff.
@@ -675,12 +676,17 @@ class Agent {
         const res = await this.delivery.deliver('system_alert', owner.channel, owner.target, { content: text }, { origin: key, immediateFallback: true });
         delivered = !!res.delivered;
         queued = !!res.queued;
+        // The same alert is already sent or queued (two reports of one
+        // WhatsApp outage at once): the first call owns it, card and all.
+        deduped = !!res.deduped;
         // Sent with no ledger row: only memory knows its "back" may follow.
         if (down && delivered && res.ledger === false) {
           if (!this._whatsappDownDirect) this._whatsappDownDirect = new Set();
           this._whatsappDownDirect.add(`${down[1]}:${down[2]}`);
         }
-        if (delivered) {
+        if (deduped) {
+          console.log(`[Agent] System alert already ${delivered ? 'sent' : 'queued'} (key='${key}').`);
+        } else if (delivered) {
           console.log(`[Agent] Delivered system alert to owner via ${res.via || owner.channel} (key='${key}').`);
         } else {
           console.error(`[Agent] deliverSystemAlert: no channel accepted the alert (key='${key}')${queued ? '; queued for retry' : ''}.`);
@@ -690,7 +696,7 @@ class Agent {
       }
     }
 
-    if (!delivered || isWhatsAppRepair) {
+    if ((!delivered || isWhatsAppRepair) && !deduped) {
       notified = this._notifySystemAlert(text, key, delivered, queued);
     }
 

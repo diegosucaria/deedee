@@ -82,6 +82,7 @@ describe('a WhatsApp connect try that never ends', () => {
             wa.store.close();
         }
         fs.rmSync(wa.authFolder, { recursive: true, force: true });
+        fs.rmSync(wa.outageFile, { force: true });
         process.env = envBefore;
         jest.restoreAllMocks();
     });
@@ -452,6 +453,50 @@ describe('a WhatsApp connect try that never ends', () => {
             expect(await until(() => alerts().length === 4, 1000)).toBe(true);
             expect(alerts()[3]).toMatch(new RegExp(`^whatsapp_down:${wa.sessionId}:`));
             expect(alerts()[3]).not.toBe(alerts()[0]);
+        });
+
+        test('a "down" he got before a restart of the service is still followed by its "back"', async () => {
+            // Restarting the interfaces service is the manual fix for a stuck
+            // session; the outage lived only in memory, so "back" never came.
+            paired(wa);
+            const { baileys } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.start();
+            expect(await until(() => wa.downAlertSent === true)).toBe(true);
+            const down = alerts()[0];
+            expect(fs.existsSync(wa.outageFile)).toBe(true);
+
+            // The restarted service: a new instance, same session.
+            wa._clearDownAlert();
+            wa.connectTry++;
+            const { baileys: b2, sockets: s2 } = fakeBaileys();
+            const wa2 = new WhatsAppService('http://agent.test', wa.sessionId);
+            jest.spyOn(wa2, '_importBaileys').mockResolvedValue(b2);
+            try {
+                expect(wa2.outageId).toBe(wa.outageId);
+                await wa2.connect();
+                s2[0].ev.emit('connection.update', { connection: 'open' });
+                expect(await until(() => alerts().length === 2)).toBe(true);
+                expect(alerts()[1]).toBe(down.replace('whatsapp_down:', 'whatsapp_up:'));
+                // Told; nothing left to carry over.
+                expect(fs.existsSync(wa2.outageFile)).toBe(false);
+            } finally {
+                for (const t of [wa2.connectWatchdog, wa2.downAlertTimer, wa2.reconnectTimeout]) if (t) clearTimeout(t);
+                if (wa2.heartbeatTimer) clearInterval(wa2.heartbeatTimer);
+                clearInterval(wa2.store.queueFlushInterval);
+                wa2.store.close();
+            }
+        });
+
+        test('his own reset forgets the saved outage', async () => {
+            paired(wa);
+            const { baileys } = fakeBaileys();
+            jest.spyOn(wa, '_importBaileys').mockResolvedValue(baileys);
+            await wa.start();
+            expect(await until(() => fs.existsSync(wa.outageFile))).toBe(true);
+            await wa.disconnect(true);
+            expect(fs.existsSync(wa.outageFile)).toBe(false);
+            expect(wa.outageId).toBeNull();
         });
 
         test.each(['needs_repair', 'scan_qr'])('a session in %s gets no down alert', async (status) => {

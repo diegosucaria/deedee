@@ -181,6 +181,24 @@ describe('WhatsApp outage alerts', () => {
         expect(said().at(-1)).toBe('down 2');
     });
 
+    test('two reports of one outage at once give one "back" and no "not delivered" card', async () => {
+        // The open and the end of the "down" post both report the outage.
+        // The first "back" takes a moment to send, so the second passes the
+        // repeat filter and meets the ledger's duplicate check.
+        let finish;
+        send.mockImplementation(() => new Promise(r => setTimeout(() => r(true), 40)));
+        send.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+        const down = alert('down 1', 'whatsapp_down:assistant:o1');
+        const back1 = alert('back 1', 'whatsapp_up:assistant:o1');
+        const back2 = alert('back 1', 'whatsapp_up:assistant:o1');
+        await new Promise(r => setTimeout(r, 30));
+        finish(true);
+        await Promise.all([down, back1, back2]);
+        expect(said()).toEqual(['down 1', 'back 1']);
+        const titles = agent.notifications.create.mock.calls.map(c => `${c[0].title} | ${c[0].metadata.alertKey}`);
+        expect(titles).toEqual(['System alert | whatsapp_down:assistant:o1']);
+    });
+
     test('a "down" the ledger gave up on is not followed by a lone "back"', async () => {
         send.mockResolvedValue(false);
         expect(await alert('down 1', 'whatsapp_down:assistant:o1')).toBe(true);
